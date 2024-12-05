@@ -1,2 +1,5 @@
 *.db
-index/*
+index/
+target/
+.project
+.classpath
