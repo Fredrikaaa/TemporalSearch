@@ -1,189 +1,134 @@
 package com.example.index;
 
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
-import org.junit.jupiter.api.*;
-import org.iq80.leveldb.*;
-import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
-import java.time.LocalDate;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 
 class DiskBasedMergerTest {
-    private Path tempDir;
-    private List<Path> tempIndexPaths;
-    private Path outputPath;
-    private LocalDate testDate;
-    private List<DB> openDatabases;
+    @TempDir
+    Path tempDir;
+    
+    private DiskBasedMerger merger;
+    private Path mergeDir;
+    private List<Path> inputFiles;
     
     @BeforeEach
-    void setUp() throws Exception {
-        // Create temporary directories
-        tempDir = Files.createTempDirectory("merger-test-");
-        outputPath = tempDir.resolve("merged-index");
-        tempIndexPaths = new ArrayList<>();
-        testDate = LocalDate.of(2024, 1, 20);
-        openDatabases = new ArrayList<>();
-        
-        // Create test data in temporary indexes
-        createTestIndexes();
+    void setUp() throws IOException {
+        mergeDir = tempDir.resolve("merge");
+        Files.createDirectories(mergeDir);
+        merger = new DiskBasedMerger(mergeDir);
+        inputFiles = new ArrayList<>();
     }
     
     @AfterEach
-    void tearDown() throws Exception {
-        // Close all open databases
-        for (DB db : openDatabases) {
-            try {
-                db.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-        openDatabases.clear();
-        
-        // Clean up temporary files
-        Files.walk(tempDir)
-             .sorted(Comparator.reverseOrder())
-             .forEach(path -> {
-                 try {
-                     Files.delete(path);
-                 } catch (IOException e) {
-                     e.printStackTrace();
-                 }
-             });
-    }
-    
-    private void createTestIndexes() throws IOException {
-        // Create three test indexes with overlapping entries
-        Map<String, List<Position>> index1 = new HashMap<>();
-        index1.put("quick", Arrays.asList(new Position(1, 1, 0, 5, testDate)));
-        index1.put("brown", Arrays.asList(new Position(1, 1, 6, 11, testDate)));
-        
-        Map<String, List<Position>> index2 = new HashMap<>();
-        index2.put("brown", Arrays.asList(new Position(2, 1, 0, 5, testDate)));
-        index2.put("fox", Arrays.asList(new Position(2, 1, 6, 9, testDate)));
-        
-        Map<String, List<Position>> index3 = new HashMap<>();
-        index3.put("fox", Arrays.asList(new Position(3, 1, 0, 3, testDate)));
-        index3.put("jumps", Arrays.asList(new Position(3, 1, 4, 9, testDate)));
-        
-        // Write test data to temporary LevelDB files
-        tempIndexPaths.add(createTempIndex(index1, "index1"));
-        tempIndexPaths.add(createTempIndex(index2, "index2"));
-        tempIndexPaths.add(createTempIndex(index3, "index3"));
-    }
-    
-    private Path createTempIndex(Map<String, List<Position>> data, String name) throws IOException {
-        Path indexPath = tempDir.resolve(name);
-        Options options = new Options();
-        options.createIfMissing(true);
-        
-        DB db = factory.open(indexPath.toFile(), options);
-        openDatabases.add(db);
-        
-        for (Map.Entry<String, List<Position>> entry : data.entrySet()) {
-            PositionList positions = new PositionList();
-            for (Position pos : entry.getValue()) {
-                positions.add(pos);
-            }
-            db.put(bytes(entry.getKey()), positions.serialize());
-        }
-        
-        db.close();
-        openDatabases.remove(db);
-        
-        return indexPath;
-    }
-    
-    @Test
-    void testMergeIndexes() throws IOException {
-        try (DiskBasedMerger merger = new DiskBasedMerger(tempDir)) {
-            merger.mergeIndexes(tempIndexPaths, outputPath);
-            
-            // Verify merged results
-            DB db = factory.open(outputPath.toFile(), new Options());
-            openDatabases.add(db);
-            
-            try {
-                // Check "brown" has positions from both index1 and index2
-                byte[] brownValue = db.get(bytes("brown"));
-                assertNotNull(brownValue, "brown should exist in merged index");
-                PositionList brownPositions = PositionList.deserialize(brownValue);
-                assertEquals(2, brownPositions.size(), "brown should have 2 positions");
-                
-                // Check "fox" has positions from both index2 and index3
-                byte[] foxValue = db.get(bytes("fox"));
-                assertNotNull(foxValue, "fox should exist in merged index");
-                PositionList foxPositions = PositionList.deserialize(foxValue);
-                assertEquals(2, foxPositions.size(), "fox should have 2 positions");
-                
-                // Check single-occurrence words
-                assertNotNull(db.get(bytes("quick")), "quick should exist in merged index");
-                assertNotNull(db.get(bytes("jumps")), "jumps should exist in merged index");
-            } finally {
-                db.close();
-                openDatabases.remove(db);
-            }
+    void tearDown() throws IOException {
+        for (Path file : inputFiles) {
+            Files.deleteIfExists(file);
         }
     }
     
     @Test
-    void testMergeWithEmptyIndexes() throws IOException {
-        // Create an empty index
-        Path emptyIndex = createTempIndex(new HashMap<>(), "empty");
-        tempIndexPaths.add(emptyIndex);
-        
-        try (DiskBasedMerger merger = new DiskBasedMerger(tempDir)) {
-            merger.mergeIndexes(tempIndexPaths, outputPath);
-            
-            // Verify merged results are same as without empty index
-            DB db = factory.open(outputPath.toFile(), new Options());
-            openDatabases.add(db);
-            
-            try {
-                // All words should still be present
-                assertNotNull(db.get(bytes("quick")), "quick should exist in merged index");
-                assertNotNull(db.get(bytes("brown")), "brown should exist in merged index");
-                assertNotNull(db.get(bytes("fox")), "fox should exist in merged index");
-                assertNotNull(db.get(bytes("jumps")), "jumps should exist in merged index");
-            } finally {
-                db.close();
-                openDatabases.remove(db);
-            }
+    void testMergeEmptyFiles() throws IOException {
+        // Create empty files
+        for (int i = 0; i < 3; i++) {
+            Path file = createInputFile(String.format("empty_%d.txt", i), Collections.emptyList());
+            inputFiles.add(file);
         }
+        
+        Path outputPath = mergeDir.resolve("merged.gz");
+        merger.mergeIndexes(inputFiles, outputPath);
+        
+        assertTrue(Files.exists(outputPath), "Output file should be created");
+        assertEquals(0, countLines(outputPath), "Merged file should be empty");
     }
     
     @Test
-    void testMergeWithLargeNumberOfIndexes() throws IOException {
-        // Create 20 small indexes to test multi-pass merging
-        for (int i = 0; i < 20; i++) {
-            Map<String, List<Position>> data = new HashMap<>();
-            data.put("word" + i, Arrays.asList(new Position(i, 1, 0, 5, testDate)));
-            tempIndexPaths.add(createTempIndex(data, "index" + i));
+    void testMergeSortedFiles() throws IOException {
+        // Create input files with sorted content
+        inputFiles.add(createInputFile("file1.txt", Arrays.asList("apple", "dog", "zebra")));
+        inputFiles.add(createInputFile("file2.txt", Arrays.asList("banana", "cat", "elephant")));
+        inputFiles.add(createInputFile("file3.txt", Arrays.asList("bird", "fish", "lion")));
+        
+        Path outputPath = mergeDir.resolve("merged.gz");
+        merger.mergeIndexes(inputFiles, outputPath);
+        
+        List<String> expected = Arrays.asList(
+            "apple", "banana", "bird", "cat", "dog", "elephant", "fish", "lion", "zebra"
+        );
+        assertLinesMatch(expected, readLines(outputPath));
+    }
+    
+    @Test
+    void testMergeLargeFiles() throws IOException {
+        // Create larger input files
+        Random random = new Random(42); // Use fixed seed for reproducibility
+        int fileCount = 5;
+        int linesPerFile = 1000;
+        
+        for (int i = 0; i < fileCount; i++) {
+            List<String> lines = new ArrayList<>();
+            for (int j = 0; j < linesPerFile; j++) {
+                lines.add(String.format("key_%06d", random.nextInt(1000000)));
+            }
+            Collections.sort(lines); // Sort lines within each file
+            inputFiles.add(createInputFile(String.format("large_%d.txt", i), lines));
         }
         
-        try (DiskBasedMerger merger = new DiskBasedMerger(tempDir, 64, 5)) { // Use smaller merge factor
-            merger.mergeIndexes(tempIndexPaths, outputPath);
-            
-            // Verify all words are present in merged index
-            DB db = factory.open(outputPath.toFile(), new Options());
-            openDatabases.add(db);
-            
-            try {
-                for (int i = 0; i < 20; i++) {
-                    assertNotNull(db.get(bytes("word" + i)), 
-                        "word" + i + " should exist in merged index");
-                }
-            } finally {
-                db.close();
-                openDatabases.remove(db);
-            }
+        Path outputPath = mergeDir.resolve("merged.gz");
+        merger.mergeIndexes(inputFiles, outputPath);
+        
+        // Verify the output is sorted
+        List<String> mergedLines = readLines(outputPath);
+        assertEquals(fileCount * linesPerFile, mergedLines.size(),
+            "Should contain all input lines");
+        
+        List<String> sortedLines = new ArrayList<>(mergedLines);
+        Collections.sort(sortedLines);
+        assertEquals(sortedLines, mergedLines,
+            "Output should be sorted");
+    }
+    
+    @Test
+    void testMemoryMonitoring() throws IOException {
+        // Create input files
+        inputFiles.add(createInputFile("file1.txt", Arrays.asList("apple", "dog", "zebra")));
+        inputFiles.add(createInputFile("file2.txt", Arrays.asList("banana", "cat", "elephant")));
+        
+        Path outputPath = mergeDir.resolve("merged.gz");
+        merger.mergeIndexes(inputFiles, outputPath);
+        
+        // Verify memory stats are available
+        String memoryStats = merger.getMemoryStats();
+        assertNotNull(memoryStats, "Memory stats should be available");
+        assertTrue(memoryStats.contains("Memory Usage:"),
+            "Memory stats should contain usage information");
+    }
+    
+    private Path createInputFile(String name, List<String> lines) throws IOException {
+        Path file = mergeDir.resolve(name);
+        Files.write(file, lines, StandardCharsets.UTF_8);
+        return file;
+    }
+    
+    private List<String> readLines(Path file) throws IOException {
+        try (InputStream in = CompressionUtils.createDecompressionInputStream(file);
+             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+            return reader.lines().collect(java.util.stream.Collectors.toList());
         }
     }
     
-    private static byte[] bytes(String str) {
-        return str.getBytes(StandardCharsets.UTF_8);
+    private long countLines(Path file) throws IOException {
+        try (InputStream in = CompressionUtils.createDecompressionInputStream(file);
+             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+            return reader.lines().count();
+        }
     }
 } 

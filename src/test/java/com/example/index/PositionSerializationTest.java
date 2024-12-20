@@ -89,22 +89,25 @@ public class PositionSerializationTest {
 
     @Test
     public void testLargeListSerialization() {
-        PositionList largeList = new PositionList();
-        int numPositions = 10000; // Test with 10,000 positions
-
-        // Add many positions
+        PositionList list = new PositionList();
+        int numPositions = 10000;
+        
+        // Create positions with realistic document IDs
         for (int i = 0; i < numPositions; i++) {
-            largeList.add(new Position(
-                    i, // documentId
-                    i % 100, // sentenceId
-                    i * 2, // beginPosition
-                    i * 2 + 5, // endPosition
-                    LocalDate.of(2000, 1, 1).plusDays(i % 365) // timestamp
+            // Use document ID pattern: 1000 + (i / 100) to simulate realistic docs
+            int docId = 1000 + (i / 100);  // Creates 100 positions per document
+            int sentId = i % 20;           // 20 sentences per document
+            list.add(new Position(
+                docId,
+                sentId,
+                i * 5,
+                i * 5 + 4,
+                LocalDate.of(2024, 1, 1)
             ));
         }
 
         // Serialize and deserialize
-        byte[] serialized = largeList.serialize();
+        byte[] serialized = list.serialize();
         PositionList deserialized = PositionList.deserialize(serialized);
 
         // Verify
@@ -112,7 +115,7 @@ public class PositionSerializationTest {
                 "Should maintain size after serialization/deserialization");
 
         // Check a few random positions
-        List<Position> originalPositions = largeList.getPositions();
+        List<Position> originalPositions = list.getPositions();
         List<Position> deserializedPositions = deserialized.getPositions();
 
         for (int i : Arrays.asList(0, 999, 5000, 9999)) {

@@ -15,6 +15,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import me.tongfei.progressbar.*;
+import java.util.stream.*;
 
 /**
  * Abstract base class that provides the framework for generating specialized indexes from annotated text.
@@ -34,6 +36,7 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
     private final ExecutorService executorService;
     private final int threadCount;
     private final Path tempDir;
+    private long totalEntries = 0;
 
     protected BaseIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn, String tableName) throws IOException {
@@ -90,37 +93,32 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
         return word == null || stopwords.contains(word.toLowerCase());
     }
 
-    protected List<IndexEntry> fetchBatch(int offset) throws SQLException {
-        String query = """
-                    SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char,
-                           a.lemma, a.pos, d.timestamp
-                    FROM annotations a
-                    JOIN documents d ON a.document_id = d.document_id
-                    ORDER BY a.document_id, a.sentence_id, a.begin_char
-                    LIMIT ? OFFSET ?
-                """;
-
+    protected List<IndexEntry> fetchBatch(long offset) throws SQLException {
         List<IndexEntry> entries = new ArrayList<>();
-        try (PreparedStatement stmt = sqliteConn.prepareStatement(query)) {
-            stmt.setInt(1, batchSize);
-            stmt.setInt(2, offset);
-            stmt.setFetchSize(batchSize);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) {
-                    String timestamp = rs.getString("timestamp");
-                    LocalDate date = ZonedDateTime.parse(timestamp, DateTimeFormatter.ISO_DATE_TIME)
-                            .toLocalDate();
-
-                    entries.add(new IndexEntry(
-                            rs.getInt("document_id"),
-                            rs.getInt("sentence_id"),
-                            rs.getInt("begin_char"),
-                            rs.getInt("end_char"),
-                            rs.getString("lemma"),
-                            rs.getString("pos"),
-                            date));
-                }
+        String query = String.format("""
+                SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char,
+                       a.lemma, a.pos, d.timestamp
+                FROM annotations a
+                JOIN documents d ON a.document_id = d.document_id
+                ORDER BY a.document_id, a.sentence_id, a.begin_char
+                LIMIT %d OFFSET %d
+            """, batchSize, offset);
+        
+        try (Statement stmt = sqliteConn.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
+            while (rs.next()) {
+                String timestamp = rs.getString("timestamp");
+                LocalDate date = ZonedDateTime.parse(timestamp)
+                        .toLocalDate();
+                
+                entries.add(new IndexEntry(
+                    rs.getInt("document_id"),
+                    rs.getInt("sentence_id"),
+                    rs.getInt("begin_char"),
+                    rs.getInt("end_char"),
+                    rs.getString("lemma"),
+                    rs.getString("pos"),
+                    date));
             }
         }
         return entries;
@@ -251,27 +249,75 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
         }
     }
 
-    public void generateIndex() throws SQLException, IOException {
-        int offset = 0;
-        int totalProcessed = 0;
-        List<IndexEntry> batch;
-
-        System.out.printf("Generating %s index using %d threads...%n", tableName, threadCount);
+    public void generateIndex() throws IOException {
         long startTime = System.currentTimeMillis();
+        
+        // Count total entries first
+        try (Statement stmt = sqliteConn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) as count FROM " + tableName);
+            if (rs.next()) {
+                totalEntries = rs.getLong("count");
+            }
+        } catch (SQLException e) {
+            logger.warn("Could not get total entry count", e);
+            totalEntries = -1;
+        }
 
-        while (!(batch = fetchBatch(offset)).isEmpty()) {
-            processBatch(batch);
-            offset += batchSize;
-            totalProcessed += batch.size();
+        System.out.printf("Generating %s index using %d threads...\n", 
+            getClass().getSimpleName().replace("IndexGenerator", "").toLowerCase(),
+            threadCount);
 
-            if (totalProcessed % (batchSize * 10) == 0) {
-                System.out.printf("Processed %d entries...%n", totalProcessed);
+        long processedEntries = 0;
+        try (ProgressBar pb = new ProgressBar("Processing entries", totalEntries > 0 ? totalEntries : 100000)) {
+            List<IndexEntry> batch = new ArrayList<>();
+            
+            while (true) {
+                List<IndexEntry> entries;
+                try {
+                    entries = fetchBatch(processedEntries);
+                } catch (SQLException e) {
+                    throw new IOException("Error fetching batch", e);
+                }
+                if (entries.isEmpty()) {
+                    break;
+                }
+                
+                batch.addAll(entries);
+                if (batch.size() >= batchSize) {
+                    processBatch(batch);
+                    processedEntries += batch.size();
+                    pb.stepBy(batch.size());
+                    batch.clear();
+                }
+            }
+            
+            // Process remaining entries
+            if (!batch.isEmpty()) {
+                processBatch(batch);
+                processedEntries += batch.size();
+                pb.stepBy(batch.size());
             }
         }
 
-        long endTime = System.currentTimeMillis();
-        System.out.printf("Index generation complete. Processed %d entries in %.2f seconds%n",
-                totalProcessed, (endTime - startTime) / 1000.0);
+        // Final merge if needed
+        if (tempDir != null && Files.exists(tempDir)) {
+            List<Path> tempFiles = Files.list(tempDir)
+                .filter(p -> p.toString().endsWith(".gz"))
+                .collect(Collectors.toList());
+            
+            if (!tempFiles.isEmpty()) {
+                System.out.println("Merging temporary files...");
+                try (ProgressBar pb = new ProgressBar("Merging", tempFiles.size())) {
+                    DiskBasedMerger merger = new DiskBasedMerger(tempDir);
+                    merger.mergeIndexes(tempFiles, tempDir.resolve("final.gz"));
+                    pb.stepTo(pb.getMax());
+                }
+            }
+        }
+
+        double timeInSeconds = (System.currentTimeMillis() - startTime) / 1000.0;
+        System.out.printf("Index generation complete. Processed %d entries in %.2f seconds\n", 
+            processedEntries, timeInSeconds);
     }
 
     @Override

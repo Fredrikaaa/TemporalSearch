@@ -1,30 +1,29 @@
 package com.example.index;
 
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.MultimapBuilder;
-import org.iq80.leveldb.*;
-import static org.iq80.leveldb.impl.Iq80DBFactory.*;
-
+import com.google.common.collect.ArrayListMultimap;
+import me.tongfei.progressbar.*;
 import java.io.*;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
-import java.util.concurrent.*;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 /**
- * Handles external merge sort of temporary indexes with efficient multi-way merging.
- * Manages memory budgets and implements disk-based operations for handling large datasets.
+ * Handles merging of temporary index files using external merge sort.
+ * Uses compression to reduce disk space usage and monitors memory to
+ * adapt batch sizes during merging.
  */
-public class DiskBasedMerger implements AutoCloseable {
+public class DiskBasedMerger {
     private static final Logger logger = Logger.getLogger(DiskBasedMerger.class.getName());
-    private static final int DEFAULT_MEMORY_BUDGET_MB = 256;
     private static final int DEFAULT_MERGE_FACTOR = 10;
+    private static final long DEFAULT_MEMORY_BUDGET = 100 * 1024 * 1024; // 100MB
     
     private final Path tempDir;
-    private final int memoryBudgetMB;
     private final int mergeFactor;
-    private final ExecutorService executorService;
+    private final long memoryBudget;
+    private final MemoryMonitor memoryMonitor;
     
     /**
      * Creates a new DiskBasedMerger with default settings.
@@ -32,172 +31,191 @@ public class DiskBasedMerger implements AutoCloseable {
      * @param tempDir Directory for temporary files
      */
     public DiskBasedMerger(Path tempDir) {
-        this(tempDir, DEFAULT_MEMORY_BUDGET_MB, DEFAULT_MERGE_FACTOR);
+        this(tempDir, DEFAULT_MERGE_FACTOR, DEFAULT_MEMORY_BUDGET);
     }
     
     /**
      * Creates a new DiskBasedMerger with custom settings.
      * 
      * @param tempDir Directory for temporary files
-     * @param memoryBudgetMB Maximum memory budget in megabytes
      * @param mergeFactor Number of files to merge in each pass
+     * @param memoryBudget Maximum memory budget in bytes
      */
-    public DiskBasedMerger(Path tempDir, int memoryBudgetMB, int mergeFactor) {
+    public DiskBasedMerger(Path tempDir, int mergeFactor, long memoryBudget) {
         this.tempDir = tempDir;
-        this.memoryBudgetMB = memoryBudgetMB;
         this.mergeFactor = mergeFactor;
-        this.executorService = Executors.newFixedThreadPool(
-            Math.min(Runtime.getRuntime().availableProcessors(), mergeFactor)
-        );
+        this.memoryBudget = memoryBudget;
+        this.memoryMonitor = new MemoryMonitor(0.75); // 75% threshold
+        
+        if (!Files.exists(tempDir)) {
+            try {
+                Files.createDirectories(tempDir);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to create temporary directory", e);
+            }
+        }
     }
     
     /**
-     * Merges multiple temporary indexes into a single LevelDB database.
+     * Merges a list of temporary index files into a single output file.
      * 
-     * @param tempIndexPaths List of paths to temporary index files
-     * @param outputPath Path to the output LevelDB database
-     * @throws IOException if an I/O error occurs
+     * @param inputPaths List of paths to temporary index files
+     * @param outputPath Path where the merged index should be written
+     * @throws IOException If an I/O error occurs
      */
-    public void mergeIndexes(List<Path> tempIndexPaths, Path outputPath) throws IOException {
-        if (tempIndexPaths.isEmpty()) {
+    public void mergeIndexes(List<Path> inputPaths, Path outputPath) throws IOException {
+        if (inputPaths.isEmpty()) {
+            logger.warning("No input files to merge");
             return;
         }
         
-        // If we have fewer files than merge factor, merge them directly
-        if (tempIndexPaths.size() <= mergeFactor) {
-            mergeToLevelDB(tempIndexPaths, outputPath);
-            return;
+        System.out.printf("Merging %d index files...\n", inputPaths.size());
+        
+        // Compress input files if they're not already compressed
+        List<Path> compressedPaths = new ArrayList<>();
+        try (ProgressBar pb = new ProgressBar("Compressing files", inputPaths.size())) {
+            for (Path path : inputPaths) {
+                if (!path.toString().endsWith(".gz")) {
+                    Path compressedPath = tempDir.resolve(path.getFileName() + ".gz");
+                    CompressionUtils.compressFile(path, compressedPath);
+                    compressedPaths.add(compressedPath);
+                } else {
+                    compressedPaths.add(path);
+                }
+                pb.step();
+            }
         }
         
-        // Otherwise, perform multi-way merge in passes
-        List<Path> currentPaths = new ArrayList<>(tempIndexPaths);
+        // Perform multi-pass merge if necessary
+        List<Path> currentPaths = compressedPaths;
+        int passCount = 0;
         while (currentPaths.size() > mergeFactor) {
-            List<Path> nextPaths = new ArrayList<>();
-            
-            // Process files in groups of mergeFactor
-            for (int i = 0; i < currentPaths.size(); i += mergeFactor) {
-                int end = Math.min(currentPaths.size(), i + mergeFactor);
-                List<Path> group = currentPaths.subList(i, end);
-                
-                // Create temporary output file for this merge group
-                Path outputFile = tempDir.resolve("merge_" + UUID.randomUUID() + ".tmp");
-                mergeToLevelDB(group, outputFile);
-                nextPaths.add(outputFile);
-                
-                // Clean up merged files
-                for (Path path : group) {
-                    deleteRecursively(path);
+            passCount++;
+            System.out.printf("Starting merge pass %d (%d files)...\n", passCount, currentPaths.size());
+            currentPaths = multiPassMerge(currentPaths);
+        }
+        
+        // Final merge to output file
+        if (currentPaths.size() > 1) {
+            System.out.println("Performing final merge...");
+        }
+        mergeFiles(currentPaths, outputPath);
+        
+        // Clean up temporary files
+        try (ProgressBar pb = new ProgressBar("Cleaning up", compressedPaths.size())) {
+            for (Path path : compressedPaths) {
+                if (!path.equals(outputPath)) {
+                    Files.deleteIfExists(path);
+                }
+                pb.step();
+            }
+        }
+    }
+    
+    private List<Path> multiPassMerge(List<Path> paths) throws IOException {
+        List<Path> result = new ArrayList<>();
+        List<Path> batch = new ArrayList<>();
+        int batchCount = 0;
+        int totalBatches = (int) Math.ceil((double) paths.size() / mergeFactor);
+        
+        try (ProgressBar pb = new ProgressBar("Merging batches", totalBatches)) {
+            for (Path path : paths) {
+                batch.add(path);
+                if (batch.size() == mergeFactor) {
+                    Path mergedPath = tempDir.resolve(String.format("merged_%d.gz", batchCount++));
+                    mergeFiles(batch, mergedPath);
+                    result.add(mergedPath);
+                    batch.clear();
+                    pb.step();
                 }
             }
             
-            currentPaths = nextPaths;
+            if (!batch.isEmpty()) {
+                Path mergedPath = tempDir.resolve(String.format("merged_%d.gz", batchCount));
+                mergeFiles(batch, mergedPath);
+                result.add(mergedPath);
+                pb.step();
+            }
         }
         
-        // Final merge to output database
-        mergeToLevelDB(currentPaths, outputPath);
-        
-        // Clean up remaining temporary files
-        for (Path path : currentPaths) {
-            deleteRecursively(path);
-        }
+        return result;
     }
     
-    /**
-     * Merges a group of temporary indexes into a single LevelDB database.
-     * 
-     * @param inputPaths Paths to input temporary indexes
-     * @param outputPath Path to output LevelDB database
-     * @throws IOException if an I/O error occurs
-     */
-    private void mergeToLevelDB(List<Path> inputPaths, Path outputPath) throws IOException {
-        // Open output database
-        Options options = new Options();
-        options.createIfMissing(true);
-        options.writeBufferSize(memoryBudgetMB * 1024 * 1024 / 2); // Use half of memory budget for write buffer
+    private void mergeFiles(List<Path> inputs, Path output) throws IOException {
+        // Create readers for all input files
+        List<BufferedReader> readers = new ArrayList<>();
+        List<String> currentLines = new ArrayList<>();
         
-        // First, read all data from input databases
-        Map<String, PositionList> mergedData = new HashMap<>();
-        
-        for (Path path : inputPaths) {
-            try (DB db = factory.open(path.toFile(), new Options());
-                 DBIterator it = db.iterator()) {
-                it.seekToFirst();
+        try {
+            // Initialize readers and current lines
+            for (Path path : inputs) {
+                InputStream in = CompressionUtils.createDecompressionInputStream(path);
+                BufferedReader reader = new BufferedReader(new InputStreamReader(in));
+                readers.add(reader);
+                String line = reader.readLine();
+                currentLines.add(line);
+            }
+            
+            // Create writer for output file
+            try (OutputStream out = CompressionUtils.createCompressedOutputStream(output);
+                 BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out))) {
                 
-                while (it.hasNext()) {
-                    Map.Entry<byte[], byte[]> entry = it.next();
-                    String key = new String(entry.getKey(), StandardCharsets.UTF_8);
-                    PositionList positions = PositionList.deserialize(entry.getValue());
+                long linesProcessed = 0;
+                ProgressBar pb = new ProgressBar("Merging lines", 1_000_000);
+                
+                // Merge while monitoring memory usage
+                while (true) {
+                    memoryMonitor.update();
                     
-                    PositionList existing = mergedData.get(key);
-                    if (existing == null) {
-                        mergedData.put(key, positions);
-                    } else {
-                        existing.merge(positions);
+                    // Find the smallest current line
+                    int smallestIndex = -1;
+                    String smallestLine = null;
+                    
+                    for (int i = 0; i < currentLines.size(); i++) {
+                        String line = currentLines.get(i);
+                        if (line != null && (smallestLine == null || line.compareTo(smallestLine) < 0)) {
+                            smallestLine = line;
+                            smallestIndex = i;
+                        }
+                    }
+                    
+                    if (smallestIndex == -1) {
+                        break; // All files exhausted
+                    }
+                    
+                    // Write the smallest line and read next from that file
+                    writer.write(smallestLine);
+                    writer.newLine();
+                    
+                    String nextLine = readers.get(smallestIndex).readLine();
+                    currentLines.set(smallestIndex, nextLine);
+                    
+                    linesProcessed++;
+                    if (linesProcessed % 10000 == 0) {
+                        pb.stepTo(linesProcessed);
                     }
                 }
+                
+                pb.close();
             }
-        }
-        
-        // Now write the merged data to the output database
-        try (DB outputDb = factory.open(outputPath.toFile(), options)) {
-            for (Map.Entry<String, PositionList> entry : mergedData.entrySet()) {
-                outputDb.put(bytes(entry.getKey()), entry.getValue().serialize());
-            }
-        }
-    }
-    
-    /**
-     * Helper class for managing entries in the merge priority queue.
-     */
-    private static class MergeEntry implements Comparable<MergeEntry> {
-        final byte[] key;
-        final byte[] value;
-        final DBIterator iterator;
-        
-        MergeEntry(byte[] key, byte[] value, DBIterator iterator) {
-            this.key = key;
-            this.value = value;
-            this.iterator = iterator;
-        }
-        
-        @Override
-        public int compareTo(MergeEntry other) {
-            return compareKeys(this.key, other.key);
-        }
-        
-        private static int compareKeys(byte[] key1, byte[] key2) {
-            String s1 = new String(key1, StandardCharsets.UTF_8);
-            String s2 = new String(key2, StandardCharsets.UTF_8);
-            return s1.compareTo(s2);
-        }
-    }
-    
-    /**
-     * Recursively deletes a directory and its contents.
-     * 
-     * @param path Path to delete
-     * @throws IOException if an I/O error occurs
-     */
-    private void deleteRecursively(Path path) throws IOException {
-        if (Files.isDirectory(path)) {
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(path)) {
-                for (Path entry : stream) {
-                    deleteRecursively(entry);
+        } finally {
+            // Close all readers
+            for (BufferedReader reader : readers) {
+                try {
+                    reader.close();
+                } catch (IOException e) {
+                    logger.warning("Failed to close reader: " + e.getMessage());
                 }
             }
         }
-        Files.deleteIfExists(path);
     }
     
-    @Override
-    public void close() {
-        executorService.shutdown();
-        try {
-            if (!executorService.awaitTermination(1, TimeUnit.MINUTES)) {
-                executorService.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+    /**
+     * Gets memory usage statistics from the memory monitor.
+     * 
+     * @return A string containing current memory usage information
+     */
+    public String getMemoryStats() {
+        return memoryMonitor.getMemoryStats();
     }
 } 

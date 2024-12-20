@@ -1,10 +1,14 @@
 package com.example.index;
 
+import java.util.Objects;
 import java.time.LocalDate;
 
 /**
- * Represents a position of a word or phrase in the document.
- * Immutable class to ensure thread safety.
+ * Represents the exact location of a word, phrase, or entity within the document collection. 
+ * Each Position instance stores a document ID, sentence ID, character-level begin and end positions, 
+ * and a timestamp. This immutable class serves as the fundamental building block for all index 
+ * operations, enabling precise text location tracking and temporal analysis. It includes proper 
+ * equality checking and comparison methods to support set operations and sorting.
  */
 public class Position {
     private final int documentId;
@@ -52,23 +56,18 @@ public class Position {
     public boolean equals(Object o) {
         if (this == o)
             return true;
-        if (!(o instanceof Position))
+        if (o == null || getClass() != o.getClass())
             return false;
-        Position other = (Position) o;
-        return documentId == other.documentId &&
-                sentenceId == other.sentenceId &&
-                beginPosition == other.beginPosition &&
-                endPosition == other.endPosition &&
-                timestamp.equals(other.timestamp);
+        Position position = (Position) o;
+        return documentId == position.documentId &&
+                sentenceId == position.sentenceId &&
+                beginPosition == position.beginPosition &&
+                endPosition == position.endPosition &&
+                Objects.equals(timestamp, position.timestamp);
     }
 
     @Override
     public int hashCode() {
-        int result = documentId;
-        result = 31 * result + sentenceId;
-        result = 31 * result + beginPosition;
-        result = 31 * result + endPosition;
-        result = 31 * result + timestamp.hashCode();
-        return result;
+        return Objects.hash(documentId, sentenceId, beginPosition, endPosition, timestamp);
     }
 }

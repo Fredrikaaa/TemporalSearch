@@ -1,126 +1,58 @@
 package com.example.index;
 
+import com.google.common.collect.ListMultimap;
+import com.google.common.collect.MultimapBuilder;
 import java.io.IOException;
 import java.sql.Connection;
-import java.util.*;
+import java.util.List;
 
 /**
- * Generates an index for word pairs (bigrams) from the annotations table.
- * Bigrams are formed from consecutive words within the same sentence.
+ * Generates bigram indexes from annotated text.
+ * Each bigram (pair of consecutive words) is stored with its positions in the corpus.
  */
 public class BigramIndexGenerator extends BaseIndexGenerator {
-    private final Map<String, PositionList> bigramPositions;
-    private static final int FLUSH_THRESHOLD = 10000;
-
+    
     public BigramIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "bigram");
-        this.bigramPositions = new HashMap<>();
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "bigrams");
+    }
+
+    public BigramIndexGenerator(String levelDbPath, String stopwordsPath,
+            int batchSize, Connection sqliteConn, int threadCount) throws IOException {
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "bigrams", threadCount);
     }
 
     @Override
-    protected void processBatch(List<IndexEntry> entries) throws IOException {
-        // Group entries by document and sentence
-        Map<Integer, Map<Integer, List<IndexEntry>>> groupedEntries = new HashMap<>();
+    protected ListMultimap<String, PositionList> processPartition(List<IndexEntry> partition) {
+        ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
+        IndexEntry prevEntry = null;
+        
+        for (IndexEntry entry : partition) {
+            if (prevEntry != null && 
+                prevEntry.documentId == entry.documentId && 
+                prevEntry.sentenceId == entry.sentenceId &&
+                !isStopword(prevEntry.lemma) && !isStopword(entry.lemma)) {
+                
+                String key = String.format("%s %s", 
+                    prevEntry.lemma.toLowerCase(), 
+                    entry.lemma.toLowerCase());
 
-        for (IndexEntry entry : entries) {
-            groupedEntries
-                    .computeIfAbsent(entry.documentId, k -> new HashMap<>())
-                    .computeIfAbsent(entry.sentenceId, k -> new ArrayList<>())
-                    .add(entry);
-        }
+                Position position = new Position(entry.documentId, entry.sentenceId,
+                    prevEntry.beginChar, entry.endChar, entry.timestamp);
 
-        // Process each document
-        for (Map<Integer, List<IndexEntry>> docEntries : groupedEntries.values()) {
-            // Process each sentence
-            for (List<IndexEntry> sentenceEntries : docEntries.values()) {
-                // Sort entries by position within sentence
-                sentenceEntries.sort((a, b) -> Integer.compare(a.beginChar, b.beginChar));
-
-                // Create bigrams from consecutive words
-                for (int i = 0; i < sentenceEntries.size() - 1; i++) {
-                    IndexEntry first = sentenceEntries.get(i);
-                    IndexEntry second = sentenceEntries.get(i + 1);
-
-                    // Skip if either word is null or empty
-                    if (first.lemma == null || second.lemma == null ||
-                            first.lemma.isEmpty() || second.lemma.isEmpty()) {
-                        continue;
-                    }
-
-                    // Create bigram key
-                    String bigramKey = createBigramKey(first.lemma, second.lemma);
-
-                    // Create position spanning both words
-                    Position position = new Position(
-                            first.documentId,
-                            first.sentenceId,
-                            first.beginChar,
-                            second.endChar,
-                            first.timestamp);
-
-                    // Add to bigram positions map
-                    bigramPositions.computeIfAbsent(bigramKey, k -> new PositionList())
-                            .add(position);
+                // Get or create position list for this bigram
+                List<PositionList> lists = index.get(key);
+                if (lists.isEmpty()) {
+                    PositionList newList = new PositionList();
+                    newList.add(position);
+                    index.put(key, newList);
+                } else {
+                    lists.get(0).add(position);
                 }
             }
+            prevEntry = entry;
         }
-
-        // If we've accumulated enough unique bigrams, flush to disk
-        if (bigramPositions.size() >= FLUSH_THRESHOLD) {
-            flushToDisk();
-        }
-    }
-
-    /**
-     * Creates a standardized key for storing bigrams.
-     * Joins the lemmas with a delimiter that won't appear in the text.
-     */
-    private String createBigramKey(String lemma1, String lemma2) {
-        return lemma1.toLowerCase() + "\u0000" + lemma2.toLowerCase();
-    }
-
-    /**
-     * Writes accumulated bigram positions to LevelDB and clears the map
-     */
-    private void flushToDisk() throws IOException {
-        for (Map.Entry<String, PositionList> entry : bigramPositions.entrySet()) {
-            String bigram = entry.getKey();
-            PositionList positions = entry.getValue();
-
-            // Sort positions before serializing
-            positions.sort();
-
-            // Check if this bigram already has entries in LevelDB
-            byte[] existingData = levelDb.get(bytes(bigram));
-            if (existingData != null) {
-                // Merge with existing positions
-                PositionList existingPositions = PositionList.deserialize(existingData);
-                positions.merge(existingPositions);
-                positions.sort();
-            }
-
-            // Write to LevelDB
-            writeToLevelDb(bigram, positions.serialize());
-        }
-
-        // Clear the map for next batch
-        bigramPositions.clear();
-    }
-
-    @Override
-    public void close() throws IOException {
-        // Ensure any remaining positions are written to disk
-        if (!bigramPositions.isEmpty()) {
-            flushToDisk();
-        }
-        super.close();
-    }
-
-    /**
-     * Utility method for LevelDB serialization
-     */
-    private static byte[] bytes(String str) {
-        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        
+        return index;
     }
 }

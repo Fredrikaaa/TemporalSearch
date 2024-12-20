@@ -100,8 +100,18 @@ public class IndexRunner {
     public static void runIndexing(String dbPath, String indexDir, String stopwordsPath,
             int batchSize, String indexType) throws Exception {
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
+            int totalSteps = 0;
+            if (indexType.equals("all")) {
+                totalSteps = 3; // unigram, bigram, trigram
+            } else {
+                totalSteps = 1;
+            }
+            int currentStep = 0;
+
             // Create subdirectories for each index type
             if (indexType.equals("all") || indexType.equals("unigram")) {
+                currentStep++;
+                System.out.printf("\nStep %d/%d: Generating unigram index...\n", currentStep, totalSteps);
                 String unigramDir = indexDir + "/unigram";
                 try (UnigramIndexGenerator indexer = new UnigramIndexGenerator(
                         unigramDir, stopwordsPath, batchSize, conn)) {
@@ -110,6 +120,8 @@ public class IndexRunner {
             }
 
             if (indexType.equals("all") || indexType.equals("bigram")) {
+                currentStep++;
+                System.out.printf("\nStep %d/%d: Generating bigram index...\n", currentStep, totalSteps);
                 String bigramDir = indexDir + "/bigram";
                 try (BigramIndexGenerator indexer = new BigramIndexGenerator(
                         bigramDir, stopwordsPath, batchSize, conn)) {
@@ -118,12 +130,16 @@ public class IndexRunner {
             }
 
             if (indexType.equals("all") || indexType.equals("trigram")) {
+                currentStep++;
+                System.out.printf("\nStep %d/%d: Generating trigram index...\n", currentStep, totalSteps);
                 String trigramDir = indexDir + "/trigram";
                 try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
                         trigramDir, stopwordsPath, batchSize, conn)) {
                     indexer.generateIndex();
                 }
             }
+
+            System.out.println("\nIndex generation complete!");
         }
     }
 }

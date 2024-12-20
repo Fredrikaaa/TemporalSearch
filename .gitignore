@@ -3,3 +3,5 @@ lindex/
 target/
 .project
 .classpath
+.vscode
+log.txt
