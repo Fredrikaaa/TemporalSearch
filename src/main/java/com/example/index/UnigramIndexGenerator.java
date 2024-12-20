@@ -1,91 +1,55 @@
 package com.example.index;
 
+import com.google.common.collect.ListMultimap;
+import com.google.common.collect.MultimapBuilder;
 import java.io.IOException;
 import java.sql.Connection;
-import java.util.*;
+import java.util.List;
 
 /**
- * Generates an index for single words (unigrams) from the annotations table.
+ * Generates unigram indexes from annotated text.
+ * Each unigram (single word) is stored with its positions in the corpus.
  */
 public class UnigramIndexGenerator extends BaseIndexGenerator {
-    private final Map<String, PositionList> wordPositions;
-    private static final int FLUSH_THRESHOLD = 10000; // Number of unique words before flushing to disk
-
+    
     public UnigramIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "unigram");
-        this.wordPositions = new HashMap<>();
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "unigrams");
+    }
+
+    public UnigramIndexGenerator(String levelDbPath, String stopwordsPath,
+            int batchSize, Connection sqliteConn, int threadCount) throws IOException {
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "unigrams", threadCount);
     }
 
     @Override
-    protected void processBatch(List<IndexEntry> entries) throws IOException {
-        // Process each entry in the batch
-        for (IndexEntry entry : entries) {
-            // Skip stopwords and empty/null lemmas
-            if (isStopword(entry.lemma)) {
+    protected ListMultimap<String, PositionList> processPartition(List<IndexEntry> partition) throws IOException {
+        if (partition == null) {
+            throw new IOException("Partition cannot be null");
+        }
+        
+        ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
+        
+        for (IndexEntry entry : partition) {
+            if (entry.lemma == null || isStopword(entry.lemma)) {
                 continue;
             }
 
-            // Create position object
-            Position position = new Position(
-                    entry.documentId,
-                    entry.sentenceId,
-                    entry.beginChar,
-                    entry.endChar,
-                    entry.timestamp);
+            String key = entry.lemma.toLowerCase();
+            Position position = new Position(entry.documentId, entry.sentenceId, 
+                                          entry.beginChar, entry.endChar, entry.timestamp);
 
-            // Add to word positions map
-            wordPositions.computeIfAbsent(entry.lemma, k -> new PositionList())
-                    .add(position);
-        }
-
-        // If we've accumulated enough unique words, flush to disk
-        if (wordPositions.size() >= FLUSH_THRESHOLD) {
-            flushToDisk();
-        }
-    }
-
-    /**
-     * Writes accumulated word positions to LevelDB and clears the map
-     */
-    private void flushToDisk() throws IOException {
-        for (Map.Entry<String, PositionList> entry : wordPositions.entrySet()) {
-            String word = entry.getKey();
-            PositionList positions = entry.getValue();
-
-            // Sort positions before serializing
-            positions.sort();
-
-            // Check if this word already has entries in LevelDB
-            byte[] existingData = levelDb.get(bytes(word));
-            if (existingData != null) {
-                // Merge with existing positions
-                PositionList existingPositions = PositionList.deserialize(existingData);
-                positions.merge(existingPositions);
-                positions.sort();
+            // Get or create position list for this term
+            List<PositionList> lists = index.get(key);
+            if (lists.isEmpty()) {
+                PositionList newList = new PositionList();
+                newList.add(position);
+                index.put(key, newList);
+            } else {
+                lists.get(0).add(position);
             }
-
-            // Write to LevelDB
-            writeToLevelDb(word, positions.serialize());
         }
-
-        // Clear the map for next batch
-        wordPositions.clear();
-    }
-
-    @Override
-    public void close() throws IOException {
-        // Ensure any remaining positions are written to disk
-        if (!wordPositions.isEmpty()) {
-            flushToDisk();
-        }
-        super.close();
-    }
-
-    /**
-     * Utility method for LevelDB serialization
-     */
-    private static byte[] bytes(String str) {
-        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        
+        return index;
     }
 }
