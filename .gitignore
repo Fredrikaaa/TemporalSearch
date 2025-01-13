@@ -4,4 +4,5 @@ target/
 .project
 .classpath
 .vscode
-log.txt
+design/
+*code-workspace
