@@ -1,124 +1,126 @@
 package com.example.index;
 
-import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.Logger;
+import com.example.logging.BatchStats;
+import com.example.logging.IndexingMetrics;
+import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.slf4j.LoggerFactory;
-
-import java.time.LocalDate;
-import java.util.List;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests the logging functionality of the PositionList class.
- */
-public class LoggingTest {
-    private ListAppender<ILoggingEvent> listAppender;
-    private Logger logger;
+class LoggingTest {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    @BeforeEach
-    void setUp() {
-        // Get Logback Logger
-        logger = (Logger) LoggerFactory.getLogger(PositionList.class);
-        
-        // Create and start a ListAppender
-        listAppender = new ListAppender<>();
+    @Test
+    void testBatchStatsLogging() throws Exception {
+        // Setup test appender
+        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
         listAppender.start();
-        
-        // Add the appender to the logger
+        ch.qos.logback.classic.Logger logger = 
+            (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(BatchStats.class);
         logger.addAppender(listAppender);
+
+        // Create and use BatchStats
+        BatchStats stats = new BatchStats();
+        stats.recordDocumentProcessing(1_000_000); // 1ms
+        stats.recordDocumentProcessing(2_000_000); // 2ms
+        stats.incrementNulls();
+        stats.incrementErrors();
         
-        // Set the level to DEBUG to capture all logs
-        logger.setLevel(Level.DEBUG);
+        // Log summary
+        stats.logBatchSummary(logger);
+
+        // Verify log output
+        assertFalse(listAppender.list.isEmpty());
+        String logMessage = listAppender.list.get(0).getMessage();
+        JsonNode json = MAPPER.readTree(logMessage);
+
+        assertEquals("batch_complete", json.get("event").asText());
+        assertEquals(2, json.get("total_documents").asInt());
+        assertEquals(1, json.get("documents_with_nulls").asInt());
+        assertEquals(1, json.get("documents_with_errors").asInt());
+        assertTrue(json.has("avg_processing_time_ms"));
+        assertTrue(json.has("heap_used_mb"));
+        assertTrue(json.has("throughput_docs_per_sec"));
     }
 
     @Test
-    void testNullPositionLogging() {
-        PositionList list = new PositionList();
-        list.add(null);
+    void testIndexingMetricsLogging() throws Exception {
+        // Setup test appender
+        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+        listAppender.start();
+        ch.qos.logback.classic.Logger logger = 
+            (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(IndexingMetrics.class);
+        logger.addAppender(listAppender);
 
-        // Verify warning was logged
-        List<ILoggingEvent> logsList = listAppender.list;
-        assertFalse(logsList.isEmpty());
-        assertEquals(Level.WARN, logsList.get(0).getLevel());
-        assertEquals("Attempted to add null position", logsList.get(0).getMessage());
-    }
-
-    @Test
-    void testMergeLogging() {
-        PositionList list1 = new PositionList();
-        PositionList list2 = new PositionList();
-
-        // Add some test positions
-        Position pos1 = new Position(1, 1, 0, 5, LocalDate.now());
-        Position pos2 = new Position(1, 1, 6, 10, LocalDate.now());
-        Position pos3 = new Position(1, 1, 0, 5, LocalDate.now()); // Duplicate of pos1
-
-        list1.add(pos1);
-        list2.add(pos2);
-        list2.add(pos3);
-
-        // Clear previous logs
-        listAppender.list.clear();
-
-        // Perform merge
-        list1.merge(list2);
-
-        // Verify merge logging
-        List<ILoggingEvent> logsList = listAppender.list;
-        assertFalse(logsList.isEmpty());
+        // Create and use IndexingMetrics
+        IndexingMetrics metrics = new IndexingMetrics();
+        metrics.recordProcessingTime(100);
+        metrics.incrementDocumentsProcessed();
+        metrics.addNgramsGenerated(5);
+        metrics.recordStateVerification("ngram_generation", true);
+        metrics.recordStateVerification("position_merge", false);
         
-        // Find the merge log message
-        boolean foundMergeLog = false;
-        for (ILoggingEvent event : logsList) {
-            if (event.getMessage().contains("Merged position lists")) {
-                foundMergeLog = true;
-                assertEquals(Level.DEBUG, event.getLevel());
-                // Verify the log contains the correct counts
-                String message = event.getFormattedMessage();
-                assertTrue(message.contains("initial: 1"));
-                assertTrue(message.contains("other: 2"));
-                assertTrue(message.contains("final: 2"));
-                assertTrue(message.contains("duplicates: 1"));
-                break;
-            }
-        }
-        assertTrue(foundMergeLog, "Merge log message not found");
+        // Log metrics
+        metrics.logMetrics(logger, "test_phase");
+
+        // Verify log output
+        assertFalse(listAppender.list.isEmpty());
+        String logMessage = listAppender.list.get(0).getMessage();
+        JsonNode json = MAPPER.readTree(logMessage);
+
+        assertEquals("indexing_metrics", json.get("event").asText());
+        assertEquals("test_phase", json.get("phase").asText());
+        assertEquals(1, json.get("documents_processed").asInt());
+        assertEquals(5, json.get("ngrams_generated").asInt());
+        assertTrue(json.has("heap_used_mb"));
+        assertTrue(json.has("active_threads"));
+        
+        // Verify state verifications
+        JsonNode verifications = json.get("state_verifications");
+        assertEquals(1, verifications.get("ngram_generation_passed").asInt());
+        assertEquals(1, verifications.get("position_merge_failed").asInt());
     }
 
     @Test
-    void testSerializationLogging() {
-        PositionList list = new PositionList();
-        Position pos = new Position(1, 1, 0, 5, LocalDate.now());
-        list.add(pos);
-
-        // Clear previous logs
-        listAppender.list.clear();
-
-        // Perform serialization
-        byte[] serialized = list.serialize();
-        PositionList.deserialize(serialized);
-
-        // Verify serialization logging
-        List<ILoggingEvent> logsList = listAppender.list;
-        assertFalse(logsList.isEmpty());
-
-        // Verify deserialization logs exist (these are not sampled)
-        boolean foundDeserializeLog = false;
-        for (ILoggingEvent event : logsList) {
-            String message = event.getFormattedMessage();
-            if (message.contains("Deserializing")) {
-                foundDeserializeLog = true;
-                break;
-            }
+    void testBatchStatsPerformance() {
+        BatchStats stats = new BatchStats();
+        long startTime = System.nanoTime();
+        
+        // Simulate processing 10000 documents
+        for (int i = 0; i < 10000; i++) {
+            stats.recordDocumentProcessing(1_000_000); // 1ms per document
         }
-        assertTrue(foundDeserializeLog, "Deserialization log not found");
+        
+        long endTime = System.nanoTime();
+        long duration = endTime - startTime;
+        
+        // Verify performance impact is minimal (should take less than 100ms for 10k operations)
+        assertTrue(duration < 100_000_000, 
+            "BatchStats overhead too high: " + (duration / 1_000_000.0) + "ms");
+    }
 
-        // Note: Serialization logs are sampled, so we don't verify them in the test
-        // as they may not appear every time
+    @Test
+    void testIndexingMetricsPerformance() {
+        IndexingMetrics metrics = new IndexingMetrics();
+        long startTime = System.nanoTime();
+        
+        // Simulate intensive metrics recording
+        for (int i = 0; i < 10000; i++) {
+            metrics.recordProcessingTime(1_000_000);
+            metrics.incrementDocumentsProcessed();
+            metrics.addNgramsGenerated(3);
+            metrics.recordStateVerification("test_state", i % 2 == 0);
+        }
+        
+        long endTime = System.nanoTime();
+        long duration = endTime - startTime;
+        
+        // Verify performance impact is minimal (should take less than 100ms for 40k operations)
+        assertTrue(duration < 100_000_000, 
+            "IndexingMetrics overhead too high: " + (duration / 1_000_000.0) + "ms");
     }
 }

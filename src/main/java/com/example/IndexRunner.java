@@ -1,15 +1,20 @@
 package com.example;
 
 import com.example.index.*;
+import com.example.logging.IndexingMetrics;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 
 public class IndexRunner {
+    private static final Logger logger = LoggerFactory.getLogger(IndexRunner.class);
+
     public static void main(String[] args) {
         // Create focused argument parser for indexing
         ArgumentParser parser = ArgumentParsers.newFor("IndexRunner").build()
@@ -41,105 +46,100 @@ public class IndexRunner {
         try {
             // Parse arguments
             Namespace ns = parser.parseArgs(args);
-
-            // Run indexing process based on selected type
-            try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + ns.getString("db"))) {
-                String indexType = ns.getString("index_type");
-                String baseDir = ns.getString("index_dir");
-
-                if (indexType.equals("all") || indexType.equals("unigram")) {
-                    System.out.println("Generating unigram index...");
-                    String unigramDir = baseDir + "/unigram";
-                    try (UnigramIndexGenerator indexer = new UnigramIndexGenerator(
-                            unigramDir,
-                            ns.getString("stopwords"),
-                            ns.getInt("batch_size"),
-                            conn)) {
-                        indexer.generateIndex();
-                    }
-                }
-
-                if (indexType.equals("all") || indexType.equals("bigram")) {
-                    System.out.println("Generating bigram index...");
-                    String bigramDir = baseDir + "/bigram";
-                    try (BigramIndexGenerator indexer = new BigramIndexGenerator(
-                            bigramDir,
-                            ns.getString("stopwords"),
-                            ns.getInt("batch_size"),
-                            conn)) {
-                        indexer.generateIndex();
-                    }
-                }
-
-                if (indexType.equals("all") || indexType.equals("trigram")) {
-                    System.out.println("Generating trigram index...");
-                    String trigramDir = baseDir + "/trigram";
-                    try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                            trigramDir,
-                            ns.getString("stopwords"),
-                            ns.getInt("batch_size"),
-                            conn)) {
-                        indexer.generateIndex();
-                    }
-                }
-
-                System.out.println("Index generation complete!");
-            }
-
+            runIndexing(
+                ns.getString("db"),
+                ns.getString("index_dir"),
+                ns.getString("stopwords"),
+                ns.getInt("batch_size"),
+                ns.getString("index_type")
+            );
         } catch (ArgumentParserException e) {
             parser.handleError(e);
             System.exit(1);
         } catch (Exception e) {
-            System.err.println("Error generating index: " + e.getMessage());
-            e.printStackTrace();
+            logger.error("Error generating index: {}", e.getMessage(), e);
             System.exit(1);
         }
     }
 
-    // Method that can be called from Pipeline or other classes
     public static void runIndexing(String dbPath, String indexDir, String stopwordsPath,
             int batchSize, String indexType) throws Exception {
+        
+        IndexingMetrics metrics = new IndexingMetrics();
+        logger.info("Starting index generation with parameters: dbPath={}, indexDir={}, batchSize={}",
+            dbPath, indexDir, batchSize);
+
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
-            int totalSteps = 0;
-            if (indexType.equals("all")) {
-                totalSteps = 3; // unigram, bigram, trigram
-            } else {
-                totalSteps = 1;
-            }
+            int totalSteps = indexType.equals("all") ? 3 : 1;
             int currentStep = 0;
 
-            // Create subdirectories for each index type
+            // Track overall processing time
+            long startTime = System.nanoTime();
+
             if (indexType.equals("all") || indexType.equals("unigram")) {
                 currentStep++;
-                System.out.printf("\nStep %d/%d: Generating unigram index...\n", currentStep, totalSteps);
+                logger.info("Step {}/{}: Starting unigram index generation", currentStep, totalSteps);
                 String unigramDir = indexDir + "/unigram";
+                
                 try (UnigramIndexGenerator indexer = new UnigramIndexGenerator(
                         unigramDir, stopwordsPath, batchSize, conn)) {
+                    long stepStart = System.nanoTime();
                     indexer.generateIndex();
+                    long stepDuration = System.nanoTime() - stepStart;
+                    
+                    metrics.recordProcessingTime(stepDuration);
+                    metrics.logMetrics(logger, "unigram_complete");
                 }
+                
+                metrics.recordStateVerification("unigram_generation", true);
             }
 
             if (indexType.equals("all") || indexType.equals("bigram")) {
                 currentStep++;
-                System.out.printf("\nStep %d/%d: Generating bigram index...\n", currentStep, totalSteps);
+                logger.info("Step {}/{}: Starting bigram index generation", currentStep, totalSteps);
                 String bigramDir = indexDir + "/bigram";
+                
                 try (BigramIndexGenerator indexer = new BigramIndexGenerator(
                         bigramDir, stopwordsPath, batchSize, conn)) {
+                    long stepStart = System.nanoTime();
                     indexer.generateIndex();
+                    long stepDuration = System.nanoTime() - stepStart;
+                    
+                    metrics.recordProcessingTime(stepDuration);
+                    metrics.logMetrics(logger, "bigram_complete");
                 }
+                
+                metrics.recordStateVerification("bigram_generation", true);
             }
 
             if (indexType.equals("all") || indexType.equals("trigram")) {
                 currentStep++;
-                System.out.printf("\nStep %d/%d: Generating trigram index...\n", currentStep, totalSteps);
+                logger.info("Step {}/{}: Starting trigram index generation", currentStep, totalSteps);
                 String trigramDir = indexDir + "/trigram";
+                
                 try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
                         trigramDir, stopwordsPath, batchSize, conn)) {
+                    long stepStart = System.nanoTime();
                     indexer.generateIndex();
+                    long stepDuration = System.nanoTime() - stepStart;
+                    
+                    metrics.recordProcessingTime(stepDuration);
+                    metrics.logMetrics(logger, "trigram_complete");
                 }
+                
+                metrics.recordStateVerification("trigram_generation", true);
             }
 
-            System.out.println("\nIndex generation complete!");
+            // Log final metrics
+            long totalDuration = System.nanoTime() - startTime;
+            metrics.recordProcessingTime(totalDuration);
+            metrics.logMetrics(logger, "indexing_complete");
+
+            logger.info("Index generation completed successfully in {} ms", totalDuration / 1_000_000.0);
+        } catch (Exception e) {
+            metrics.recordStateVerification("index_generation", false);
+            metrics.logMetrics(logger, "indexing_failed");
+            throw e;
         }
     }
 }
