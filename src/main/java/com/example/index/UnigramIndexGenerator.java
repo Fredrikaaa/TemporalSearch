@@ -4,7 +4,7 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import java.io.IOException;
 import java.sql.Connection;
-import java.util.List;
+import java.util.*;
 
 /**
  * Generates unigram indexes from annotated text.
@@ -29,9 +29,20 @@ public class UnigramIndexGenerator extends BaseIndexGenerator {
         }
         
         ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
+        // Track unique positions to avoid duplicates from overlapping partitions
+        Set<String> processedPositions = new HashSet<>();
         
         for (IndexEntry entry : partition) {
             if (entry.lemma == null || isStopword(entry.lemma)) {
+                continue;
+            }
+
+            // Create a unique key for this position
+            String positionKey = String.format("%d-%d-%d-%d", 
+                entry.documentId, entry.sentenceId, entry.beginChar, entry.endChar);
+            
+            // Skip if we've already processed this position (from overlap)
+            if (!processedPositions.add(positionKey)) {
                 continue;
             }
 

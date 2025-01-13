@@ -43,9 +43,19 @@ public class IndexRunner {
                 .setDefault("all")
                 .help("Type of index to generate (default: all)");
 
+        parser.addArgument("--debug")
+                .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
+                .help("Enable debug logging to console");
+
         try {
             // Parse arguments
             Namespace ns = parser.parseArgs(args);
+            
+            // Set debug mode
+            if (ns.getBoolean("debug")) {
+                System.setProperty("DEBUG_MODE", "true");
+            }
+
             runIndexing(
                 ns.getString("db"),
                 ns.getString("index_dir"),

@@ -95,33 +95,73 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
 
     protected List<IndexEntry> fetchBatch(long offset) throws SQLException {
         List<IndexEntry> entries = new ArrayList<>();
-        String query = String.format("""
-                SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char,
-                       a.lemma, a.pos, d.timestamp
-                FROM annotations a
-                JOIN documents d ON a.document_id = d.document_id
-                ORDER BY a.document_id, a.sentence_id, a.begin_char
+        // First get the document IDs for this batch
+        String docQuery = String.format("""
+                SELECT DISTINCT d.document_id, d.timestamp
+                FROM documents d
+                JOIN annotations a ON d.document_id = a.document_id
+                ORDER BY d.document_id
                 LIMIT %d OFFSET %d
             """, batchSize, offset);
         
-        try (Statement stmt = sqliteConn.createStatement();
-             ResultSet rs = stmt.executeQuery(query)) {
-            while (rs.next()) {
-                String timestamp = rs.getString("timestamp");
-                LocalDate date = ZonedDateTime.parse(timestamp)
-                        .toLocalDate();
+        try (Statement stmt = sqliteConn.createStatement()) {
+            // Get document IDs for this batch
+            List<DocumentInfo> documents = new ArrayList<>();
+            try (ResultSet rs = stmt.executeQuery(docQuery)) {
+                while (rs.next()) {
+                    documents.add(new DocumentInfo(
+                        rs.getInt("document_id"),
+                        ZonedDateTime.parse(rs.getString("timestamp")).toLocalDate()
+                    ));
+                }
+            }
+            
+            // Now fetch all annotations for these documents
+            if (!documents.isEmpty()) {
+                String ids = documents.stream()
+                    .map(d -> String.valueOf(d.documentId))
+                    .collect(Collectors.joining(","));
                 
-                entries.add(new IndexEntry(
-                    rs.getInt("document_id"),
-                    rs.getInt("sentence_id"),
-                    rs.getInt("begin_char"),
-                    rs.getInt("end_char"),
-                    rs.getString("lemma"),
-                    rs.getString("pos"),
-                    date));
+                String annotationQuery = String.format("""
+                        SELECT document_id, sentence_id, begin_char, end_char,
+                               lemma, pos
+                        FROM annotations
+                        WHERE document_id IN (%s)
+                        ORDER BY document_id, sentence_id, begin_char
+                    """, ids);
+                
+                try (ResultSet rs = stmt.executeQuery(annotationQuery)) {
+                    while (rs.next()) {
+                        int docId = rs.getInt("document_id");
+                        LocalDate timestamp = documents.stream()
+                            .filter(d -> d.documentId == docId)
+                            .findFirst()
+                            .map(d -> d.timestamp)
+                            .orElseThrow();
+                        
+                        entries.add(new IndexEntry(
+                            docId,
+                            rs.getInt("sentence_id"),
+                            rs.getInt("begin_char"),
+                            rs.getInt("end_char"),
+                            rs.getString("lemma"),
+                            rs.getString("pos"),
+                            timestamp));
+                    }
+                }
             }
         }
         return entries;
+    }
+
+    private static class DocumentInfo {
+        final int documentId;
+        final LocalDate timestamp;
+        
+        DocumentInfo(int documentId, LocalDate timestamp) {
+            this.documentId = documentId;
+            this.timestamp = timestamp;
+        }
     }
 
     protected void writeToLevelDb(String key, byte[] value) throws IOException {
@@ -130,40 +170,70 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
 
     /**
      * Partitions the input entries into batches for parallel processing.
-     * Ensures that n-grams are not split across partitions by adding overlap.
+     * Partitions are created along document boundaries to ensure no document
+     * is split across partitions.
      */
     protected List<List<IndexEntry>> partitionEntries(List<IndexEntry> entries) {
-        // For testing with small inputs, ensure at least two partitions
-        int minEntriesPerThread = entries.size() < 100 ? 1 : 10000;
-        int optimalThreadCount = Math.min(threadCount, 
-                                        Math.max(2, entries.size() / minEntriesPerThread));
-        int partitionSize = Math.max(1, entries.size() / optimalThreadCount);
-        
-        List<List<IndexEntry>> partitions = new ArrayList<>();
-        
-        // Add overlap of 2 entries to ensure trigrams are not split
-        int overlap = 2;
-        
-        for (int i = 0; i < entries.size(); i += partitionSize) {
-            int start = Math.max(0, i - overlap);  // Include overlap from previous partition
-            int end = Math.min(entries.size(), i + partitionSize + overlap);  // Include overlap for next partition
-            
-            // Only include entries from the same document and sentence at partition boundaries
-            while (start > 0 && start < entries.size() && 
-                   entries.get(start).documentId == entries.get(start - 1).documentId &&
-                   entries.get(start).sentenceId == entries.get(start - 1).sentenceId) {
-                start--;
-            }
-            
-            while (end < entries.size() && 
-                   entries.get(end - 1).documentId == entries.get(end).documentId &&
-                   entries.get(end - 1).sentenceId == entries.get(end).sentenceId) {
-                end++;
-            }
-            
-            partitions.add(entries.subList(start, end));
+        if (entries.isEmpty()) {
+            return Collections.emptyList();
         }
+
+        // Group entries by document ID
+        Map<Integer, List<IndexEntry>> entriesByDoc = new HashMap<>();
+        for (IndexEntry entry : entries) {
+            entriesByDoc.computeIfAbsent(entry.documentId, k -> new ArrayList<>()).add(entry);
+        }
+
+        // Calculate optimal number of documents per partition
+        int totalDocs = entriesByDoc.size();
+        int optimalThreadCount = Math.min(threadCount, Math.max(2, totalDocs));
+        int docsPerPartition = Math.max(1, totalDocs / optimalThreadCount);
+
+        List<List<IndexEntry>> partitions = new ArrayList<>();
+        List<IndexEntry> currentPartition = new ArrayList<>();
+        int currentDocCount = 0;
+
+        // Create partitions by document
+        for (List<IndexEntry> docEntries : entriesByDoc.values()) {
+            currentPartition.addAll(docEntries);
+            currentDocCount++;
+
+            if (currentDocCount >= docsPerPartition) {
+                partitions.add(currentPartition);
+                currentPartition = new ArrayList<>();
+                currentDocCount = 0;
+            }
+        }
+
+        // Add any remaining entries as the last partition
+        if (!currentPartition.isEmpty()) {
+            partitions.add(currentPartition);
+        }
+
+        // Log partition information
+        if (logger.isDebugEnabled()) {
+            for (int i = 0; i < partitions.size(); i++) {
+                List<IndexEntry> partition = partitions.get(i);
+                Set<Integer> docsInPartition = partition.stream()
+                    .map(e -> e.documentId)
+                    .collect(Collectors.toSet());
+                logger.debug("Partition {} contains {} entries from {} documents", 
+                    i, partition.size(), docsInPartition.size());
+            }
+        }
+
         return partitions;
+    }
+
+    private int countOverlappingEntries(List<IndexEntry> partition1, List<IndexEntry> partition2) {
+        Set<String> entries1 = partition1.stream()
+            .map(e -> String.format("%d-%d-%d-%d", e.documentId, e.sentenceId, e.beginChar, e.endChar))
+            .collect(Collectors.toSet());
+        
+        return (int) partition2.stream()
+            .map(e -> String.format("%d-%d-%d-%d", e.documentId, e.sentenceId, e.beginChar, e.endChar))
+            .filter(entries1::contains)
+            .count();
     }
 
     /**
@@ -254,7 +324,7 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
         
         // Count total entries first
         try (Statement stmt = sqliteConn.createStatement()) {
-            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) as count FROM " + tableName);
+            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) as count FROM annotations");
             if (rs.next()) {
                 totalEntries = rs.getLong("count");
             }

@@ -22,6 +22,10 @@ public class Pipeline {
                 .required(false)
                 .help("SQLite database file path");
 
+        parser.addArgument("--debug")
+                .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
+                .help("Enable debug logging to console");
+
         // Add stage selection argument
         parser.addArgument("--stage")
                 .choices("all", "annotate", "index", "analyze")
@@ -73,11 +77,18 @@ public class Pipeline {
         try {
             // Parse arguments
             Namespace ns = parser.parseArgs(args);
-            String stage = ns.getString("stage");
             
+            // Set debug mode
+            if (ns.getBoolean("debug")) {
+                System.setProperty("DEBUG_MODE", "true");
+            }
+
+            String stage = ns.getString("stage");
+            String dbPath = ns.getString("db");
+
             // Validate required arguments based on stage
             if ((stage.equals("all") || stage.equals("annotate") || stage.equals("index")) 
-                    && ns.getString("db") == null) {
+                    && dbPath == null) {
                 throw new ArgumentParserException("--db is required for annotation and indexing stages", parser);
             }
 
@@ -89,7 +100,7 @@ public class Pipeline {
             if (stage.equals("all") || stage.equals("annotate")) {
                 System.out.println("Running annotation stage...");
                 Annotations.main(new String[] {
-                        "-d", ns.getString("db"),
+                        "-d", dbPath,
                         "-b", ns.getInt("batch_size").toString(),
                         "-t", ns.getInt("threads").toString(),
                         "-l", ns.getInt("limit").toString()
@@ -99,7 +110,7 @@ public class Pipeline {
             if (stage.equals("all") || stage.equals("index")) {
                 System.out.println("Running indexing stage...");
                 IndexRunner.runIndexing(
-                        ns.getString("db"),
+                        dbPath,
                         ns.getString("index_dir"),
                         ns.getString("stopwords"),
                         ns.getInt("batch_size"),

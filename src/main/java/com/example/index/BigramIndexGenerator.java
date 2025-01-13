@@ -4,7 +4,7 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import java.io.IOException;
 import java.sql.Connection;
-import java.util.List;
+import java.util.*;
 
 /**
  * Generates bigram indexes from annotated text.
@@ -27,13 +27,21 @@ public class BigramIndexGenerator extends BaseIndexGenerator {
         ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
         IndexEntry prevEntry = null;
         
-        for (IndexEntry entry : partition) {
+        for (int i = 0; i < partition.size(); i++) {
+            IndexEntry entry = partition.get(i);
+            
+            // Skip if entry has null lemma or is a stopword
+            if (entry.lemma == null || isStopword(entry.lemma)) {
+                prevEntry = null;
+                continue;
+            }
+            
+            // Process bigram with previous entry if they're from the same sentence
             if (prevEntry != null && 
                 prevEntry.documentId == entry.documentId && 
-                prevEntry.sentenceId == entry.sentenceId &&
-                !isStopword(prevEntry.lemma) && !isStopword(entry.lemma)) {
+                prevEntry.sentenceId == entry.sentenceId) {
                 
-                String key = String.format("%s %s", 
+                String key = String.format("%s\u0000%s", 
                     prevEntry.lemma.toLowerCase(), 
                     entry.lemma.toLowerCase());
 
@@ -47,9 +55,61 @@ public class BigramIndexGenerator extends BaseIndexGenerator {
                     newList.add(position);
                     index.put(key, newList);
                 } else {
-                    lists.get(0).add(position);
+                    // Check if this position is already recorded
+                    boolean exists = false;
+                    for (Position pos : lists.get(0).getPositions()) {
+                        if (pos.getDocumentId() == position.getDocumentId() &&
+                            pos.getSentenceId() == position.getSentenceId() &&
+                            pos.getBeginPosition() == position.getBeginPosition() &&
+                            pos.getEndPosition() == position.getEndPosition()) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (!exists) {
+                        lists.get(0).add(position);
+                    }
                 }
             }
+            
+            // If this is the last entry and there's a next entry that could form a bigram
+            if (i == partition.size() - 1 && i + 1 < partition.size()) {
+                IndexEntry nextEntry = partition.get(i + 1);
+                if (nextEntry.lemma != null &&
+                    entry.documentId == nextEntry.documentId && 
+                    entry.sentenceId == nextEntry.sentenceId) {
+                    
+                    String key = String.format("%s\u0000%s", 
+                        entry.lemma.toLowerCase(), 
+                        nextEntry.lemma.toLowerCase());
+
+                    Position position = new Position(nextEntry.documentId, nextEntry.sentenceId,
+                        entry.beginChar, nextEntry.endChar, nextEntry.timestamp);
+
+                    List<PositionList> lists = index.get(key);
+                    if (lists.isEmpty()) {
+                        PositionList newList = new PositionList();
+                        newList.add(position);
+                        index.put(key, newList);
+                    } else {
+                        // Check if this position is already recorded
+                        boolean exists = false;
+                        for (Position pos : lists.get(0).getPositions()) {
+                            if (pos.getDocumentId() == position.getDocumentId() &&
+                                pos.getSentenceId() == position.getSentenceId() &&
+                                pos.getBeginPosition() == position.getBeginPosition() &&
+                                pos.getEndPosition() == position.getEndPosition()) {
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (!exists) {
+                            lists.get(0).add(position);
+                        }
+                    }
+                }
+            }
+            
             prevEntry = entry;
         }
         

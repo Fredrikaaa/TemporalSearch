@@ -62,12 +62,11 @@ public class Position {
         return documentId == position.documentId &&
                 sentenceId == position.sentenceId &&
                 beginPosition == position.beginPosition &&
-                endPosition == position.endPosition &&
-                Objects.equals(timestamp, position.timestamp);
+                endPosition == position.endPosition;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(documentId, sentenceId, beginPosition, endPosition, timestamp);
+        return Objects.hash(documentId, sentenceId, beginPosition, endPosition);
     }
 }

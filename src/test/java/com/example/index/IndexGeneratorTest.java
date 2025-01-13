@@ -145,11 +145,11 @@ class IndexGeneratorTest {
         Options options = new Options();
         try (DB db = factory.open(indexPath.toFile(), options)) {
             // Check some expected bigrams
-            assertNotNull(db.get(bytes("quick brown")), "quick brown should be indexed");
-            assertNotNull(db.get(bytes("brown fox")), "brown fox should be indexed");
+            assertNotNull(db.get(bytes("quick\u0000brown")), "quick brown should be indexed");
+            assertNotNull(db.get(bytes("brown\u0000fox")), "brown fox should be indexed");
             
             // Verify a specific position
-            PositionList quickBrownPositions = PositionList.deserialize(db.get(bytes("quick brown")));
+            PositionList quickBrownPositions = PositionList.deserialize(db.get(bytes("quick\u0000brown")));
             assertEquals(1, quickBrownPositions.size(), "quick brown should appear once");
             
             Position pos = quickBrownPositions.getPositions().get(0);
@@ -174,11 +174,11 @@ class IndexGeneratorTest {
         Options options = new Options();
         try (DB db = factory.open(indexPath.toFile(), options)) {
             // Check some expected trigrams
-            assertNotNull(db.get(bytes("quick brown fox")), "quick brown fox should be indexed");
-            assertNotNull(db.get(bytes("brown fox jumps")), "brown fox jumps should be indexed");
+            assertNotNull(db.get(bytes("quick\u0000brown\u0000fox")), "quick brown fox should be indexed");
+            assertNotNull(db.get(bytes("brown\u0000fox\u0000jumps")), "brown fox jumps should be indexed");
             
             // Verify a specific position
-            PositionList quickBrownFoxPositions = PositionList.deserialize(db.get(bytes("quick brown fox")));
+            PositionList quickBrownFoxPositions = PositionList.deserialize(db.get(bytes("quick\u0000brown\u0000fox")));
             assertEquals(1, quickBrownFoxPositions.size(), "quick brown fox should appear once");
             
             Position pos = quickBrownFoxPositions.getPositions().get(0);

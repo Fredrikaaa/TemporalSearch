@@ -6,3 +6,4 @@ target/
 .vscode
 design/
 *code-workspace
+logs/

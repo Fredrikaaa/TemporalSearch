@@ -235,17 +235,43 @@ public class PositionList {
         int otherSize = other.size();
 
         try {
-            Set<Position> positionSet = new HashSet<>(positions);
+            // Use TreeSet with custom comparator for ordered deduplication
+            // Consider positions adjacent if they are in the same document and sentence
+            // and their character positions are within a small window
+            TreeSet<Position> positionSet = new TreeSet<>((a, b) -> {
+                int docCompare = Integer.compare(a.getDocumentId(), b.getDocumentId());
+                if (docCompare != 0) return docCompare;
+                
+                int sentCompare = Integer.compare(a.getSentenceId(), b.getSentenceId());
+                if (sentCompare != 0) return sentCompare;
+                
+                // If positions overlap or are very close (within 2 chars), consider them the same
+                if (Math.abs(a.getBeginPosition() - b.getBeginPosition()) <= 2 &&
+                    Math.abs(a.getEndPosition() - b.getEndPosition()) <= 2) {
+                    return 0;
+                }
+                
+                int beginCompare = Integer.compare(a.getBeginPosition(), b.getBeginPosition());
+                if (beginCompare != 0) return beginCompare;
+                
+                return Integer.compare(a.getEndPosition(), b.getEndPosition());
+            });
+
+            // Add all positions to the TreeSet
+            positionSet.addAll(positions);
             positionSet.addAll(other.positions);
+
+            // Clear and re-add positions in sorted order
             positions.clear();
             positions.addAll(positionSet);
-            sort();
 
             int finalSize = positions.size();
             int duplicates = initialSize + otherSize - finalSize;
             
-            logger.debug("Merged position lists - initial: {}, other: {}, final: {}, duplicates: {}",
-                initialSize, otherSize, finalSize, duplicates);
+            if (duplicates > 0) {
+                logger.debug("Merged position lists - initial: {}, other: {}, final: {}, duplicates: {}",
+                    initialSize, otherSize, finalSize, duplicates);
+            }
         } catch (Exception e) {
             logger.error("Failed to merge position lists: {}", e.getMessage(), e);
             throw e;

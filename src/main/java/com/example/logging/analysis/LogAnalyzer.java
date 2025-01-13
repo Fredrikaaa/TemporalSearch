@@ -56,6 +56,11 @@ public class LogAnalyzer {
 
     private void processLogLine(String line) {
         try {
+            // Skip empty lines or non-JSON lines
+            if (line == null || line.trim().isEmpty() || !line.trim().startsWith("{")) {
+                return;
+            }
+            
             JsonNode json = MAPPER.readTree(line);
             String event = json.path("event").asText("");
 
