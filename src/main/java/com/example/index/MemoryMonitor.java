@@ -15,11 +15,13 @@ public class MemoryMonitor {
     private static final double DEFAULT_MEMORY_THRESHOLD = 0.75; // 75% memory usage threshold
     private static final long MIN_BATCH_SIZE = 1000;
     private static final long MAX_BATCH_SIZE = 100_000;
+    private static final double SIGNIFICANT_CHANGE = 0.1; // 10% change threshold for logging
     
     private final MemoryMXBean memoryBean;
     private final double memoryThreshold;
     private final AtomicLong currentBatchSize;
     private final AtomicLong peakMemoryUsage;
+    private double lastLoggedUsageRatio = 0.0;
     
     /**
      * Creates a new MemoryMonitor with default settings.
@@ -77,13 +79,17 @@ public class MemoryMonitor {
         // Calculate memory usage ratio
         double usageRatio = (double) used / max;
         
+        // Only log if there's a significant change in memory usage
+        boolean significantChange = Math.abs(usageRatio - lastLoggedUsageRatio) > SIGNIFICANT_CHANGE;
+        
         if (usageRatio > memoryThreshold) {
             // Memory usage is high, reduce batch size
             long newSize = Math.max(MIN_BATCH_SIZE, 
                                   currentBatchSize.get() / 2);
             currentBatchSize.set(newSize);
             
-            logger.info(String.format(
+            // Always log high memory usage warnings
+            logger.warning(String.format(
                 "High memory usage (%.1f%%), reducing batch size to %d",
                 usageRatio * 100, newSize));
             
@@ -92,15 +98,22 @@ public class MemoryMonitor {
                 logger.warning("Memory usage critical, suggesting garbage collection");
                 System.gc();
             }
-        } else if (usageRatio < memoryThreshold / 2) {
+            
+            lastLoggedUsageRatio = usageRatio;
+        } else if (usageRatio < memoryThreshold / 2 && significantChange) {
             // Memory usage is low, try to increase batch size
             long newSize = Math.min(MAX_BATCH_SIZE, 
                                   currentBatchSize.get() * 2);
             currentBatchSize.set(newSize);
             
-            logger.info(String.format(
-                "Low memory usage (%.1f%%), increasing batch size to %d",
-                usageRatio * 100, newSize));
+            // Only log low memory messages when there's a significant change
+            if (logger.isLoggable(java.util.logging.Level.FINE)) {
+                logger.fine(String.format(
+                    "Low memory usage (%.1f%%), increasing batch size to %d",
+                    usageRatio * 100, newSize));
+            }
+            
+            lastLoggedUsageRatio = usageRatio;
         }
     }
     
