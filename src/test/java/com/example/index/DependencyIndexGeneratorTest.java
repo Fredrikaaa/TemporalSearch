@@ -1,143 +1,141 @@
 package com.example.index;
 
-import org.iq80.leveldb.DB;
-import org.iq80.leveldb.Options;
-import static org.iq80.leveldb.impl.Iq80DBFactory.factory;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.*;
+import org.iq80.leveldb.*;
+import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 
-import java.io.File;
-import java.nio.file.Files;
+import java.io.*;
+import java.nio.file.*;
 import java.sql.*;
-import java.time.ZonedDateTime;
-import java.util.HashSet;
-import java.util.Set;
+import java.time.*;
+import java.util.*;
 
-import static org.junit.Assert.*;
-
-public class DependencyIndexGeneratorTest {
-    private Connection conn;
-    private File levelDbFile;
-
-    @Before
-    public void setUp() throws Exception {
-        // Create an in-memory SQLite database
-        conn = DriverManager.getConnection("jdbc:sqlite::memory:");
-        setupDatabase(conn);
-        insertTestDependencies(conn);
-
-        // Create a temporary LevelDB directory
-        levelDbFile = Files.createTempDirectory("dep-index-test").toFile();
+class DependencyIndexGeneratorTest {
+    private Path tempDir;
+    private Path levelDbPath;
+    private Path stopwordsPath;
+    private Path sqlitePath;
+    private Connection sqliteConn;
+    
+    @BeforeEach
+    void setUp() throws Exception {
+        // Create temporary directories and files
+        tempDir = Files.createTempDirectory("dep-index-test-");
+        levelDbPath = tempDir.resolve("test-index");
+        stopwordsPath = tempDir.resolve("stopwords.txt");
+        sqlitePath = tempDir.resolve("test.db");
+        
+        // Create stopwords file
+        List<String> stopwords = Arrays.asList("the", "a", "an");
+        Files.write(stopwordsPath, stopwords);
+        
+        // Create and populate SQLite database
+        sqliteConn = DriverManager.getConnection("jdbc:sqlite:" + sqlitePath);
+        setupDatabase();
     }
-
-    @After
-    public void tearDown() throws Exception {
-        if (conn != null) {
-            conn.close();
+    
+    @AfterEach
+    void tearDown() throws Exception {
+        if (sqliteConn != null && !sqliteConn.isClosed()) {
+            sqliteConn.close();
         }
-        // Remove the LevelDB directory on cleanup
-        deleteRecursively(levelDbFile);
+        
+        // Clean up temporary files
+        Files.walk(tempDir)
+             .sorted(Comparator.reverseOrder())
+             .forEach(path -> {
+                 try {
+                     Files.deleteIfExists(path);
+                 } catch (IOException e) {
+                     // Ignore cleanup errors
+                 }
+             });
     }
-
-    @Test
-    public void testDependencyIndexGeneration() throws Exception {
-        try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
-                levelDbFile.getAbsolutePath(),
-                // Provide an empty stopwords file or path for simplicity
-                createEmptyStopwordsFile().getAbsolutePath(),
-                100, // batch size
-                conn)) {
-            generator.generateIndex();
-        }
-
-        // Verify entries in LevelDB
-        Options options = new Options();
-        options.createIfMissing(false);
-        try (DB db = factory.open(levelDbFile, options)) {
-            String key1 = "jump\0nsubj\0fox";
-            byte[] val1 = db.get(key1.getBytes());
-            assertNotNull("Expected key1 to be in index", val1);
-
-            String key2 = "root\0obj\0dog";
-            byte[] val2 = db.get(key2.getBytes());
-            assertNotNull("Expected key2 to be in index", val2);
-
-            // Confirm that a blacklisted relation key does not appear
-            String blacklistedKey = "root\0punct\0!";
-            assertNull("Should not find blacklisted relation in index",
-                    db.get(blacklistedKey.getBytes()));
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Test helpers
-    // -------------------------------------------------------------------------
-
-    private void setupDatabase(Connection conn) throws SQLException {
-        try (Statement stmt = conn.createStatement()) {
-            stmt.execute("CREATE TABLE documents (document_id INTEGER PRIMARY KEY, timestamp TEXT NOT NULL)");
+    
+    private void setupDatabase() throws SQLException {
+        try (Statement stmt = sqliteConn.createStatement()) {
+            // Create tables
             stmt.execute("""
-                        CREATE TABLE dependencies (
-                            document_id INTEGER,
-                            sentence_id INTEGER,
-                            begin_char INTEGER,
-                            end_char INTEGER,
-                            head_token TEXT,
-                            dependent_token TEXT,
-                            relation TEXT,
-                            FOREIGN KEY(document_id) REFERENCES documents(document_id)
-                        )
-                    """);
-        }
-    }
-
-    private void insertTestDependencies(Connection conn) throws SQLException {
-        try (PreparedStatement docStmt = conn.prepareStatement(
-                "INSERT INTO documents (document_id, timestamp) VALUES (?,?)");
-                PreparedStatement depStmt = conn.prepareStatement("""
-                            INSERT INTO dependencies
-                            (document_id, sentence_id, begin_char, end_char, head_token, dependent_token, relation)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """)) {
-
-            // Insert a single doc with a known timestamp
-            docStmt.setInt(1, 1);
-            docStmt.setString(2, ZonedDateTime.now().toString());
-            docStmt.executeUpdate();
-
-            // Insert sample dependencies (some with blacklisted relations)
-            insertDep(depStmt, 1, 1, 0, 4, "jump", "fox", "nsubj");
-            insertDep(depStmt, 1, 1, 5, 8, "root", "dog", "obj");
-            insertDep(depStmt, 1, 1, 9, 9, "root", "!", "punct"); // blacklisted
-        }
-    }
-
-    private void insertDep(
-            PreparedStatement stmt, int docId, int sentId,
-            int begin, int end, String head, String depTok, String rel) throws SQLException {
-        stmt.setInt(1, docId);
-        stmt.setInt(2, sentId);
-        stmt.setInt(3, begin);
-        stmt.setInt(4, end);
-        stmt.setString(5, head);
-        stmt.setString(6, depTok);
-        stmt.setString(7, rel);
-        stmt.executeUpdate();
-    }
-
-    private File createEmptyStopwordsFile() throws Exception {
-        File tempFile = Files.createTempFile("stopwords", ".txt").toFile();
-        tempFile.deleteOnExit();
-        return tempFile;
-    }
-
-    private void deleteRecursively(File file) throws Exception {
-        if (file.isDirectory()) {
-            for (File f : file.listFiles()) {
-                deleteRecursively(f);
+                CREATE TABLE documents (
+                    document_id INTEGER PRIMARY KEY,
+                    timestamp TEXT NOT NULL
+                )
+            """);
+            
+            stmt.execute("""
+                CREATE TABLE annotations (
+                    document_id INTEGER,
+                    sentence_id INTEGER,
+                    begin_char INTEGER,
+                    end_char INTEGER,
+                    lemma TEXT,
+                    pos TEXT,
+                    FOREIGN KEY (document_id) REFERENCES documents(document_id)
+                )
+            """);
+            
+            // Insert test data
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-20T10:00:00Z')");
+            
+            // Insert test annotations - sentence: "cat chases mouse"
+            String[][] words = {
+                {"cat", "NOUN"}, {"chases", "VERB"}, {"mouse", "NOUN"}
+            };
+            
+            int charPos = 0;
+            for (int i = 0; i < words.length; i++) {
+                stmt.execute(String.format(
+                    "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, lemma, pos) " +
+                    "VALUES (1, 1, %d, %d, '%s', '%s')",
+                    charPos, charPos + words[i][0].length(), words[i][0], words[i][1]
+                ));
+                charPos += words[i][0].length() + 1; // +1 for space
             }
         }
-        file.delete();
     }
-}
+    
+    @Test
+    void testBasicDependencyIndexing() throws Exception {
+        // Test with different thread counts
+        int[] threadCounts = {1, 2};
+        
+        for (int threadCount : threadCounts) {
+            Path indexPath = tempDir.resolve("dep-" + threadCount);
+            
+            try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
+                    indexPath.toString(), stopwordsPath.toString(), 
+                    10, sqliteConn, threadCount)) {
+                generator.generateIndex();
+            }
+            
+            // Verify index contents
+            Options options = new Options();
+            try (DB db = factory.open(indexPath.toFile(), options)) {
+                // Check some expected dependencies
+                String[] expectedKeys = {
+                    "cat\u0000dep\u0000chases",
+                    "cat\u0000dep\u0000mouse",
+                    "chases\u0000dep\u0000cat",
+                    "chases\u0000dep\u0000mouse",
+                    "mouse\u0000dep\u0000cat",
+                    "mouse\u0000dep\u0000chases"
+                };
+                
+                for (String key : expectedKeys) {
+                    assertNotNull(db.get(bytes(key)), "Key should exist: " + key);
+                    
+                    // Verify position information
+                    PositionList positions = PositionList.deserialize(db.get(bytes(key)));
+                    assertEquals(1, positions.size(), "Should have one position for " + key);
+                    
+                    Position pos = positions.getPositions().get(0);
+                    assertEquals(1, pos.getDocumentId());
+                    assertEquals(1, pos.getSentenceId());
+                    assertTrue(pos.getBeginPosition() >= 0);
+                    assertTrue(pos.getEndPosition() <= 16); // "cat chases mouse".length() = 3 + 1 + 6 + 1 + 5 = 16
+                }
+            }
+        }
+    }
+} 
