@@ -25,33 +25,31 @@ public class TrigramIndexGenerator extends BaseIndexGenerator {
     @Override
     protected ListMultimap<String, PositionList> processPartition(List<IndexEntry> partition) {
         ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
-        IndexEntry prevPrevEntry = null;
-        IndexEntry prevEntry = null;
         
-        for (int i = 0; i < partition.size(); i++) {
+        for (int i = 0; i < partition.size() - 2; i++) {
             IndexEntry entry = partition.get(i);
+            IndexEntry nextEntry = partition.get(i + 1);
+            IndexEntry nextNextEntry = partition.get(i + 2);
             
-            // Skip only if entry has null lemma (keep stopwords for trigrams)
-            if (entry.lemma == null) {
-                prevPrevEntry = null;
-                prevEntry = null;
+            // Skip if any entry has null lemma
+            if (entry.lemma == null || nextEntry.lemma == null || nextNextEntry.lemma == null) {
                 continue;
             }
             
-            // Process trigram with previous entries if they're from the same sentence
-            if (prevPrevEntry != null && prevEntry != null && 
-                prevPrevEntry.documentId == entry.documentId && 
-                prevPrevEntry.sentenceId == entry.sentenceId) {
+            // Check if all entries are from the same document and sentence
+            if (entry.documentId == nextEntry.documentId && 
+                entry.documentId == nextNextEntry.documentId &&
+                entry.sentenceId == nextEntry.sentenceId &&
+                entry.sentenceId == nextNextEntry.sentenceId) {
                 
                 String key = String.format("%s\u0000%s\u0000%s", 
-                    prevPrevEntry.lemma.toLowerCase(),
-                    prevEntry.lemma.toLowerCase(),
-                    entry.lemma.toLowerCase());
+                    entry.lemma.toLowerCase(),
+                    nextEntry.lemma.toLowerCase(),
+                    nextNextEntry.lemma.toLowerCase());
 
-                Position position = new Position(entry.documentId, entry.sentenceId,
-                    prevPrevEntry.beginChar, entry.endChar, entry.timestamp);
+                Position position = new Position(nextNextEntry.documentId, nextNextEntry.sentenceId,
+                    entry.beginChar, nextNextEntry.endChar, nextNextEntry.timestamp);
 
-                // Get or create position list for this trigram
                 List<PositionList> lists = index.get(key);
                 if (lists.isEmpty()) {
                     PositionList newList = new PositionList();
@@ -60,43 +58,6 @@ public class TrigramIndexGenerator extends BaseIndexGenerator {
                 } else {
                     lists.get(0).add(position);
                 }
-            }
-            
-            // Look ahead for potential trigrams if we're not at the end
-            if (i < partition.size() - 2) {
-                IndexEntry nextEntry = partition.get(i + 1);
-                IndexEntry nextNextEntry = partition.get(i + 2);
-                
-                // Check if we can form a trigram with the next two entries
-                if (nextEntry.lemma != null && nextNextEntry.lemma != null &&
-                    entry.documentId == nextEntry.documentId && 
-                    entry.documentId == nextNextEntry.documentId &&
-                    entry.sentenceId == nextEntry.sentenceId &&
-                    entry.sentenceId == nextNextEntry.sentenceId) {
-                    
-                    String key = String.format("%s\u0000%s\u0000%s", 
-                        entry.lemma.toLowerCase(),
-                        nextEntry.lemma.toLowerCase(),
-                        nextNextEntry.lemma.toLowerCase());
-
-                    Position position = new Position(nextNextEntry.documentId, nextNextEntry.sentenceId,
-                        entry.beginChar, nextNextEntry.endChar, nextNextEntry.timestamp);
-
-                    List<PositionList> lists = index.get(key);
-                    if (lists.isEmpty()) {
-                        PositionList newList = new PositionList();
-                        newList.add(position);
-                        index.put(key, newList);
-                    } else {
-                        lists.get(0).add(position);
-                    }
-                }
-            }
-            
-            // Update previous entries only if current entry has a valid lemma
-            if (entry.lemma != null) {
-                prevPrevEntry = prevEntry;
-                prevEntry = entry;
             }
         }
         
