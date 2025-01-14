@@ -15,6 +15,9 @@ import java.nio.file.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.sql.Connection;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Collections;
 
 /**
  * Abstract base class for parallel index generation.
@@ -54,14 +57,59 @@ public abstract class ParallelIndexGenerator extends BaseIndexGenerator {
     /**
      * Partitions the input entries into batches for parallel processing.
      */
+    @Override
     protected List<List<IndexEntry>> partitionEntries(List<IndexEntry> entries) {
-        int batchSize = Math.max(1, entries.size() / threadCount);
-        List<List<IndexEntry>> partitions = new ArrayList<>();
-        
-        for (int i = 0; i < entries.size(); i += batchSize) {
-            int end = Math.min(entries.size(), i + batchSize);
-            partitions.add(entries.subList(i, end));
+        if (entries == null || entries.isEmpty()) {
+            return new ArrayList<>();
         }
+
+        // Group entries by document ID
+        Map<Integer, List<IndexEntry>> entriesByDoc = new HashMap<>();
+        for (IndexEntry entry : entries) {
+            entriesByDoc.computeIfAbsent(entry.documentId, k -> new ArrayList<>()).add(entry);
+        }
+
+        // If we only have one document, return all entries as a single partition
+        if (entriesByDoc.size() == 1) {
+            List<List<IndexEntry>> partitions = new ArrayList<>();
+            partitions.add(new ArrayList<>(entries));
+            return partitions;
+        }
+
+        // Sort document IDs to ensure consistent ordering
+        List<Integer> docIds = new ArrayList<>(entriesByDoc.keySet());
+        Collections.sort(docIds);
+
+        // Calculate optimal number of documents per partition
+        int totalDocs = docIds.size();
+        int optimalThreadCount = Math.min(threadCount, totalDocs);
+        int docsPerPartition = Math.max(1, (totalDocs + optimalThreadCount - 1) / optimalThreadCount);
+
+        List<List<IndexEntry>> partitions = new ArrayList<>();
+        List<IndexEntry> currentPartition = new ArrayList<>();
+
+        // Create partitions by document
+        for (int i = 0; i < docIds.size(); i++) {
+            List<IndexEntry> docEntries = entriesByDoc.get(docIds.get(i));
+            
+            // If this is the first document in a partition, or if adding this document
+            // would exceed the target size, start a new partition
+            if (currentPartition.isEmpty() || 
+                (i % docsPerPartition == 0 && i > 0)) {
+                if (!currentPartition.isEmpty()) {
+                    partitions.add(currentPartition);
+                }
+                currentPartition = new ArrayList<>();
+            }
+            
+            currentPartition.addAll(docEntries);
+        }
+
+        // Add the last partition if not empty
+        if (!currentPartition.isEmpty()) {
+            partitions.add(currentPartition);
+        }
+
         return partitions;
     }
 
