@@ -31,7 +31,7 @@ public class TrigramIndexGenerator extends BaseIndexGenerator {
         for (int i = 0; i < partition.size(); i++) {
             IndexEntry entry = partition.get(i);
             
-            // Skip if entry has null lemma (but not if it's a stopword)
+            // Skip only if entry has null lemma (keep stopwords for trigrams)
             if (entry.lemma == null) {
                 prevPrevEntry = null;
                 prevEntry = null;
@@ -58,26 +58,12 @@ public class TrigramIndexGenerator extends BaseIndexGenerator {
                     newList.add(position);
                     index.put(key, newList);
                 } else {
-                    // Check if this position is already recorded
-                    boolean exists = false;
-                    for (Position pos : lists.get(0).getPositions()) {
-                        if (pos.getDocumentId() == position.getDocumentId() &&
-                            pos.getSentenceId() == position.getSentenceId() &&
-                            pos.getBeginPosition() == position.getBeginPosition() &&
-                            pos.getEndPosition() == position.getEndPosition()) {
-                            exists = true;
-                            break;
-                        }
-                    }
-                    if (!exists) {
-                        lists.get(0).add(position);
-                    }
+                    lists.get(0).add(position);
                 }
             }
             
-            // If this is the second-to-last or last entry, check for potential trigrams with next entries
-            if ((i == partition.size() - 2 || i == partition.size() - 1) && 
-                i + 2 < partition.size()) {
+            // Look ahead for potential trigrams if we're not at the end
+            if (i < partition.size() - 2) {
                 IndexEntry nextEntry = partition.get(i + 1);
                 IndexEntry nextNextEntry = partition.get(i + 2);
                 
@@ -102,26 +88,16 @@ public class TrigramIndexGenerator extends BaseIndexGenerator {
                         newList.add(position);
                         index.put(key, newList);
                     } else {
-                        // Check if this position is already recorded
-                        boolean exists = false;
-                        for (Position pos : lists.get(0).getPositions()) {
-                            if (pos.getDocumentId() == position.getDocumentId() &&
-                                pos.getSentenceId() == position.getSentenceId() &&
-                                pos.getBeginPosition() == position.getBeginPosition() &&
-                                pos.getEndPosition() == position.getEndPosition()) {
-                                exists = true;
-                                break;
-                            }
-                        }
-                        if (!exists) {
-                            lists.get(0).add(position);
-                        }
+                        lists.get(0).add(position);
                     }
                 }
             }
             
-            prevPrevEntry = prevEntry;
-            prevEntry = entry;
+            // Update previous entries only if current entry has a valid lemma
+            if (entry.lemma != null) {
+                prevPrevEntry = prevEntry;
+                prevEntry = entry;
+            }
         }
         
         return index;

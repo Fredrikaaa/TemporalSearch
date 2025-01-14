@@ -93,62 +93,41 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
         return word == null || stopwords.contains(word.toLowerCase());
     }
 
-    protected List<IndexEntry> fetchBatch(long offset) throws SQLException {
+    protected List<IndexEntry> fetchBatch(int offset) throws SQLException {
         List<IndexEntry> entries = new ArrayList<>();
-        // First get the document IDs for this batch
-        String docQuery = String.format("""
-                SELECT DISTINCT d.document_id, d.timestamp
-                FROM documents d
-                JOIN annotations a ON d.document_id = a.document_id
-                ORDER BY d.document_id
-                LIMIT %d OFFSET %d
-            """, batchSize, offset);
-        
         try (Statement stmt = sqliteConn.createStatement()) {
-            // Get document IDs for this batch
-            List<DocumentInfo> documents = new ArrayList<>();
-            try (ResultSet rs = stmt.executeQuery(docQuery)) {
+            // First get document timestamps
+            Map<Integer, LocalDate> documentDates = new HashMap<>();
+            try (ResultSet rs = stmt.executeQuery("SELECT document_id, timestamp FROM documents")) {
                 while (rs.next()) {
-                    documents.add(new DocumentInfo(
+                    documentDates.put(
                         rs.getInt("document_id"),
                         ZonedDateTime.parse(rs.getString("timestamp")).toLocalDate()
-                    ));
+                    );
                 }
             }
             
-            // Now fetch all annotations for these documents
-            if (!documents.isEmpty()) {
-                String ids = documents.stream()
-                    .map(d -> String.valueOf(d.documentId))
-                    .collect(Collectors.joining(","));
-                
-                String annotationQuery = String.format("""
-                        SELECT document_id, sentence_id, begin_char, end_char,
-                               lemma, pos
-                        FROM annotations
-                        WHERE document_id IN (%s)
-                        ORDER BY document_id, sentence_id, begin_char
-                    """, ids);
-                
-                try (ResultSet rs = stmt.executeQuery(annotationQuery)) {
-                    while (rs.next()) {
-                        int docId = rs.getInt("document_id");
-                        LocalDate timestamp = documents.stream()
-                            .filter(d -> d.documentId == docId)
-                            .findFirst()
-                            .map(d -> d.timestamp)
-                            .orElseThrow();
-                        
-                        entries.add(new IndexEntry(
-                            docId,
-                            rs.getInt("sentence_id"),
-                            rs.getInt("begin_char"),
-                            rs.getInt("end_char"),
-                            rs.getString("lemma"),
-                            rs.getString("pos"),
-                            timestamp));
-                    }
+            ResultSet rs = stmt.executeQuery(
+                String.format("SELECT * FROM annotations ORDER BY document_id, sentence_id, begin_char LIMIT %d OFFSET %d",
+                    batchSize, offset)
+            );
+            
+            while (rs.next()) {
+                int docId = rs.getInt("document_id");
+                LocalDate timestamp = documentDates.get(docId);
+                if (timestamp == null) {
+                    throw new SQLException("Document " + docId + " not found in documents table");
                 }
+                
+                entries.add(new IndexEntry(
+                    docId,
+                    rs.getInt("sentence_id"),
+                    rs.getInt("begin_char"),
+                    rs.getInt("end_char"),
+                    rs.getString("lemma"),
+                    rs.getString("pos"),
+                    timestamp
+                ));
             }
         }
         return entries;
@@ -174,7 +153,7 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
      * is split across partitions.
      */
     protected List<List<IndexEntry>> partitionEntries(List<IndexEntry> entries) {
-        if (entries.isEmpty()) {
+        if (entries == null || entries.isEmpty()) {
             return Collections.emptyList();
         }
 
@@ -319,75 +298,26 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
         }
     }
 
-    public void generateIndex() throws IOException {
-        long startTime = System.currentTimeMillis();
-        
-        // Count total entries first
-        try (Statement stmt = sqliteConn.createStatement()) {
-            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) as count FROM annotations");
-            if (rs.next()) {
-                totalEntries = rs.getLong("count");
-            }
-        } catch (SQLException e) {
-            logger.warn("Could not get total entry count", e);
-            totalEntries = -1;
-        }
-
-        System.out.printf("Generating %s index using %d threads...\n", 
-            getClass().getSimpleName().replace("IndexGenerator", "").toLowerCase(),
-            threadCount);
-
-        long processedEntries = 0;
-        try (ProgressBar pb = new ProgressBar("Processing entries", totalEntries > 0 ? totalEntries : 100000)) {
-            List<IndexEntry> batch = new ArrayList<>();
-            
+    public void generateIndex() throws SQLException {
+        try {
+            int offset = 0;
             while (true) {
-                List<IndexEntry> entries;
-                try {
-                    entries = fetchBatch(processedEntries);
-                } catch (SQLException e) {
-                    throw new IOException("Error fetching batch", e);
-                }
-                if (entries.isEmpty()) {
+                List<IndexEntry> batch = fetchBatch(offset);
+                if (batch.isEmpty()) {
                     break;
                 }
                 
-                batch.addAll(entries);
-                if (batch.size() >= batchSize) {
-                    processBatch(batch);
-                    processedEntries += batch.size();
-                    pb.stepBy(batch.size());
-                    batch.clear();
-                }
-            }
-            
-            // Process remaining entries
-            if (!batch.isEmpty()) {
                 processBatch(batch);
-                processedEntries += batch.size();
-                pb.stepBy(batch.size());
+                offset += batchSize;
             }
-        }
-
-        // Final merge if needed
-        if (tempDir != null && Files.exists(tempDir)) {
-            List<Path> tempFiles = Files.list(tempDir)
-                .filter(p -> p.toString().endsWith(".gz"))
-                .collect(Collectors.toList());
-            
-            if (!tempFiles.isEmpty()) {
-                System.out.println("Merging temporary files...");
-                try (ProgressBar pb = new ProgressBar("Merging", tempFiles.size())) {
-                    DiskBasedMerger merger = new DiskBasedMerger(tempDir);
-                    merger.mergeIndexes(tempFiles, tempDir.resolve("final.gz"));
-                    pb.stepTo(pb.getMax());
-                }
+        } catch (SQLException e) {
+            throw e;  // Propagate SQLException directly
+        } catch (Exception e) {
+            if (e.getCause() instanceof SQLException) {
+                throw (SQLException) e.getCause();
             }
+            throw new SQLException("Error generating index", e);
         }
-
-        double timeInSeconds = (System.currentTimeMillis() - startTime) / 1000.0;
-        System.out.printf("Index generation complete. Processed %d entries in %.2f seconds\n", 
-            processedEntries, timeInSeconds);
     }
 
     @Override

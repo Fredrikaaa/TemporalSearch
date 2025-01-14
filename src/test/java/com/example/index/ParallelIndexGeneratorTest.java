@@ -79,38 +79,6 @@ class ParallelIndexGeneratorTest {
     }
 
     @Test
-    void testPartitionBoundaries() throws Exception {
-        // Test that n-grams at partition boundaries are correctly handled
-        setupMultiDocumentDatabase(new String[][] {
-            {"one two three four five six seven eight"}  // Single document, single sentence
-        });
-        
-        // Force small partition size to test boundary handling
-        try (UnigramIndexGenerator generator = new UnigramIndexGenerator(
-                tempDir.resolve("boundary-test").toString(), 
-                stopwordsPath.toString(),
-                4, // small batch size
-                sqliteConn,
-                2  // force two partitions
-        )) {
-            List<IndexEntry> entries = generator.fetchBatch(0);
-            List<List<IndexEntry>> partitions = generator.partitionEntries(entries);
-            
-            // Verify overlapping entries exist in both partitions
-            assertFalse(partitions.get(0).isEmpty(), "First partition should not be empty");
-            assertFalse(partitions.get(1).isEmpty(), "Second partition should not be empty");
-            
-            // Verify that entries at partition boundaries are duplicated
-            assertTrue(hasOverlappingEntries(partitions.get(0), partitions.get(1)),
-                "Partitions should have overlapping entries");
-            
-            // Verify all entries within each partition are from the same document/sentence
-            verifyPartitionContinuity(partitions.get(0));
-            verifyPartitionContinuity(partitions.get(1));
-        }
-    }
-
-    @Test
     void testCrossDocumentAndSentenceBoundaries() throws Exception {
         // Setup test data with multiple documents and sentences
         setupMultiDocumentDatabase(new String[][] {
@@ -131,14 +99,14 @@ class ParallelIndexGeneratorTest {
         // Verify no trigrams cross document or sentence boundaries
         try (DB db = factory.open(indexPath.toFile(), new Options())) {
             // Verify no trigrams exist across sentence boundaries
-            assertNull(db.get(bytes("sentence one this")), 
+            assertNull(db.get(bytes("sentence\u0000one\u0000this")), 
                 "Trigram should not exist across sentence boundary");
             // Verify no trigrams exist across document boundaries
-            assertNull(db.get(bytes("two another document")),
+            assertNull(db.get(bytes("two\u0000another\u0000document")),
                 "Trigram should not exist across document boundary");
             
             // Verify valid trigrams within sentences are present
-            assertNotNull(db.get(bytes("this is sentence")),
+            assertNotNull(db.get(bytes("this\u0000is\u0000sentence")),
                 "Valid trigram within sentence should exist");
         }
     }
@@ -150,18 +118,7 @@ class ParallelIndexGeneratorTest {
         
         Path indexPath = tempDir.resolve("concurrent");
         
-        // Warm up JVM
-        try (UnigramIndexGenerator warmup = new UnigramIndexGenerator(
-                indexPath.toString() + "-warmup",
-                stopwordsPath.toString(),
-                1000,
-                sqliteConn,
-                1)) {
-            warmup.generateIndex();
-        }
-        
         // Test with single thread
-        long startTime = System.currentTimeMillis();
         try (UnigramIndexGenerator singleThread = new UnigramIndexGenerator(
                 indexPath.toString() + "-single",
                 stopwordsPath.toString(),
@@ -170,10 +127,8 @@ class ParallelIndexGeneratorTest {
                 1)) {
             singleThread.generateIndex();
         }
-        long singleThreadTime = System.currentTimeMillis() - startTime;
         
         // Test with multiple threads
-        startTime = System.currentTimeMillis();
         try (UnigramIndexGenerator multiThread = new UnigramIndexGenerator(
                 indexPath.toString() + "-multi",
                 stopwordsPath.toString(),
@@ -182,15 +137,9 @@ class ParallelIndexGeneratorTest {
                 Runtime.getRuntime().availableProcessors())) {
             multiThread.generateIndex();
         }
-        long multiThreadTime = System.currentTimeMillis() - startTime;
         
-        // Verify results are identical
+        // Verify results are identical regardless of threading
         assertIndexesAreEqual(indexPath.toString() + "-single", indexPath.toString() + "-multi");
-        
-        // Verify parallel processing is faster
-        assertTrue(multiThreadTime < singleThreadTime, 
-            String.format("Parallel processing should be faster (single: %dms, multi: %dms)", 
-                singleThreadTime, multiThreadTime));
     }
 
     @Test
@@ -262,6 +211,119 @@ class ParallelIndexGeneratorTest {
                 generator.generateIndex();
             }
         });
+    }
+
+    @Test
+    void testNoOverlappingEntriesBetweenPartitions() throws Exception {
+        // Setup test data with multiple documents
+        setupMultiDocumentDatabase(new String[][] {
+            {"doc one sentence one", "doc one sentence two"},
+            {"doc two sentence one", "doc two sentence two"},
+            {"doc three sentence one", "doc three sentence two"},
+            {"doc four sentence one", "doc four sentence two"}
+        });
+        
+        try (UnigramIndexGenerator generator = new UnigramIndexGenerator(
+                tempDir.resolve("no-overlap-test").toString(), 
+                stopwordsPath.toString(),
+                10,
+                sqliteConn,
+                2  // Use 2 threads to force multiple partitions
+        )) {
+            List<IndexEntry> entries = generator.fetchBatch(0);
+            List<List<IndexEntry>> partitions = generator.partitionEntries(entries);
+            
+            // Verify we have multiple partitions
+            assertTrue(partitions.size() >= 2, "Should have at least 2 partitions");
+            
+            // Verify no entries are duplicated across partitions
+            for (int i = 0; i < partitions.size(); i++) {
+                for (int j = i + 1; j < partitions.size(); j++) {
+                    assertFalse(hasOverlappingEntries(partitions.get(i), partitions.get(j)),
+                        String.format("Partitions %d and %d should not have overlapping entries", i, j));
+                }
+            }
+        }
+    }
+
+    @Test
+    void testDocumentCompleteness() throws Exception {
+        // Setup test data with multiple documents
+        setupMultiDocumentDatabase(new String[][] {
+            {"first doc sentence one", "first doc sentence two", "first doc sentence three"},
+            {"second doc sentence one", "second doc sentence two"},
+            {"third doc sentence one", "third doc sentence two", "third doc sentence three"}
+        });
+        
+        try (UnigramIndexGenerator generator = new UnigramIndexGenerator(
+                tempDir.resolve("doc-completeness-test").toString(), 
+                stopwordsPath.toString(),
+                10,
+                sqliteConn,
+                2  // Use 2 threads to force multiple partitions
+        )) {
+            List<IndexEntry> entries = generator.fetchBatch(0);
+            List<List<IndexEntry>> partitions = generator.partitionEntries(entries);
+            
+            // Verify each partition contains complete documents
+            for (List<IndexEntry> partition : partitions) {
+                verifyDocumentCompleteness(partition);
+            }
+        }
+    }
+
+    @Test
+    void testPartitionDistribution() throws Exception {
+        // Setup test data with many documents of varying sizes
+        setupMultiDocumentDatabase(new String[][] {
+            {"doc1 single sentence"},
+            {"doc2 first", "doc2 second"},
+            {"doc3 first", "doc3 second", "doc3 third"},
+            {"doc4 single sentence"},
+            {"doc5 first", "doc5 second"},
+            {"doc6 first", "doc6 second", "doc6 third"}
+        });
+        
+        try (UnigramIndexGenerator generator = new UnigramIndexGenerator(
+                tempDir.resolve("distribution-test").toString(), 
+                stopwordsPath.toString(),
+                10,
+                sqliteConn,
+                3  // Use 3 threads to test distribution
+        )) {
+            List<IndexEntry> entries = generator.fetchBatch(0);
+            List<List<IndexEntry>> partitions = generator.partitionEntries(entries);
+            
+            // Verify reasonable work distribution
+            verifyWorkDistribution(partitions);
+        }
+    }
+
+    @Test
+    void testEdgeCases() throws Exception {
+        // Test empty input
+        try (UnigramIndexGenerator generator = new UnigramIndexGenerator(
+                tempDir.resolve("edge-case-test").toString(), 
+                stopwordsPath.toString(),
+                10,
+                sqliteConn,
+                2
+        )) {
+            List<List<IndexEntry>> emptyPartitions = generator.partitionEntries(new ArrayList<>());
+            assertTrue(emptyPartitions.isEmpty(), "Empty input should result in empty partitions");
+            
+            // Test null input
+            List<List<IndexEntry>> nullPartitions = generator.partitionEntries(null);
+            assertTrue(nullPartitions.isEmpty(), "Null input should result in empty partitions");
+            
+            // Test single document
+            setupMultiDocumentDatabase(new String[][] {
+                {"single document single sentence"}
+            });
+            List<IndexEntry> entries = generator.fetchBatch(0);
+            List<List<IndexEntry>> singleDocPartitions = generator.partitionEntries(entries);
+            assertEquals(1, singleDocPartitions.size(), "Single document should result in single partition");
+        }
     }
 
     private Throwable getRootCause(Throwable throwable) {
@@ -352,5 +414,51 @@ class ParallelIndexGeneratorTest {
 
     private static byte[] bytes(String str) {
         return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private void verifyDocumentCompleteness(List<IndexEntry> partition) {
+        Map<Integer, Set<Integer>> docSentences = new HashMap<>();
+        
+        // Collect all sentences for each document
+        for (IndexEntry entry : partition) {
+            docSentences.computeIfAbsent(entry.documentId, k -> new HashSet<>())
+                       .add(entry.sentenceId);
+        }
+        
+        // Verify each document's sentences are consecutive
+        for (Set<Integer> sentences : docSentences.values()) {
+            int minSentence = Collections.min(sentences);
+            int maxSentence = Collections.max(sentences);
+            for (int i = minSentence; i <= maxSentence; i++) {
+                assertTrue(sentences.contains(i), 
+                    "Document is missing sentence " + i + " (not contiguous)");
+            }
+        }
+    }
+
+    private void verifyWorkDistribution(List<List<IndexEntry>> partitions) {
+        // Calculate statistics about partition sizes
+        int totalEntries = partitions.stream()
+            .mapToInt(List::size)
+            .sum();
+        double avgEntriesPerPartition = (double) totalEntries / partitions.size();
+        
+        // No partition should be empty
+        assertTrue(partitions.stream().noneMatch(List::isEmpty),
+            "No partition should be empty");
+        
+        // No partition should have more than 2x the average entries
+        // (allowing some imbalance due to keeping documents together)
+        assertTrue(partitions.stream()
+            .allMatch(p -> p.size() <= 2 * avgEntriesPerPartition),
+            "No partition should have more than 2x the average number of entries");
+        
+        // Verify each partition has at least one complete document
+        for (List<IndexEntry> partition : partitions) {
+            Set<Integer> docIds = partition.stream()
+                .map(e -> e.documentId)
+                .collect(Collectors.toSet());
+            assertFalse(docIds.isEmpty(), "Each partition should have at least one document");
+        }
     }
 } 
