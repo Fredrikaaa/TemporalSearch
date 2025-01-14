@@ -30,8 +30,8 @@ public class BigramIndexGenerator extends BaseIndexGenerator {
         for (int i = 0; i < partition.size(); i++) {
             IndexEntry entry = partition.get(i);
             
-            // Skip if entry has null lemma or is a stopword
-            if (entry.lemma == null || isStopword(entry.lemma)) {
+            // Skip only if entry has null lemma
+            if (entry.lemma == null) {
                 prevEntry = null;
                 continue;
             }
