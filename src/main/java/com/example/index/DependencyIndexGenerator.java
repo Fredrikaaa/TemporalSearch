@@ -209,7 +209,9 @@ public class DependencyIndexGenerator extends BaseIndexGenerator {
             logger.info("Total dependencies to process: {}", totalCount);
 
             try (ProgressBar pb = new ProgressBar("Indexing dependencies", totalCount)) {
+                List<DependencyEntry> batch = new ArrayList<>();
                 int offset = 0;
+
                 while (true) {
                     try (Statement batchStmt = sqliteConn.createStatement();
                          ResultSet batchRs = batchStmt.executeQuery(String.format(
@@ -229,8 +231,14 @@ public class DependencyIndexGenerator extends BaseIndexGenerator {
                             int beginChar = batchRs.getInt("begin_char");
                             int endChar = batchRs.getInt("end_char");
 
+                            // Skip blacklisted relations
+                            if (BLACKLISTED_RELATIONS.contains(relation)) {
+                                pb.step();
+                                continue;
+                            }
+
                             // Create dependency entry
-                            DependencyEntry entry = new DependencyEntry(
+                            batch.add(new DependencyEntry(
                                 documentId,
                                 sentenceId,
                                 headToken,
@@ -238,13 +246,13 @@ public class DependencyIndexGenerator extends BaseIndexGenerator {
                                 relation,
                                 beginChar,
                                 endChar
-                            );
-
-                            // Add to index
-                            addToIndex(entry);
+                            ));
                             pb.step();
                         } while (batchRs.next());
 
+                        // Process the batch
+                        processDependencyBatch(batch);
+                        batch.clear();
                         offset += BATCH_SIZE;
                     }
                 }
@@ -252,23 +260,38 @@ public class DependencyIndexGenerator extends BaseIndexGenerator {
         }
     }
 
-    private void addToIndex(DependencyEntry entry) throws IOException {
-        if (BLACKLISTED_RELATIONS.contains(entry.relation)) {
-            return;
+    private void processDependencyBatch(List<DependencyEntry> entries) throws IOException {
+        Map<String, PositionList> positionLists = new HashMap<>();
+
+        for (DependencyEntry entry : entries) {
+            String key = generateKey(entry);
+            
+            // Get or create position list for this dependency
+            PositionList positions = positionLists.computeIfAbsent(key, k -> {
+                // Try to read existing positions from LevelDB
+                byte[] existingData = levelDb.get(bytes(k));
+                if (existingData != null) {
+                    try {
+                        return PositionList.deserialize(existingData);
+                    } catch (Exception e) {
+                        logger.error("Error deserializing positions for key {}: {}", k, e.getMessage());
+                        return new PositionList();
+                    }
+                }
+                return new PositionList();
+            });
+
+            // Add new position
+            positions.add(new Position(entry.documentId, entry.sentenceId, 
+                entry.beginChar, entry.endChar, LocalDate.now()));
         }
 
-        // Normalize case during indexing
-        String key = generateKey(entry);
-        
-        PositionList positions = new PositionList();
-        positions.add(new Position(entry.documentId, entry.sentenceId, 
-            entry.beginChar, entry.endChar, LocalDate.now()));
-
-        levelDb.put(bytes(key), positions.serialize());
-        logger.debug("Indexed dependency: {} -> {} ({})", 
-            entry.headToken.toLowerCase(), 
-            entry.dependentToken.toLowerCase(), 
-            entry.relation.toLowerCase());
+        // Write all position lists back to LevelDB
+        for (Map.Entry<String, PositionList> entry : positionLists.entrySet()) {
+            levelDb.put(bytes(entry.getKey()), entry.getValue().serialize());
+            logger.debug("Indexed dependency {} with {} occurrences", 
+                entry.getKey().replace(DELIMITER, "-"), entry.getValue().size());
+        }
     }
 
     // Add new helper method for key generation

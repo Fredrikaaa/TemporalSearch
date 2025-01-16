@@ -46,6 +46,11 @@ public class LevelDBBrowser {
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Show temporal distribution of occurrences");
 
+        parser.addArgument("-m", "--min-occurrences")
+                .type(Integer.class)
+                .setDefault(0)
+                .help("Minimum number of occurrences required to display an entry");
+
         try {
             Namespace ns = parser.parseArgs(args);
             String indexType = ns.getString("index_type");
@@ -54,6 +59,7 @@ public class LevelDBBrowser {
             boolean listEntries = ns.getBoolean("list");
             boolean showCounts = ns.getBoolean("count");
             boolean showTime = ns.getBoolean("time");
+            int minOccurrences = ns.getInt("min_occurrences");
 
             String dbPath = basePath + "/" + indexType;
 
@@ -77,11 +83,11 @@ public class LevelDBBrowser {
             Options options = new Options();
             try (DB db = factory.open(new File(dbPath), options)) {
                 if (words != null) {
-                    lookupWords(db, words, indexType, showTime);
+                    lookupWords(db, words, indexType, showTime, minOccurrences);
                 }
 
                 if (listEntries || showCounts) {
-                    listEntries(db, indexType, showCounts);
+                    listEntries(db, indexType, showCounts, minOccurrences);
                 }
             }
         } catch (ArgumentParserException e) {
@@ -104,9 +110,9 @@ public class LevelDBBrowser {
         };
     }
 
-    private static void lookupWords(DB db, List<String> words, String indexType, boolean showTime) throws IOException {
+    private static void lookupWords(DB db, List<String> words, String indexType, boolean showTime, int minOccurrences) throws IOException {
         if (indexType.equals("dependency")) {
-            lookupDependency(db, words, showTime);
+            lookupDependency(db, words, showTime, minOccurrences);
             return;
         }
         // Create lookup key based on index type
@@ -122,6 +128,12 @@ public class LevelDBBrowser {
         }
 
         PositionList positions = PositionList.deserialize(data);
+        if (positions.size() < minOccurrences) {
+            System.out.printf("%s found but has fewer than %d occurrences (%d)%n",
+                    formatSearchTerm(words, indexType), minOccurrences, positions.size());
+            return;
+        }
+
         System.out.printf("Found %s in %d positions:%n",
                 formatSearchTerm(words, indexType), positions.size());
 
@@ -161,7 +173,7 @@ public class LevelDBBrowser {
         };
     }
 
-    private static void lookupDependency(DB db, List<String> pattern, boolean showTime) throws IOException {
+    private static void lookupDependency(DB db, List<String> pattern, boolean showTime, int minOccurrences) throws IOException {
         String headToken = pattern.size() > 0 ? pattern.get(0).toLowerCase() : WILDCARD;
         String relation = pattern.size() > 1 ? pattern.get(1).toLowerCase() : WILDCARD;
         String depToken = pattern.size() > 2 ? pattern.get(2).toLowerCase() : WILDCARD;
@@ -197,6 +209,15 @@ public class LevelDBBrowser {
         if (matches.isEmpty()) {
             System.out.printf("No matches found for dependency pattern: %s%n",
                     formatDependencyPattern(headToken, relation, depToken));
+            return;
+        }
+
+        // Filter matches by minimum occurrences
+        matches.entrySet().removeIf(entry -> entry.getValue().size() < minOccurrences);
+
+        if (matches.isEmpty()) {
+            System.out.printf("No matches found for dependency pattern %s with at least %d occurrences%n",
+                    formatDependencyPattern(headToken, relation, depToken), minOccurrences);
             return;
         }
 
@@ -247,19 +268,35 @@ public class LevelDBBrowser {
         }
     }
 
-    private static void listEntries(DB db, String indexType, boolean showCounts) throws IOException {
+    private static void listEntries(DB db, String indexType, boolean showCounts, int minOccurrences) throws IOException {
+        logger.debug("Listing entries for {} index with minimum {} occurrences", indexType, minOccurrences);
         Map<String, Integer> entries = new TreeMap<>();
         try (DBIterator iterator = db.iterator()) {
             for (iterator.seekToFirst(); iterator.hasNext(); iterator.next()) {
                 String key = new String(iterator.peekNext().getKey(), "UTF-8");
                 PositionList positions = PositionList.deserialize(iterator.peekNext().getValue());
-
-                // Format key based on index type
-                String displayKey = indexType.equals("dependency") ?
-                        formatDependencyKey(key) :
-                        key.replace(DELIMITER, " ");
-                entries.put(displayKey, positions.size());
+                logger.debug("Found entry '{}' with {} occurrences", key, positions.size());
+                
+                // Only include entries that meet the minimum occurrence threshold
+                if (positions.size() >= minOccurrences) {
+                    // Format key based on index type
+                    String displayKey = indexType.equals("dependency") ?
+                            formatDependencyKey(key) :
+                            key.replace(DELIMITER, " ");
+                    entries.put(displayKey, positions.size());
+                    logger.debug("Added entry '{}' with {} occurrences", displayKey, positions.size());
+                } else {
+                    logger.debug("Skipped entry '{}' with {} occurrences (below threshold of {})", 
+                            key, positions.size(), minOccurrences);
+                }
             }
+        }
+
+        if (entries.isEmpty()) {
+            String plural = indexType.equals("dependency") ? "dependencies" : indexType + "s";
+            System.out.printf("No %s found with at least %d occurrences%n", 
+                    plural, minOccurrences);
+            return;
         }
 
         if (showCounts) {
@@ -273,12 +310,12 @@ public class LevelDBBrowser {
                 System.out.printf("%s: %d occurrences%n", entry.getKey(), entry.getValue());
             }
         } else {
-            System.out.printf("%ss in index:%n", indexType);
+            System.out.printf("%s entries in index:%n", indexType);
             for (String key : entries.keySet()) {
                 System.out.println(key);
             }
         }
-        System.out.printf("%nTotal unique %ss: %d%n", indexType, entries.size());
+        System.out.printf("Total unique %s entries: %d%n", indexType, entries.size());
     }
 
     private static String formatDependencyKey(String key) {
@@ -293,22 +330,5 @@ public class LevelDBBrowser {
 
     private static byte[] bytes(String str) {
         return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    }
-
-    private static String[] parseKey(String key) {
-        // Format: head-relation->dependent
-        int arrowIndex = key.indexOf("->");
-        if (arrowIndex == -1) return new String[0];
-        
-        String beforeArrow = key.substring(0, arrowIndex);
-        String dependent = key.substring(arrowIndex + 2);
-        
-        int relationIndex = beforeArrow.indexOf('-');
-        if (relationIndex == -1) return new String[0];
-        
-        String head = beforeArrow.substring(0, relationIndex);
-        String relation = beforeArrow.substring(relationIndex + 1);
-        
-        return new String[]{head, relation, dependent};
     }
 }
