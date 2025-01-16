@@ -248,8 +248,17 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
                 for (String key : result.keySet()) {
                     List<PositionList> positions = result.get(key);
                     if (!positions.isEmpty()) {
-                        PositionList merged = positions.get(0);
-                        for (int i = 1; i < positions.size(); i++) {
+                        // First try to read existing positions from LevelDB
+                        byte[] existingData = levelDb.get(bytes(key));
+                        PositionList merged;
+                        if (existingData != null) {
+                            merged = PositionList.deserialize(existingData);
+                        } else {
+                            merged = positions.get(0);
+                        }
+                        
+                        // Merge all positions
+                        for (int i = (existingData != null ? 0 : 1); i < positions.size(); i++) {
                             merged.merge(positions.get(i));
                         }
                         writeToLevelDb(key, merged.serialize());
@@ -268,7 +277,7 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
             }
 
             // Collect all results before merging to reduce I/O overhead
-            Map<String, PositionList> mergedResults = new HashMap<>();
+            Map<String, List<PositionList>> mergedResults = new HashMap<>();
             
             for (Future<ListMultimap<String, PositionList>> future : futures) {
                 ListMultimap<String, PositionList> partialResult = future.get(1, TimeUnit.HOURS);
@@ -277,19 +286,31 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
                 for (String key : partialResult.keySet()) {
                     List<PositionList> positions = partialResult.get(key);
                     if (!positions.isEmpty()) {
-                        PositionList existing = mergedResults.get(key);
-                        if (existing == null) {
-                            mergedResults.put(key, positions.get(0));
-                        } else {
-                            existing.merge(positions.get(0));
-                        }
+                        mergedResults.computeIfAbsent(key, k -> new ArrayList<>()).addAll(positions);
                     }
                 }
             }
             
             // Write all results to LevelDB in one go
-            for (Map.Entry<String, PositionList> entry : mergedResults.entrySet()) {
-                writeToLevelDb(entry.getKey(), entry.getValue().serialize());
+            for (Map.Entry<String, List<PositionList>> entry : mergedResults.entrySet()) {
+                String key = entry.getKey();
+                List<PositionList> positions = entry.getValue();
+                if (!positions.isEmpty()) {
+                    // First try to read existing positions from LevelDB
+                    byte[] existingData = levelDb.get(bytes(key));
+                    PositionList merged;
+                    if (existingData != null) {
+                        merged = PositionList.deserialize(existingData);
+                    } else {
+                        merged = positions.get(0);
+                    }
+                    
+                    // Merge all positions
+                    for (int i = (existingData != null ? 0 : 1); i < positions.size(); i++) {
+                        merged.merge(positions.get(i));
+                    }
+                    writeToLevelDb(key, merged.serialize());
+                }
             }
         } catch (NullPointerException e) {
             throw new IOException("Failed to process entries: encountered null entry", e);
