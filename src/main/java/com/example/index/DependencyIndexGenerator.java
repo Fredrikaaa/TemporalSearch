@@ -4,7 +4,6 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.ArrayListMultimap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import me.tongfei.progressbar.ProgressBar;
 import static org.iq80.leveldb.impl.Iq80DBFactory.bytes;
 
 import java.sql.Connection;
@@ -208,53 +207,49 @@ public class DependencyIndexGenerator extends BaseIndexGenerator {
             int totalCount = rs.getInt("total");
             logger.info("Total dependencies to process: {}", totalCount);
 
-            try (ProgressBar pb = new ProgressBar("Indexing dependencies", totalCount)) {
-                List<DependencyEntry> batch = new ArrayList<>();
-                int offset = 0;
+            List<DependencyEntry> batch = new ArrayList<>();
+            int offset = 0;
 
-                while (true) {
-                    try (Statement batchStmt = sqliteConn.createStatement();
-                         ResultSet batchRs = batchStmt.executeQuery(String.format(
-                             "SELECT * FROM dependencies ORDER BY document_id, sentence_id LIMIT %d OFFSET %d",
-                             BATCH_SIZE, offset))) {
+            while (true) {
+                try (Statement batchStmt = sqliteConn.createStatement();
+                     ResultSet batchRs = batchStmt.executeQuery(String.format(
+                         "SELECT * FROM dependencies ORDER BY document_id, sentence_id LIMIT %d OFFSET %d",
+                         BATCH_SIZE, offset))) {
 
-                        if (!batchRs.next()) {
-                            break;
+                    if (!batchRs.next()) {
+                        break;
+                    }
+
+                    do {
+                        int documentId = batchRs.getInt("document_id");
+                        int sentenceId = batchRs.getInt("sentence_id");
+                        String headToken = batchRs.getString("head_token");
+                        String dependentToken = batchRs.getString("dependent_token");
+                        String relation = batchRs.getString("relation");
+                        int beginChar = batchRs.getInt("begin_char");
+                        int endChar = batchRs.getInt("end_char");
+
+                        // Skip blacklisted relations
+                        if (BLACKLISTED_RELATIONS.contains(relation)) {
+                            continue;
                         }
 
-                        do {
-                            int documentId = batchRs.getInt("document_id");
-                            int sentenceId = batchRs.getInt("sentence_id");
-                            String headToken = batchRs.getString("head_token");
-                            String dependentToken = batchRs.getString("dependent_token");
-                            String relation = batchRs.getString("relation");
-                            int beginChar = batchRs.getInt("begin_char");
-                            int endChar = batchRs.getInt("end_char");
+                        // Create dependency entry
+                        batch.add(new DependencyEntry(
+                            documentId,
+                            sentenceId,
+                            headToken,
+                            dependentToken,
+                            relation,
+                            beginChar,
+                            endChar
+                        ));
+                    } while (batchRs.next());
 
-                            // Skip blacklisted relations
-                            if (BLACKLISTED_RELATIONS.contains(relation)) {
-                                pb.step();
-                                continue;
-                            }
-
-                            // Create dependency entry
-                            batch.add(new DependencyEntry(
-                                documentId,
-                                sentenceId,
-                                headToken,
-                                dependentToken,
-                                relation,
-                                beginChar,
-                                endChar
-                            ));
-                            pb.step();
-                        } while (batchRs.next());
-
-                        // Process the batch
-                        processDependencyBatch(batch);
-                        batch.clear();
-                        offset += BATCH_SIZE;
-                    }
+                    // Process the batch
+                    processDependencyBatch(batch);
+                    batch.clear();
+                    offset += BATCH_SIZE;
                 }
             }
         }

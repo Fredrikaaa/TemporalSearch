@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import me.tongfei.progressbar.*;
 import java.util.stream.*;
+import com.example.logging.ProgressTracker;
 
 /**
  * Abstract base class that provides the framework for generating specialized indexes from annotated text.
@@ -38,6 +39,7 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
     private final int threadCount;
     private final Path tempDir;
     private long totalEntries = 0;
+    protected final ProgressTracker progress;
 
     protected BaseIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn, String tableName) throws IOException {
@@ -60,6 +62,7 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
         this.threadCount = Math.max(1, threadCount);
         this.executorService = Executors.newFixedThreadPool(this.threadCount);
         this.tempDir = Files.createTempDirectory("index-");
+        this.progress = new ProgressTracker();
         
         // Ensure temp directory cleanup on JVM shutdown
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -337,6 +340,17 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
 
     public void generateIndex() throws SQLException, IOException {
         try {
+            // Count total entries first
+            try (Statement stmt = sqliteConn.createStatement()) {
+                String table = tableName.equals("dependencies") ? "dependencies" : "annotations";
+                ResultSet rs = stmt.executeQuery("SELECT COUNT(*) as total FROM " + table);
+                if (rs.next()) {
+                    totalEntries = rs.getLong("total");
+                }
+            }
+
+            progress.startIndex(tableName, totalEntries);
+
             int offset = 0;
             while (true) {
                 List<IndexEntry> batch = fetchBatch(offset);
@@ -345,8 +359,12 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
                 }
                 
                 processBatch(batch);
+                progress.updateIndex(batch.size());
+                
                 offset += batchSize;
             }
+
+            progress.completeIndex();
         } catch (SQLException e) {
             throw e;  // Propagate SQLException directly
         } catch (IOException e) {
@@ -364,6 +382,7 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
+        progress.close();
         executorService.shutdown();
         try {
             if (!executorService.awaitTermination(1, TimeUnit.MINUTES)) {

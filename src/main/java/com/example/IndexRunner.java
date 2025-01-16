@@ -2,6 +2,7 @@ package com.example;
 
 import com.example.index.*;
 import com.example.logging.IndexingMetrics;
+import com.example.logging.ProgressTracker;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
@@ -11,6 +12,8 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
 
 public class IndexRunner {
     private static final Logger logger = LoggerFactory.getLogger(IndexRunner.class);
@@ -72,6 +75,20 @@ public class IndexRunner {
         }
     }
 
+    private static long countEntries(Connection conn, String indexType) throws Exception {
+        try (Statement stmt = conn.createStatement()) {
+            String table = switch (indexType) {
+                case "dependency" -> "dependencies";
+                default -> "annotations";
+            };
+            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) as total FROM " + table);
+            if (rs.next()) {
+                return rs.getLong("total");
+            }
+            return 0;
+        }
+    }
+
     public static void runIndexing(String dbPath, String indexDir, String stopwordsPath,
             int batchSize, String indexType) throws Exception {
         
@@ -79,12 +96,13 @@ public class IndexRunner {
         logger.info("Starting index generation with parameters: dbPath={}, indexDir={}, batchSize={}",
             dbPath, indexDir, batchSize);
 
-        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
+             ProgressTracker progress = new ProgressTracker()) {
+            
             int totalSteps = indexType.equals("all") ? 4 : 1;
+            long totalWork = indexType.equals("all") ? 4 : 1; // Just track number of indexes
+            progress.startOverall("Generating indexes", totalWork);
             int currentStep = 0;
-
-            // Track overall processing time
-            long startTime = System.nanoTime();
 
             if (indexType.equals("all") || indexType.equals("unigram")) {
                 currentStep++;
@@ -98,10 +116,8 @@ public class IndexRunner {
                     long stepDuration = System.nanoTime() - stepStart;
                     
                     metrics.recordProcessingTime(stepDuration);
-                    metrics.logMetrics(logger, "unigram_complete");
                 }
-                
-                metrics.recordStateVerification("unigram_generation", true);
+                progress.updateOverall(1);
             }
 
             if (indexType.equals("all") || indexType.equals("bigram")) {
@@ -116,10 +132,8 @@ public class IndexRunner {
                     long stepDuration = System.nanoTime() - stepStart;
                     
                     metrics.recordProcessingTime(stepDuration);
-                    metrics.logMetrics(logger, "bigram_complete");
                 }
-                
-                metrics.recordStateVerification("bigram_generation", true);
+                progress.updateOverall(1);
             }
 
             if (indexType.equals("all") || indexType.equals("trigram")) {
@@ -134,10 +148,8 @@ public class IndexRunner {
                     long stepDuration = System.nanoTime() - stepStart;
                     
                     metrics.recordProcessingTime(stepDuration);
-                    metrics.logMetrics(logger, "trigram_complete");
                 }
-                
-                metrics.recordStateVerification("trigram_generation", true);
+                progress.updateOverall(1);
             }
 
             if (indexType.equals("all") || indexType.equals("dependency")) {
@@ -152,22 +164,13 @@ public class IndexRunner {
                     long stepDuration = System.nanoTime() - stepStart;
                     
                     metrics.recordProcessingTime(stepDuration);
-                    metrics.logMetrics(logger, "dependency_complete");
                 }
-                
-                metrics.recordStateVerification("dependency_generation", true);
+                progress.updateOverall(1);
             }
 
-            // Log final metrics
-            long totalDuration = System.nanoTime() - startTime;
-            metrics.recordProcessingTime(totalDuration);
+            progress.completeOverall();
+            logger.info("Index generation completed");
             metrics.logMetrics(logger, "indexing_complete");
-
-            logger.info("Index generation completed successfully in {} ms", totalDuration / 1_000_000.0);
-        } catch (Exception e) {
-            metrics.recordStateVerification("index_generation", false);
-            metrics.logMetrics(logger, "indexing_failed");
-            throw e;
         }
     }
 }
