@@ -8,6 +8,8 @@ import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 public class Pipeline {
@@ -49,15 +51,15 @@ public class Pipeline {
 
         // Add index-specific arguments
         parser.addArgument("--index-dir")
-                .setDefault("index")
-                .help("Directory for storing indexes (default: 'index')");
+                .setDefault("indexes")
+                .help("Directory for storing indexes (default: 'indexes')");
 
         parser.addArgument("--stopwords")
                 .setDefault("stopwords.txt")
                 .help("Path to stopwords file (default: stopwords.txt)");
 
         parser.addArgument("--index-type")
-                .choices("unigram", "bigram", "trigram", "all")
+                .choices("unigram", "bigram", "trigram", "dependency", "all")
                 .setDefault("all")
                 .help("Type of index to generate (default: all)");
 
@@ -99,12 +101,23 @@ public class Pipeline {
             // Run selected pipeline stages
             if (stage.equals("all") || stage.equals("annotate")) {
                 System.out.println("Running annotation stage...");
-                Annotations.main(new String[] {
-                        "-d", dbPath,
-                        "-b", ns.getInt("batch_size").toString(),
-                        "-t", ns.getInt("threads").toString(),
-                        "-l", ns.getInt("limit").toString()
-                });
+                // Build command arguments list
+                List<String> annotationArgs = new ArrayList<>();
+                annotationArgs.add("-d");
+                annotationArgs.add(dbPath);
+                annotationArgs.add("-b");
+                annotationArgs.add(ns.getInt("batch_size").toString());
+                annotationArgs.add("-t");
+                annotationArgs.add(ns.getInt("threads").toString());
+                
+                // Only add limit if specified
+                Integer limit = ns.getInt("limit");
+                if (limit != null) {
+                    annotationArgs.add("-l");
+                    annotationArgs.add(limit.toString());
+                }
+                
+                Annotations.main(annotationArgs.toArray(new String[0]));
             }
 
             if (stage.equals("all") || stage.equals("index")) {

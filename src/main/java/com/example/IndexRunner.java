@@ -26,8 +26,8 @@ public class IndexRunner {
                 .help("SQLite database file path");
 
         parser.addArgument("--index-dir")
-                .setDefault("index")
-                .help("Directory for storing indexes (default: 'index')");
+                .setDefault("indexes")
+                .help("Directory for storing indexes (default: 'indexes')");
 
         parser.addArgument("--stopwords")
                 .setDefault("stopwords.txt")
@@ -39,7 +39,7 @@ public class IndexRunner {
                 .help("Batch size for processing (default: 1000)");
 
         parser.addArgument("--index-type")
-                .choices("unigram", "bigram", "trigram", "all")
+                .choices("unigram", "bigram", "trigram", "dependency", "all")
                 .setDefault("all")
                 .help("Type of index to generate (default: all)");
 
@@ -80,7 +80,7 @@ public class IndexRunner {
             dbPath, indexDir, batchSize);
 
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
-            int totalSteps = indexType.equals("all") ? 3 : 1;
+            int totalSteps = indexType.equals("all") ? 4 : 1;
             int currentStep = 0;
 
             // Track overall processing time
@@ -138,6 +138,24 @@ public class IndexRunner {
                 }
                 
                 metrics.recordStateVerification("trigram_generation", true);
+            }
+
+            if (indexType.equals("all") || indexType.equals("dependency")) {
+                currentStep++;
+                logger.info("Step {}/{}: Starting dependency index generation", currentStep, totalSteps);
+                String dependencyDir = indexDir + "/dependency";
+                
+                try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
+                        dependencyDir, stopwordsPath, batchSize, conn)) {
+                    long stepStart = System.nanoTime();
+                    indexer.generateIndex();
+                    long stepDuration = System.nanoTime() - stepStart;
+                    
+                    metrics.recordProcessingTime(stepDuration);
+                    metrics.logMetrics(logger, "dependency_complete");
+                }
+                
+                metrics.recordStateVerification("dependency_generation", true);
             }
 
             // Log final metrics
