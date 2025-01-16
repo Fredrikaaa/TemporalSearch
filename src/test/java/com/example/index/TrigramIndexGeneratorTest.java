@@ -108,16 +108,16 @@ public class TrigramIndexGeneratorTest {
         Options options = new Options();
         try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
             // Test trigrams with stopwords
-            verifyTrigram(db, "the\u0000black\u0000cat", 1, 0, 0, 13, 2); // Appears in both docs
+            verifyTrigram(db, "the" + BaseIndexGenerator.DELIMITER + "black" + BaseIndexGenerator.DELIMITER + "cat", 1, 0, 0, 13, 2);
 
             // Test regular trigrams in first document
-            verifyTrigram(db, "black\u0000cat\u0000sit", 1, 0, 4, 18, 1);
-            verifyTrigram(db, "cat\u0000sit\u0000quietly", 1, 0, 10, 26, 1);
-            verifyTrigram(db, "sit\u0000quietly\u0000now", 1, 0, 14, 30, 1);
+            verifyTrigram(db, "black" + BaseIndexGenerator.DELIMITER + "cat" + BaseIndexGenerator.DELIMITER + "sit", 1, 0, 4, 18, 1);
+            verifyTrigram(db, "cat" + BaseIndexGenerator.DELIMITER + "sit" + BaseIndexGenerator.DELIMITER + "quietly", 1, 0, 10, 26, 1);
+            verifyTrigram(db, "sit" + BaseIndexGenerator.DELIMITER + "quietly" + BaseIndexGenerator.DELIMITER + "now", 1, 0, 14, 30, 1);
 
             // Test regular trigrams in second document
-            verifyTrigram(db, "black\u0000cat\u0000run", 2, 0, 4, 18, 1);
-            verifyTrigram(db, "cat\u0000run\u0000quickly", 2, 0, 10, 26, 1);
+            verifyTrigram(db, "black" + BaseIndexGenerator.DELIMITER + "cat" + BaseIndexGenerator.DELIMITER + "run", 2, 0, 4, 18, 1);
+            verifyTrigram(db, "cat" + BaseIndexGenerator.DELIMITER + "run" + BaseIndexGenerator.DELIMITER + "quickly", 2, 0, 10, 26, 1);
         }
     }
 
@@ -131,12 +131,12 @@ public class TrigramIndexGeneratorTest {
         Options options = new Options();
         try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
             // Verify no trigram exists between sentences
-            assertNull(db.get(bytes("quietly\u0000now\u0000it")),
+            assertNull(db.get(bytes("quietly" + BaseIndexGenerator.DELIMITER + "now" + BaseIndexGenerator.DELIMITER + "it")),
                     "Trigram should not span sentence boundary");
 
             // Verify trigrams within second sentence exist
-            verifyTrigram(db, "it\u0000purr\u0000very", 1, 1, 31, 44, 1);
-            verifyTrigram(db, "purr\u0000very\u0000softly", 1, 1, 34, 51, 1);
+            verifyTrigram(db, "it" + BaseIndexGenerator.DELIMITER + "purr" + BaseIndexGenerator.DELIMITER + "very", 1, 1, 31, 44, 1);
+            verifyTrigram(db, "purr" + BaseIndexGenerator.DELIMITER + "very" + BaseIndexGenerator.DELIMITER + "softly", 1, 1, 34, 51, 1);
         }
     }
 
@@ -214,9 +214,9 @@ public class TrigramIndexGeneratorTest {
         Options options = new Options();
         try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
             // Verify all overlapping trigrams are present
-            verifyTrigram(db, "the\u0000quick\u0000brown", 3, 0, 0, 15, 1);
-            verifyTrigram(db, "quick\u0000brown\u0000fox", 3, 0, 4, 19, 1);
-            verifyTrigram(db, "brown\u0000fox\u0000jump", 3, 0, 10, 25, 1);
+            verifyTrigram(db, "the" + BaseIndexGenerator.DELIMITER + "quick" + BaseIndexGenerator.DELIMITER + "brown", 3, 0, 0, 15, 1);
+            verifyTrigram(db, "quick" + BaseIndexGenerator.DELIMITER + "brown" + BaseIndexGenerator.DELIMITER + "fox", 3, 0, 4, 19, 1);
+            verifyTrigram(db, "brown" + BaseIndexGenerator.DELIMITER + "fox" + BaseIndexGenerator.DELIMITER + "jump", 3, 0, 10, 25, 1);
         }
     }
 
@@ -258,7 +258,7 @@ public class TrigramIndexGeneratorTest {
         try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
             // Verify the trigram appears three times (twice in original data, once in new
             // data)
-            verifyTrigram(db, "the\u0000black\u0000cat", 1, 0, 0, 13, 3);
+            verifyTrigram(db, "the" + BaseIndexGenerator.DELIMITER + "black" + BaseIndexGenerator.DELIMITER + "cat", 1, 0, 0, 13, 3);
         }
     }
 
@@ -294,7 +294,7 @@ public class TrigramIndexGeneratorTest {
             iterator.seekToFirst();
             while (iterator.hasNext()) {
                 String key = new String(iterator.peekNext().getKey());
-                assertFalse(key.startsWith("hello\u0000"),
+                assertFalse(key.startsWith("hello" + BaseIndexGenerator.DELIMITER),
                         "No trigrams should start with the single word");
                 iterator.next();
             }

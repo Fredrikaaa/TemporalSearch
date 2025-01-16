@@ -28,6 +28,7 @@ import java.util.stream.*;
  */
 public abstract class BaseIndexGenerator implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(BaseIndexGenerator.class);
+    public static final String DELIMITER = "\u0000";
     protected final DB levelDb;
     protected final Set<String> stopwords;
     protected final int batchSize;

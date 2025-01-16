@@ -42,9 +42,11 @@ public class TrigramIndexGenerator extends BaseIndexGenerator {
                 entry.sentenceId == nextEntry.sentenceId &&
                 entry.sentenceId == nextNextEntry.sentenceId) {
                 
-                String key = String.format("%s\u0000%s\u0000%s", 
+                String key = String.format("%s%s%s%s%s", 
                     entry.lemma.toLowerCase(),
+                    BaseIndexGenerator.DELIMITER,
                     nextEntry.lemma.toLowerCase(),
+                    BaseIndexGenerator.DELIMITER,
                     nextNextEntry.lemma.toLowerCase());
 
                 Position position = new Position(nextNextEntry.documentId, nextNextEntry.sentenceId,

@@ -24,14 +24,14 @@ public class DependencyIndexGenerator extends BaseIndexGenerator {
         "punct", "det", "case", "cc"
     ));
 
-    private static class DependencyEntry {
-        private final int documentId;
-        private final int sentenceId;
-        private final String headToken;
-        private final String dependentToken;
-        private final String relation;
-        private final int beginChar;
-        private final int endChar;
+    static class DependencyEntry {
+        final int documentId;
+        final int sentenceId;
+        final String headToken;
+        final String dependentToken;
+        final String relation;
+        final int beginChar;
+        final int endChar;
 
         public DependencyEntry(int documentId, int sentenceId, String headToken, 
                              String dependentToken, String relation, int beginChar, int endChar) {
@@ -90,8 +90,13 @@ public class DependencyIndexGenerator extends BaseIndexGenerator {
                     // Skip blacklisted relations
                     String relation = rs.getString("relation");
                     if (BLACKLISTED_RELATIONS.contains(relation)) {
+                        logger.debug("Skipping blacklisted relation: {}", relation);
                         continue;
                     }
+                    
+                    String headToken = rs.getString("head_token");
+                    String dependentToken = rs.getString("dependent_token");
+                    logger.debug("Processing dependency: {} -{}- {}", headToken, relation, dependentToken);
                     
                     // Create an entry for the head token
                     entries.add(new IndexEntry(
@@ -160,9 +165,11 @@ public class DependencyIndexGenerator extends BaseIndexGenerator {
                     }
                     
                     // Create the key with the relation type
-                    String key = String.format("%s\u0000%s\u0000%s",
+                    String key = String.format("%s%s%s%s%s", 
                         headEntry.lemma.toLowerCase(),
+                        DELIMITER,
                         headEntry.pos, // relation type stored in pos field
+                        DELIMITER,
                         depEntry.lemma.toLowerCase());
                     
                     // Use the minimum and maximum character positions to span both tokens
@@ -250,15 +257,27 @@ public class DependencyIndexGenerator extends BaseIndexGenerator {
             return;
         }
 
-        // Create key in format: headToken\0relation\0dependentToken
-        String key = String.format("%s\0%s\0%s", entry.headToken, entry.relation, entry.dependentToken);
+        // Normalize case during indexing
+        String key = generateKey(entry);
         
-        // Create position information
         PositionList positions = new PositionList();
-        positions.add(new Position(entry.documentId, entry.sentenceId, entry.beginChar, entry.endChar, LocalDate.now()));
+        positions.add(new Position(entry.documentId, entry.sentenceId, 
+            entry.beginChar, entry.endChar, LocalDate.now()));
 
-        // Store in LevelDB
         levelDb.put(bytes(key), positions.serialize());
-        logger.debug("Indexed dependency: {} -> {} ({})", entry.headToken, entry.dependentToken, entry.relation);
+        logger.debug("Indexed dependency: {} -> {} ({})", 
+            entry.headToken.toLowerCase(), 
+            entry.dependentToken.toLowerCase(), 
+            entry.relation.toLowerCase());
+    }
+
+    // Add new helper method for key generation
+    protected String generateKey(DependencyEntry entry) {
+        return String.format("%s%s%s%s%s", 
+            entry.headToken.toLowerCase(),
+            DELIMITER,
+            entry.relation.toLowerCase(),
+            DELIMITER,
+            entry.dependentToken.toLowerCase());
     }
 } 

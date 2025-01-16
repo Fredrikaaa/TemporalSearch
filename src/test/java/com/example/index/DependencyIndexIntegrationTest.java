@@ -124,10 +124,10 @@ public class DependencyIndexIntegrationTest {
                 DriverManager.getConnection("jdbc:sqlite:" + dbPath))) {
             
             // Check that nsubj relation is indexed but det is filtered
-            assertTrue(indexer.hasKey("sleeps\0nsubj\0cat"), 
-                "Should contain subject dependency");
-            assertFalse(indexer.hasKey("cat\0det\0The"),
-                "Should not contain determiner dependency (filtered)");
+            assertTrue(indexer.hasKey("sleeps" + BaseIndexGenerator.DELIMITER + "nsubj" + BaseIndexGenerator.DELIMITER + "cat"),
+                "Should find subject dependency");
+            assertFalse(indexer.hasKey("cat" + BaseIndexGenerator.DELIMITER + "det" + BaseIndexGenerator.DELIMITER + "The"),
+                "Should not find blacklisted dependency");
         }
     }
 } 

@@ -18,6 +18,29 @@ class DependencyIndexGeneratorTest {
     private Path sqlitePath;
     private Connection sqliteConn;
     
+    private static final String TEST_DB_PATH = "test-leveldb-dependency";
+
+    static class DependencyEntry {
+        private final int documentId;
+        private final int sentenceId;
+        private final String headToken;
+        private final String dependentToken;
+        private final String relation;
+        private final int beginChar;
+        private final int endChar;
+
+        public DependencyEntry(int documentId, int sentenceId, String headToken, 
+                             String dependentToken, String relation, int beginChar, int endChar) {
+            this.documentId = documentId;
+            this.sentenceId = sentenceId;
+            this.headToken = headToken;
+            this.dependentToken = dependentToken;
+            this.relation = relation;
+            this.beginChar = beginChar;
+            this.endChar = endChar;
+        }
+    }
+    
     @BeforeEach
     void setUp() throws Exception {
         // Create temporary directories and files
@@ -127,8 +150,8 @@ class DependencyIndexGeneratorTest {
             try (DB db = factory.open(indexPath.toFile(), options)) {
                 // Check expected dependencies
                 String[] expectedKeys = {
-                    "chases\0nsubj\0cat",   // Subject dependency
-                    "chases\0dobj\0mouse"    // Object dependency
+                    "chases" + BaseIndexGenerator.DELIMITER + "nsubj" + BaseIndexGenerator.DELIMITER + "cat",   // Subject dependency
+                    "chases" + BaseIndexGenerator.DELIMITER + "dobj" + BaseIndexGenerator.DELIMITER + "mouse"    // Object dependency
                 };
                 
                 for (String key : expectedKeys) {
@@ -145,6 +168,22 @@ class DependencyIndexGeneratorTest {
                     assertTrue(pos.getEndPosition() <= 16); // "cat chases mouse".length() = 16
                 }
             }
+        }
+    }
+
+    @Test
+    public void testCaseNormalization() throws IOException {
+        try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
+                levelDbPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn)) {
+                
+            DependencyIndexGenerator.DependencyEntry entry = 
+                new DependencyIndexGenerator.DependencyEntry(
+                    1, 1, "April", "Day", "compound", 0, 10);
+                
+            String key = generator.generateKey(entry);
+            assertEquals("april" + BaseIndexGenerator.DELIMITER + "compound" + 
+                        BaseIndexGenerator.DELIMITER + "day", key);
         }
     }
 } 

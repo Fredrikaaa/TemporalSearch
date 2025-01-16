@@ -9,17 +9,22 @@ import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
 import java.io.*;
 import java.util.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class LevelDBBrowser {
     private static final String DELIMITER = "\u0000";
+    private static final String WILDCARD = "*";
+    private static final Logger logger = LoggerFactory.getLogger(LevelDBBrowser.class);
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
+        logger.debug("Starting LevelDBBrowser...");
         ArgumentParser parser = ArgumentParsers.newFor("LevelDBBrowser").build()
                 .defaultHelp(true)
                 .description("Browse contents of LevelDB index databases");
 
         parser.addArgument("index_type")
-                .choices("unigram", "bigram", "trigram")
+                .choices("unigram", "bigram", "trigram", "dependency")
                 .help("Type of index to browse");
 
         parser.addArgument("db_path")
@@ -50,11 +55,16 @@ public class LevelDBBrowser {
             boolean showCounts = ns.getBoolean("count");
             boolean showTime = ns.getBoolean("time");
 
-            // Construct full path to specific index
             String dbPath = basePath + "/" + indexType;
 
-            // Validate word count matches index type
-            if (words != null) {
+            // Validate word count for dependency index
+            if (words != null && indexType.equals("dependency")) {
+                if (words.size() < 1 || words.size() > 3) {
+                    System.err.println("Error: dependency index requires 1-3 components (head_token [relation] [dependent_token])");
+                    System.exit(1);
+                }
+            } else if (words != null) {
+                // Existing validation for n-grams
                 int expectedWords = getExpectedWordCount(indexType);
                 if (words.size() != expectedWords) {
                     System.err.printf("Error: %s index requires exactly %d word(s)%n",
@@ -89,11 +99,16 @@ public class LevelDBBrowser {
             case "unigram" -> 1;
             case "bigram" -> 2;
             case "trigram" -> 3;
+            case "dependency" -> -1; // Special handling for dependencies
             default -> throw new IllegalArgumentException("Invalid index type");
         };
     }
 
     private static void lookupWords(DB db, List<String> words, String indexType, boolean showTime) throws IOException {
+        if (indexType.equals("dependency")) {
+            lookupDependency(db, words, showTime);
+            return;
+        }
         // Create lookup key based on index type
         String key = String.join(DELIMITER, words.stream()
                 .map(String::toLowerCase)
@@ -146,6 +161,92 @@ public class LevelDBBrowser {
         };
     }
 
+    private static void lookupDependency(DB db, List<String> pattern, boolean showTime) throws IOException {
+        String headToken = pattern.size() > 0 ? pattern.get(0).toLowerCase() : WILDCARD;
+        String relation = pattern.size() > 1 ? pattern.get(1).toLowerCase() : WILDCARD;
+        String depToken = pattern.size() > 2 ? pattern.get(2).toLowerCase() : WILDCARD;
+
+        String searchPattern = String.join(DELIMITER, headToken, relation, depToken);
+        logger.debug("Looking up dependency pattern: {}", searchPattern);
+        
+        Map<String, PositionList> matches = new HashMap<>();
+        
+        try (DBIterator iterator = db.iterator()) {
+            for (iterator.seek(bytes(searchPattern)); iterator.hasNext(); iterator.next()) {
+                String key = asString(iterator.peekNext().getKey());
+                logger.debug("Examining key: {}", key);
+                
+                String[] parts = key.split(DELIMITER);
+                
+                if (parts.length != 3) continue;
+                
+                if (matchesPattern(parts[0], headToken) &&
+                    matchesPattern(parts[1], relation) &&
+                    matchesPattern(parts[2], depToken)) {
+                    logger.debug("Found matching dependency: {} -{}- {}", parts[0], parts[1], parts[2]);
+                    matches.put(key, PositionList.deserialize(iterator.peekNext().getValue()));
+                }
+               
+                // Stop if we've moved past potential matches
+                if (!key.startsWith(headToken) && !headToken.equals(WILDCARD)) {
+                    break;
+                }
+            }
+        }
+
+        if (matches.isEmpty()) {
+            System.out.printf("No matches found for dependency pattern: %s%n",
+                    formatDependencyPattern(headToken, relation, depToken));
+            return;
+        }
+
+        System.out.printf("Found matches for dependency pattern %s:%n",
+                formatDependencyPattern(headToken, relation, depToken));
+
+        for (Map.Entry<String, PositionList> entry : matches.entrySet()) {
+            String[] parts = entry.getKey().split(DELIMITER);
+            PositionList positions = entry.getValue();
+
+            if (showTime) {
+                showTemporalDistribution(parts, positions);
+            } else {
+                showPositions(parts, positions);
+            }
+        }
+    }
+
+    private static boolean matchesPattern(String value, String pattern) {
+        return pattern.equals(WILDCARD) || pattern.equals(value);
+    }
+
+    private static String formatDependencyPattern(String head, String rel, String dep) {
+        return String.format("'%s-%s->%s'", head, rel, dep);
+    }
+
+    private static void showTemporalDistribution(String[] parts, PositionList positions) {
+        Map<String, Integer> timeDistribution = new TreeMap<>();
+        for (Position pos : positions.getPositions()) {
+            String yearMonth = pos.getTimestamp().toString().substring(0, 7);
+            timeDistribution.merge(yearMonth, 1, Integer::sum);
+        }
+
+        System.out.printf("\nDependency: %s-%s->%s%n", parts[0], parts[1], parts[2]);
+        System.out.println("Temporal distribution:");
+        timeDistribution.forEach((date, count) ->
+            System.out.printf("  %s: %d occurrences%n", date, count));
+    }
+
+    private static void showPositions(String[] parts, PositionList positions) {
+        System.out.printf("\nDependency: %s-%s->%s (%d occurrences)%n",
+                parts[0], parts[1], parts[2], positions.size());
+        for (Position pos : positions.getPositions()) {
+            System.out.printf("  Document %d, Sentence %d, Chars %d-%d, Date: %s%n",
+                    pos.getDocumentId(), pos.getSentenceId(),
+                    pos.getBeginPosition(), pos.getEndPosition(),
+                    pos.getTimestamp());
+        }
+    }
+
     private static void listEntries(DB db, String indexType, boolean showCounts) throws IOException {
         Map<String, Integer> entries = new TreeMap<>();
         try (DBIterator iterator = db.iterator()) {
@@ -154,7 +255,9 @@ public class LevelDBBrowser {
                 PositionList positions = PositionList.deserialize(iterator.peekNext().getValue());
 
                 // Format key based on index type
-                String displayKey = key.replace(DELIMITER, " ");
+                String displayKey = indexType.equals("dependency") ?
+                        formatDependencyKey(key) :
+                        key.replace(DELIMITER, " ");
                 entries.put(displayKey, positions.size());
             }
         }
@@ -178,11 +281,34 @@ public class LevelDBBrowser {
         System.out.printf("%nTotal unique %ss: %d%n", indexType, entries.size());
     }
 
+    private static String formatDependencyKey(String key) {
+        String[] parts = key.split(DELIMITER);
+        if (parts.length != 3) return key;
+        return String.format("%s-%s->%s", parts[0], parts[1], parts[2]);
+    }
+
     private static String capitalizeFirst(String str) {
         return str.substring(0, 1).toUpperCase() + str.substring(1);
     }
 
     private static byte[] bytes(String str) {
         return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private static String[] parseKey(String key) {
+        // Format: head-relation->dependent
+        int arrowIndex = key.indexOf("->");
+        if (arrowIndex == -1) return new String[0];
+        
+        String beforeArrow = key.substring(0, arrowIndex);
+        String dependent = key.substring(arrowIndex + 2);
+        
+        int relationIndex = beforeArrow.indexOf('-');
+        if (relationIndex == -1) return new String[0];
+        
+        String head = beforeArrow.substring(0, relationIndex);
+        String relation = beforeArrow.substring(relationIndex + 1);
+        
+        return new String[]{head, relation, dependent};
     }
 }

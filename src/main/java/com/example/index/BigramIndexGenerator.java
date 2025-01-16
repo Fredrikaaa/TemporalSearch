@@ -41,8 +41,9 @@ public class BigramIndexGenerator extends BaseIndexGenerator {
                 prevEntry.documentId == entry.documentId && 
                 prevEntry.sentenceId == entry.sentenceId) {
                 
-                String key = String.format("%s\u0000%s", 
+                String key = String.format("%s%s%s", 
                     prevEntry.lemma.toLowerCase(), 
+                    BaseIndexGenerator.DELIMITER, 
                     entry.lemma.toLowerCase());
 
                 Position position = new Position(entry.documentId, entry.sentenceId,
@@ -79,8 +80,9 @@ public class BigramIndexGenerator extends BaseIndexGenerator {
                     entry.documentId == nextEntry.documentId && 
                     entry.sentenceId == nextEntry.sentenceId) {
                     
-                    String key = String.format("%s\u0000%s", 
+                    String key = String.format("%s%s%s", 
                         entry.lemma.toLowerCase(), 
+                        BaseIndexGenerator.DELIMITER, 
                         nextEntry.lemma.toLowerCase());
 
                     Position position = new Position(nextEntry.documentId, nextEntry.sentenceId,

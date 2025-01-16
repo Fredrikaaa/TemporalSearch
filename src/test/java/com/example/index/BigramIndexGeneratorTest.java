@@ -107,16 +107,16 @@ public class BigramIndexGeneratorTest {
         Options options = new Options();
         try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
             // Test bigrams with stopwords
-            verifyBigram(db, "the\u0000black", 1, 0, 0, 9, 2); // Appears in both documents
+            verifyBigram(db, "the" + BaseIndexGenerator.DELIMITER + "black", 1, 0, 0, 9, 2); // Appears in both documents
 
             // Test regular bigrams
-            verifyBigram(db, "black\u0000cat", 1, 0, 4, 13, 1);
-            verifyBigram(db, "cat\u0000sit", 1, 0, 10, 18, 1);
-            verifyBigram(db, "sit\u0000quietly", 1, 0, 14, 26, 1);
+            verifyBigram(db, "black" + BaseIndexGenerator.DELIMITER + "cat", 1, 0, 4, 13, 1);
+            verifyBigram(db, "cat" + BaseIndexGenerator.DELIMITER + "sit", 1, 0, 10, 18, 1);
+            verifyBigram(db, "sit" + BaseIndexGenerator.DELIMITER + "quietly", 1, 0, 14, 26, 1);
 
             // Test bigrams in second document
-            verifyBigram(db, "black\u0000dog", 2, 0, 4, 13, 1);
-            verifyBigram(db, "dog\u0000bark", 2, 0, 10, 19, 1);
+            verifyBigram(db, "black" + BaseIndexGenerator.DELIMITER + "dog", 2, 0, 4, 13, 1);
+            verifyBigram(db, "dog" + BaseIndexGenerator.DELIMITER + "bark", 2, 0, 10, 19, 1);
         }
     }
 
@@ -130,12 +130,12 @@ public class BigramIndexGeneratorTest {
         Options options = new Options();
         try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
             // Verify no bigram exists between sentences
-            assertNull(db.get(bytes("quietly\u0000it")),
+            assertNull(db.get(bytes("quietly" + BaseIndexGenerator.DELIMITER + "it")),
                     "Bigram should not span sentence boundary");
 
             // Verify bigrams within second sentence exist
-            verifyBigram(db, "it\u0000purr", 1, 1, 27, 35, 1);
-            verifyBigram(db, "purr\u0000softly", 1, 1, 30, 42, 1);
+            verifyBigram(db, "it" + BaseIndexGenerator.DELIMITER + "purr", 1, 1, 27, 35, 1);
+            verifyBigram(db, "purr" + BaseIndexGenerator.DELIMITER + "softly", 1, 1, 30, 42, 1);
         }
     }
 
@@ -173,7 +173,7 @@ public class BigramIndexGeneratorTest {
         Options options = new Options();
         try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
             // Verify "black dog" appears twice
-            verifyBigram(db, "black\u0000dog", 2, 0, 4, 13, 2);
+            verifyBigram(db, "black" + BaseIndexGenerator.DELIMITER + "dog", 2, 0, 4, 13, 2);
         }
     }
 
