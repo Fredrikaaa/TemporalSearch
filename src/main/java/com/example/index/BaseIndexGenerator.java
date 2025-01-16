@@ -148,6 +148,21 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
     }
 
     /**
+     * Checks if a key exists in the LevelDB database.
+     * @param key The key to check for
+     * @return true if the key exists, false otherwise
+     */
+    public boolean hasKey(String key) {
+        try {
+            byte[] value = levelDb.get(bytes(key));
+            return value != null;
+        } catch (DBException e) {
+            logger.error("Error checking key existence: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Partitions the input entries into batches for parallel processing.
      * Partitions are created along document boundaries to ensure no document
      * is split across partitions.
@@ -298,7 +313,7 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
         }
     }
 
-    public void generateIndex() throws SQLException {
+    public void generateIndex() throws SQLException, IOException {
         try {
             int offset = 0;
             while (true) {
@@ -312,9 +327,14 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
             }
         } catch (SQLException e) {
             throw e;  // Propagate SQLException directly
+        } catch (IOException e) {
+            throw e;  // Propagate IOException directly
         } catch (Exception e) {
             if (e.getCause() instanceof SQLException) {
                 throw (SQLException) e.getCause();
+            }
+            if (e.getCause() instanceof IOException) {
+                throw (IOException) e.getCause();
             }
             throw new SQLException("Error generating index", e);
         }

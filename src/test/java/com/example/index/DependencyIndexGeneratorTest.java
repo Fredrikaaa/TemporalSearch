@@ -64,34 +64,49 @@ class DependencyIndexGeneratorTest {
             """);
             
             stmt.execute("""
-                CREATE TABLE annotations (
-                    document_id INTEGER,
+                CREATE TABLE sentences (
+                    id INTEGER PRIMARY KEY,
+                    doc_id INTEGER,
+                    text TEXT,
+                    timestamp INTEGER,
+                    FOREIGN KEY(doc_id) REFERENCES documents(document_id)
+                )
+            """);
+            
+            stmt.execute("""
+                CREATE TABLE dependencies (
                     sentence_id INTEGER,
-                    begin_char INTEGER,
-                    end_char INTEGER,
-                    lemma TEXT,
-                    pos TEXT,
-                    FOREIGN KEY (document_id) REFERENCES documents(document_id)
+                    document_id INTEGER,
+                    head_token TEXT,
+                    head_start INTEGER,
+                    head_end INTEGER,
+                    dependent_token TEXT,
+                    dependent_start INTEGER,
+                    dependent_end INTEGER,
+                    relation TEXT,
+                    FOREIGN KEY(sentence_id) REFERENCES sentences(id),
+                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
                 )
             """);
             
             // Insert test data
             stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-20T10:00:00Z')");
+            stmt.execute("INSERT INTO sentences (id, doc_id, text, timestamp) VALUES (1, 1, 'cat chases mouse', 1000)");
             
-            // Insert test annotations - sentence: "cat chases mouse"
-            String[][] words = {
-                {"cat", "NOUN"}, {"chases", "VERB"}, {"mouse", "NOUN"}
-            };
+            // Insert test dependencies for "cat chases mouse"
+            // cat -> chases (nsubj)
+            stmt.execute("""
+                INSERT INTO dependencies (document_id, sentence_id, head_token, head_start, head_end,
+                    dependent_token, dependent_start, dependent_end, relation)
+                VALUES (1, 1, 'chases', 4, 10, 'cat', 0, 3, 'nsubj')
+            """);
             
-            int charPos = 0;
-            for (int i = 0; i < words.length; i++) {
-                stmt.execute(String.format(
-                    "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, lemma, pos) " +
-                    "VALUES (1, 1, %d, %d, '%s', '%s')",
-                    charPos, charPos + words[i][0].length(), words[i][0], words[i][1]
-                ));
-                charPos += words[i][0].length() + 1; // +1 for space
-            }
+            // chases -> mouse (dobj)
+            stmt.execute("""
+                INSERT INTO dependencies (document_id, sentence_id, head_token, head_start, head_end,
+                    dependent_token, dependent_start, dependent_end, relation)
+                VALUES (1, 1, 'chases', 4, 10, 'mouse', 11, 16, 'dobj')
+            """);
         }
     }
     
@@ -112,14 +127,10 @@ class DependencyIndexGeneratorTest {
             // Verify index contents
             Options options = new Options();
             try (DB db = factory.open(indexPath.toFile(), options)) {
-                // Check some expected dependencies
+                // Check expected dependencies
                 String[] expectedKeys = {
-                    "cat\u0000dep\u0000chases",
-                    "cat\u0000dep\u0000mouse",
-                    "chases\u0000dep\u0000cat",
-                    "chases\u0000dep\u0000mouse",
-                    "mouse\u0000dep\u0000cat",
-                    "mouse\u0000dep\u0000chases"
+                    "chases\0nsubj\0cat",   // Subject dependency
+                    "chases\0dobj\0mouse"    // Object dependency
                 };
                 
                 for (String key : expectedKeys) {
@@ -133,7 +144,7 @@ class DependencyIndexGeneratorTest {
                     assertEquals(1, pos.getDocumentId());
                     assertEquals(1, pos.getSentenceId());
                     assertTrue(pos.getBeginPosition() >= 0);
-                    assertTrue(pos.getEndPosition() <= 16); // "cat chases mouse".length() = 3 + 1 + 6 + 1 + 5 = 16
+                    assertTrue(pos.getEndPosition() <= 16); // "cat chases mouse".length() = 16
                 }
             }
         }
