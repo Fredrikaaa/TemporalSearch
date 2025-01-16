@@ -78,12 +78,10 @@ class DependencyIndexGeneratorTest {
                     sentence_id INTEGER,
                     document_id INTEGER,
                     head_token TEXT,
-                    head_start INTEGER,
-                    head_end INTEGER,
                     dependent_token TEXT,
-                    dependent_start INTEGER,
-                    dependent_end INTEGER,
                     relation TEXT,
+                    begin_char INTEGER,
+                    end_char INTEGER,
                     FOREIGN KEY(sentence_id) REFERENCES sentences(id),
                     FOREIGN KEY(document_id) REFERENCES documents(document_id)
                 )
@@ -96,16 +94,16 @@ class DependencyIndexGeneratorTest {
             // Insert test dependencies for "cat chases mouse"
             // cat -> chases (nsubj)
             stmt.execute("""
-                INSERT INTO dependencies (document_id, sentence_id, head_token, head_start, head_end,
-                    dependent_token, dependent_start, dependent_end, relation)
-                VALUES (1, 1, 'chases', 4, 10, 'cat', 0, 3, 'nsubj')
+                INSERT INTO dependencies (document_id, sentence_id, head_token,
+                    dependent_token, relation, begin_char, end_char)
+                VALUES (1, 1, 'chases', 'cat', 'nsubj', 0, 3)
             """);
             
             // chases -> mouse (dobj)
             stmt.execute("""
-                INSERT INTO dependencies (document_id, sentence_id, head_token, head_start, head_end,
-                    dependent_token, dependent_start, dependent_end, relation)
-                VALUES (1, 1, 'chases', 4, 10, 'mouse', 11, 16, 'dobj')
+                INSERT INTO dependencies (document_id, sentence_id, head_token,
+                    dependent_token, relation, begin_char, end_char)
+                VALUES (1, 1, 'chases', 'mouse', 'dobj', 11, 16)
             """);
         }
     }

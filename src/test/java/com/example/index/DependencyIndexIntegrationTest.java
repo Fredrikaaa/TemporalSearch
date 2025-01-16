@@ -73,12 +73,10 @@ public class DependencyIndexIntegrationTest {
                     sentence_id INTEGER,
                     document_id INTEGER,
                     head_token TEXT,
-                    head_start INTEGER,
-                    head_end INTEGER,
                     dependent_token TEXT,
-                    dependent_start INTEGER,
-                    dependent_end INTEGER,
                     relation TEXT,
+                    begin_char INTEGER,
+                    end_char INTEGER,
                     FOREIGN KEY(sentence_id) REFERENCES sentences(id),
                     FOREIGN KEY(document_id) REFERENCES documents(document_id)
                 )
@@ -96,11 +94,11 @@ public class DependencyIndexIntegrationTest {
             """);
             
             stmt.execute("""
-                INSERT INTO dependencies (document_id, sentence_id, head_token, head_start, head_end,
-                    dependent_token, dependent_start, dependent_end, relation)
+                INSERT INTO dependencies (document_id, sentence_id, head_token,
+                    dependent_token, relation, begin_char, end_char)
                 VALUES 
-                    (1, 1, 'sleeps', 8, 14, 'cat', 4, 7, 'nsubj'),
-                    (1, 1, 'cat', 4, 7, 'The', 0, 3, 'det')
+                    (1, 1, 'sleeps', 'cat', 'nsubj', 4, 7),
+                    (1, 1, 'cat', 'The', 'det', 0, 3)
             """);
         }
     }
