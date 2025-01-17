@@ -10,3 +10,4 @@ logs/
 indexes/
 dependency-reduced-pom.xml
 
+indexes/**/*
