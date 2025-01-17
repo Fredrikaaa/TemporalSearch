@@ -41,10 +41,10 @@ public class IndexRunner {
                 .type(Integer.class)
                 .help("Batch size for processing (default: 1000)");
 
-        parser.addArgument("--index-type")
-                .choices("unigram", "bigram", "trigram", "dependency", "all")
+        parser.addArgument("-t", "--type")
+                .choices("all", "unigram", "bigram", "trigram", "dependency", "ner_date")
                 .setDefault("all")
-                .help("Type of index to generate (default: all)");
+                .help("Type of index to generate");
 
         parser.addArgument("--debug")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
@@ -64,7 +64,7 @@ public class IndexRunner {
                 ns.getString("index_dir"),
                 ns.getString("stopwords"),
                 ns.getInt("batch_size"),
-                ns.getString("index_type")
+                ns.getString("type")
             );
         } catch (ArgumentParserException e) {
             parser.handleError(e);
@@ -99,10 +99,17 @@ public class IndexRunner {
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
              ProgressTracker progress = new ProgressTracker()) {
             
-            int totalSteps = indexType.equals("all") ? 4 : 1;
-            long totalWork = indexType.equals("all") ? 4 : 1; // Just track number of indexes
-            progress.startOverall("Generating indexes", totalWork);
+            // Calculate total steps
+            int totalSteps = 0;
+            if (indexType.equals("all")) {
+                totalSteps = 5; // unigram, bigram, trigram, dependency, and ner_date
+            } else {
+                totalSteps = 1;
+            }
+            
             int currentStep = 0;
+            progress.startOverall("Generating indexes", (long)totalSteps);
+            long totalWork = indexType.equals("all") ? 4 : 1; // Just track number of indexes
 
             if (indexType.equals("all") || indexType.equals("unigram")) {
                 currentStep++;
@@ -159,6 +166,22 @@ public class IndexRunner {
                 
                 try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
                         dependencyDir, stopwordsPath, batchSize, conn)) {
+                    long stepStart = System.nanoTime();
+                    indexer.generateIndex();
+                    long stepDuration = System.nanoTime() - stepStart;
+                    
+                    metrics.recordProcessingTime(stepDuration);
+                }
+                progress.updateOverall(1);
+            }
+
+            if (indexType.equals("all") || indexType.equals("ner_date")) {
+                currentStep++;
+                logger.info("Step {}/{}: Starting NER date index generation", currentStep, totalSteps);
+                String nerDateDir = indexDir + "/ner_date";
+                
+                try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
+                        nerDateDir, stopwordsPath, batchSize, conn)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
