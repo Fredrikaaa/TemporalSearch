@@ -25,6 +25,7 @@ public class BigramIndexGenerator extends BaseIndexGenerator {
     @Override
     protected ListMultimap<String, PositionList> processPartition(List<IndexEntry> partition) {
         ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
+        Map<String, PositionList> positionLists = new HashMap<>();
         IndexEntry prevEntry = null;
         
         for (int i = 0; i < partition.size(); i++) {
@@ -50,27 +51,8 @@ public class BigramIndexGenerator extends BaseIndexGenerator {
                     prevEntry.beginChar, entry.endChar, entry.timestamp);
 
                 // Get or create position list for this bigram
-                List<PositionList> lists = index.get(key);
-                if (lists.isEmpty()) {
-                    PositionList newList = new PositionList();
-                    newList.add(position);
-                    index.put(key, newList);
-                } else {
-                    // Check if this position is already recorded
-                    boolean exists = false;
-                    for (Position pos : lists.get(0).getPositions()) {
-                        if (pos.getDocumentId() == position.getDocumentId() &&
-                            pos.getSentenceId() == position.getSentenceId() &&
-                            pos.getBeginPosition() == position.getBeginPosition() &&
-                            pos.getEndPosition() == position.getEndPosition()) {
-                            exists = true;
-                            break;
-                        }
-                    }
-                    if (!exists) {
-                        lists.get(0).add(position);
-                    }
-                }
+                PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
+                posList.add(position);
             }
             
             // If this is the last entry and there's a next entry that could form a bigram
@@ -88,31 +70,17 @@ public class BigramIndexGenerator extends BaseIndexGenerator {
                     Position position = new Position(nextEntry.documentId, nextEntry.sentenceId,
                         entry.beginChar, nextEntry.endChar, nextEntry.timestamp);
 
-                    List<PositionList> lists = index.get(key);
-                    if (lists.isEmpty()) {
-                        PositionList newList = new PositionList();
-                        newList.add(position);
-                        index.put(key, newList);
-                    } else {
-                        // Check if this position is already recorded
-                        boolean exists = false;
-                        for (Position pos : lists.get(0).getPositions()) {
-                            if (pos.getDocumentId() == position.getDocumentId() &&
-                                pos.getSentenceId() == position.getSentenceId() &&
-                                pos.getBeginPosition() == position.getBeginPosition() &&
-                                pos.getEndPosition() == position.getEndPosition()) {
-                                exists = true;
-                                break;
-                            }
-                        }
-                        if (!exists) {
-                            lists.get(0).add(position);
-                        }
-                    }
+                    PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
+                    posList.add(position);
                 }
             }
             
             prevEntry = entry;
+        }
+        
+        // Add all position lists to result
+        for (Map.Entry<String, PositionList> entry : positionLists.entrySet()) {
+            index.put(entry.getKey(), entry.getValue());
         }
         
         return index;

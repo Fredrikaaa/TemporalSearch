@@ -8,3 +8,5 @@ design/
 *code-workspace
 logs/
 indexes/
+dependency-reduced-pom.xml
+

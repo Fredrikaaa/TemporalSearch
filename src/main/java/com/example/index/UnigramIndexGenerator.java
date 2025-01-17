@@ -29,20 +29,10 @@ public class UnigramIndexGenerator extends BaseIndexGenerator {
         }
         
         ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
-        // Track unique positions to avoid duplicates from overlapping partitions
-        Set<String> processedPositions = new HashSet<>();
+        Map<String, PositionList> positionLists = new HashMap<>();
         
         for (IndexEntry entry : partition) {
             if (entry.lemma == null || isStopword(entry.lemma)) {
-                continue;
-            }
-
-            // Create a unique key for this position
-            String positionKey = String.format("%d-%d-%d-%d", 
-                entry.documentId, entry.sentenceId, entry.beginChar, entry.endChar);
-            
-            // Skip if we've already processed this position (from overlap)
-            if (!processedPositions.add(positionKey)) {
                 continue;
             }
 
@@ -51,14 +41,13 @@ public class UnigramIndexGenerator extends BaseIndexGenerator {
                                           entry.beginChar, entry.endChar, entry.timestamp);
 
             // Get or create position list for this term
-            List<PositionList> lists = index.get(key);
-            if (lists.isEmpty()) {
-                PositionList newList = new PositionList();
-                newList.add(position);
-                index.put(key, newList);
-            } else {
-                lists.get(0).add(position);
-            }
+            PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
+            posList.add(position);
+        }
+        
+        // Add all position lists to result
+        for (Map.Entry<String, PositionList> entry : positionLists.entrySet()) {
+            index.put(entry.getKey(), entry.getValue());
         }
         
         return index;

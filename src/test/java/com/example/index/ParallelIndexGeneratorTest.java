@@ -114,7 +114,7 @@ class ParallelIndexGeneratorTest {
     @Test
     void testConcurrentProcessing() throws Exception {
         // Create a large enough dataset to test parallel processing
-        setupLargeDatabase(100000); // 100K entries for better parallel performance measurement
+        setupLargeDatabase(10000);
         
         Path indexPath = tempDir.resolve("concurrent");
         

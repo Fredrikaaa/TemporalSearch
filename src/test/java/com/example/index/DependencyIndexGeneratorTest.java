@@ -10,6 +10,7 @@ import java.nio.file.*;
 import java.sql.*;
 import java.time.*;
 import java.util.*;
+import java.util.stream.Collectors;
 
 class DependencyIndexGeneratorTest {
     private Path tempDir;
@@ -184,6 +185,55 @@ class DependencyIndexGeneratorTest {
             String key = generator.generateKey(entry);
             assertEquals("april" + BaseIndexGenerator.DELIMITER + "compound" + 
                         BaseIndexGenerator.DELIMITER + "day", key);
+        }
+    }
+
+    @Test
+    void testDependencyAggregation() throws Exception {
+        // Setup test data with repeated dependencies
+        try (Statement stmt = sqliteConn.createStatement()) {
+            // Insert test data
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (2, '2024-01-21T10:00:00Z')");
+            
+            // Add more instances of the same dependency pattern (cat-nsubj->chases)
+            stmt.execute("""
+                INSERT INTO dependencies (document_id, sentence_id, head_token,
+                    dependent_token, relation, begin_char, end_char)
+                VALUES 
+                    (2, 1, 'chases', 'cat', 'nsubj', 0, 3),
+                    (2, 2, 'chases', 'cat', 'nsubj', 20, 23)
+            """);
+        }
+
+        // Generate index
+        Path indexPath = tempDir.resolve("dep-aggregation");
+        try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
+                indexPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn)) {
+            generator.generateIndex();
+        }
+
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(indexPath.toFile(), options)) {
+            // Check the aggregated dependency
+            String key = "chases" + BaseIndexGenerator.DELIMITER + "nsubj" + BaseIndexGenerator.DELIMITER + "cat";
+            byte[] data = db.get(bytes(key));
+            assertNotNull(data, "Dependency should exist: " + key);
+
+            PositionList positions = PositionList.deserialize(data);
+            assertEquals(3, positions.size(), "Should have 3 occurrences of cat-nsubj->chases");
+
+            // Verify positions are from different documents/sentences
+            Set<String> uniquePositions = positions.getPositions().stream()
+                .map(p -> String.format("%d-%d", p.getDocumentId(), p.getSentenceId()))
+                .collect(Collectors.toSet());
+            assertEquals(3, uniquePositions.size(), "Should have positions from 3 different locations");
+
+            // Verify other dependencies still have single occurrences
+            String objKey = "chases" + BaseIndexGenerator.DELIMITER + "dobj" + BaseIndexGenerator.DELIMITER + "mouse";
+            PositionList objPositions = PositionList.deserialize(db.get(bytes(objKey)));
+            assertEquals(1, objPositions.size(), "Should have 1 occurrence of chases-dobj->mouse");
         }
     }
 } 

@@ -115,10 +115,6 @@ public class PositionList {
                 for (int i = 0; i < compressedSize; i++) {
                     buffer.putInt(compressed[i]);
                 }
-                
-                // System.out.println(String.format(
-                //     "Array: original=%d, padded=%d, compressed=%d, first=%d, last=%d",
-                //     array.length, paddedSize, compressedSize, array[0], array[array.length-1]));
             }
 
             // Write timestamps separately (not compressed)
@@ -194,18 +190,12 @@ public class PositionList {
                     // Copy only the needed values
                     System.arraycopy(decompressed, 0, array, 0, originalLength);
                 }
-                
-                // System.out.println(String.format("Decompressed: length=%d, first=%d, last=%d",
-                //     array.length, array[0], array[array.length-1]));
             }
 
             // Read timestamps
             for (int i = 0; i < count; i++) {
                 timestamps[i] = buffer.getLong();
             }
-
-            // After decompression
-            // System.out.println("After decompression - First docId: " + docIds[0]);
 
             // Create Position objects
             for (int i = 0; i < count; i++) {
@@ -236,41 +226,44 @@ public class PositionList {
 
         try {
             // Use TreeSet with custom comparator for ordered deduplication
-            // Consider positions adjacent if they are in the same document and sentence
-            // and their character positions are within a small window
             TreeSet<Position> positionSet = new TreeSet<>((a, b) -> {
+                // First compare document IDs
                 int docCompare = Integer.compare(a.getDocumentId(), b.getDocumentId());
                 if (docCompare != 0) return docCompare;
                 
+                // Then compare sentence IDs
                 int sentCompare = Integer.compare(a.getSentenceId(), b.getSentenceId());
                 if (sentCompare != 0) return sentCompare;
                 
-                // If positions overlap or are very close (within 2 chars), consider them the same
-                if (Math.abs(a.getBeginPosition() - b.getBeginPosition()) <= 2 &&
-                    Math.abs(a.getEndPosition() - b.getEndPosition()) <= 2) {
-                    return 0;
+                // For positions within the same sentence, we need to be careful:
+                // - For overlapping positions (within 2 chars), treat them as the same
+                // - For non-overlapping positions, keep them separate
+                int beginDiff = Math.abs(a.getBeginPosition() - b.getBeginPosition());
+                int endDiff = Math.abs(a.getEndPosition() - b.getEndPosition());
+                
+                // If positions overlap significantly, treat them as the same
+                if (beginDiff <= 2 && endDiff <= 2) {
+                    return 0; // Treat as equal/same position
                 }
                 
+                // Otherwise, order by begin position then end position
                 int beginCompare = Integer.compare(a.getBeginPosition(), b.getBeginPosition());
                 if (beginCompare != 0) return beginCompare;
                 
                 return Integer.compare(a.getEndPosition(), b.getEndPosition());
             });
 
-            // Add all positions to the TreeSet
+            // Add all positions to the set for deduplication
             positionSet.addAll(positions);
-            positionSet.addAll(other.positions);
+            positionSet.addAll(other.getPositions());
 
-            // Clear and re-add positions in sorted order
+            // Clear and re-add all positions in sorted order
             positions.clear();
             positions.addAll(positionSet);
 
-            int finalSize = positions.size();
-            int duplicates = initialSize + otherSize - finalSize;
-            
-            if (duplicates > 0) {
-                logger.debug("Merged position lists - initial: {}, other: {}, final: {}, duplicates: {}",
-                    initialSize, otherSize, finalSize, duplicates);
+            if (logSampler.shouldLog()) {
+                logger.debug("Merged {} + {} positions into {} unique positions",
+                    initialSize, otherSize, positions.size());
             }
         } catch (Exception e) {
             logger.error("Failed to merge position lists: {}", e.getMessage(), e);
@@ -283,17 +276,17 @@ public class PositionList {
     }
 
     public void sort() {
-        try {
-            positions.sort((a, b) -> {
-                int docCompare = Integer.compare(a.getDocumentId(), b.getDocumentId());
-                if (docCompare != 0) return docCompare;
-                int sentCompare = Integer.compare(a.getSentenceId(), b.getSentenceId());
-                if (sentCompare != 0) return sentCompare;
-                return Integer.compare(a.getBeginPosition(), b.getBeginPosition());
-            });
-        } catch (Exception e) {
-            logger.error("Failed to sort position list: {}", e.getMessage(), e);
-            throw e;
-        }
+        Collections.sort(positions, (a, b) -> {
+            int docCompare = Integer.compare(a.getDocumentId(), b.getDocumentId());
+            if (docCompare != 0) return docCompare;
+            
+            int sentCompare = Integer.compare(a.getSentenceId(), b.getSentenceId());
+            if (sentCompare != 0) return sentCompare;
+            
+            int beginCompare = Integer.compare(a.getBeginPosition(), b.getBeginPosition());
+            if (beginCompare != 0) return beginCompare;
+            
+            return Integer.compare(a.getEndPosition(), b.getEndPosition());
+        });
     }
 }

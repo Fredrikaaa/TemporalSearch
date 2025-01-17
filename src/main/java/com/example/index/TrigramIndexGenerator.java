@@ -25,6 +25,7 @@ public class TrigramIndexGenerator extends BaseIndexGenerator {
     @Override
     protected ListMultimap<String, PositionList> processPartition(List<IndexEntry> partition) {
         ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
+        Map<String, PositionList> positionLists = new HashMap<>();
         
         for (int i = 0; i < partition.size() - 2; i++) {
             IndexEntry entry = partition.get(i);
@@ -52,15 +53,15 @@ public class TrigramIndexGenerator extends BaseIndexGenerator {
                 Position position = new Position(nextNextEntry.documentId, nextNextEntry.sentenceId,
                     entry.beginChar, nextNextEntry.endChar, nextNextEntry.timestamp);
 
-                List<PositionList> lists = index.get(key);
-                if (lists.isEmpty()) {
-                    PositionList newList = new PositionList();
-                    newList.add(position);
-                    index.put(key, newList);
-                } else {
-                    lists.get(0).add(position);
-                }
+                // Get or create position list for this trigram
+                PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
+                posList.add(position);
             }
+        }
+        
+        // Add all position lists to result
+        for (Map.Entry<String, PositionList> entry : positionLists.entrySet()) {
+            index.put(entry.getKey(), entry.getValue());
         }
         
         return index;
