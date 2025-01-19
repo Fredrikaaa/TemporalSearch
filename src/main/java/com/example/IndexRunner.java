@@ -42,7 +42,7 @@ public class IndexRunner {
                 .help("Batch size for processing (default: 1000)");
 
         parser.addArgument("-t", "--type")
-                .choices("all", "unigram", "bigram", "trigram", "dependency", "ner_date")
+                .choices("all", "unigram", "bigram", "trigram", "dependency", "ner_date", "pos")
                 .setDefault("all")
                 .help("Type of index to generate");
 
@@ -102,14 +102,14 @@ public class IndexRunner {
             // Calculate total steps
             int totalSteps = 0;
             if (indexType.equals("all")) {
-                totalSteps = 5; // unigram, bigram, trigram, dependency, and ner_date
+                totalSteps = 6; // unigram, bigram, trigram, dependency, ner_date, and pos
             } else {
                 totalSteps = 1;
             }
             
             int currentStep = 0;
             progress.startOverall("Generating indexes", (long)totalSteps);
-            long totalWork = indexType.equals("all") ? 4 : 1; // Just track number of indexes
+            long totalWork = indexType.equals("all") ? 5 : 1; // Just track number of indexes
 
             if (indexType.equals("all") || indexType.equals("unigram")) {
                 currentStep++;
@@ -182,6 +182,22 @@ public class IndexRunner {
                 
                 try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
                         nerDateDir, stopwordsPath, batchSize, conn)) {
+                    long stepStart = System.nanoTime();
+                    indexer.generateIndex();
+                    long stepDuration = System.nanoTime() - stepStart;
+                    
+                    metrics.recordProcessingTime(stepDuration);
+                }
+                progress.updateOverall(1);
+            }
+
+            if (indexType.equals("all") || indexType.equals("pos")) {
+                currentStep++;
+                logger.info("Step {}/{}: Starting POS index generation", currentStep, totalSteps);
+                String posDir = indexDir + "/pos";
+                
+                try (POSIndexGenerator indexer = new POSIndexGenerator(
+                        posDir, stopwordsPath, batchSize, conn)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
