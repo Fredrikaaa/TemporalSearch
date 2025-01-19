@@ -24,7 +24,7 @@ public class LevelDBBrowser {
                 .description("Browse contents of LevelDB index databases");
 
         parser.addArgument("index_type")
-                .choices("unigram", "bigram", "trigram", "dependency")
+                .choices("unigram", "bigram", "trigram", "dependency", "ner_date")
                 .help("Type of index to browse");
 
         parser.addArgument("db_path")
@@ -46,6 +46,10 @@ public class LevelDBBrowser {
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Show temporal distribution of occurrences");
 
+        parser.addArgument("-s", "--summary")
+                .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
+                .help("Show summary statistics of the index");
+
         parser.addArgument("-m", "--min-occurrences")
                 .type(Integer.class)
                 .setDefault(0)
@@ -59,6 +63,7 @@ public class LevelDBBrowser {
             boolean listEntries = ns.getBoolean("list");
             boolean showCounts = ns.getBoolean("count");
             boolean showTime = ns.getBoolean("time");
+            boolean showSummary = ns.getBoolean("summary");
             int minOccurrences = ns.getInt("min_occurrences");
 
             String dbPath = basePath + "/" + indexType;
@@ -82,6 +87,10 @@ public class LevelDBBrowser {
             // Open the database
             Options options = new Options();
             try (DB db = factory.open(new File(dbPath), options)) {
+                if (showSummary) {
+                    showSummary(db, indexType);
+                }
+
                 if (words != null) {
                     lookupWords(db, words, indexType, showTime, minOccurrences);
                 }
@@ -106,6 +115,7 @@ public class LevelDBBrowser {
             case "bigram" -> 2;
             case "trigram" -> 3;
             case "dependency" -> -1; // Special handling for dependencies
+            case "ner_date" -> 1; // Date in YYYYMMDD format
             default -> throw new IllegalArgumentException("Invalid index type");
         };
     }
@@ -115,6 +125,16 @@ public class LevelDBBrowser {
             lookupDependency(db, words, showTime, minOccurrences);
             return;
         }
+        
+        // Special handling for NER date index
+        if (indexType.equals("ner_date")) {
+            String dateStr = words.get(0);
+            if (!dateStr.matches("\\d{8}")) {
+                System.err.println("Error: Date must be in YYYYMMDD format");
+                return;
+            }
+        }
+
         // Create lookup key based on index type
         String key = String.join(DELIMITER, words.stream()
                 .map(String::toLowerCase)
@@ -169,6 +189,10 @@ public class LevelDBBrowser {
             case "bigram" -> String.format("phrase '%s %s'", words.get(0), words.get(1));
             case "trigram" -> String.format("phrase '%s %s %s'",
                     words.get(0), words.get(1), words.get(2));
+            case "ner_date" -> String.format("date '%s-%s-%s'",
+                    words.get(0).substring(0, 4),
+                    words.get(0).substring(4, 6),
+                    words.get(0).substring(6, 8));
             default -> throw new IllegalArgumentException("Invalid index type");
         };
     }
@@ -269,53 +293,39 @@ public class LevelDBBrowser {
     }
 
     private static void listEntries(DB db, String indexType, boolean showCounts, int minOccurrences) throws IOException {
-        logger.debug("Listing entries for {} index with minimum {} occurrences", indexType, minOccurrences);
-        Map<String, Integer> entries = new TreeMap<>();
+        System.out.printf("Listing entries in %s index:%n", indexType);
+        int totalEntries = 0;
+        
         try (DBIterator iterator = db.iterator()) {
             for (iterator.seekToFirst(); iterator.hasNext(); iterator.next()) {
-                String key = new String(iterator.peekNext().getKey(), "UTF-8");
+                String key = asString(iterator.peekNext().getKey());
                 PositionList positions = PositionList.deserialize(iterator.peekNext().getValue());
-                logger.debug("Found entry '{}' with {} occurrences", key, positions.size());
                 
-                // Only include entries that meet the minimum occurrence threshold
-                if (positions.size() >= minOccurrences) {
-                    // Format key based on index type
-                    String displayKey = indexType.equals("dependency") ?
-                            formatDependencyKey(key) :
-                            key.replace(DELIMITER, " ");
-                    entries.put(displayKey, positions.size());
-                    logger.debug("Added entry '{}' with {} occurrences", displayKey, positions.size());
-                } else {
-                    logger.debug("Skipped entry '{}' with {} occurrences (below threshold of {})", 
-                            key, positions.size(), minOccurrences);
+                if (positions.size() < minOccurrences) {
+                    continue;
                 }
+
+                totalEntries++;
+                if (indexType.equals("dependency")) {
+                    System.out.print(formatDependencyKey(key));
+                } else if (indexType.equals("ner_date")) {
+                    // Format date as YYYY-MM-DD
+                    System.out.printf("Date: %s-%s-%s",
+                            key.substring(0, 4),
+                            key.substring(4, 6),
+                            key.substring(6, 8));
+                } else {
+                    System.out.print(key.replace(DELIMITER, " "));
+                }
+
+                if (showCounts) {
+                    System.out.printf(" (%d occurrences)", positions.size());
+                }
+                System.out.println();
             }
         }
-
-        if (entries.isEmpty()) {
-            String plural = indexType.equals("dependency") ? "dependencies" : indexType + "s";
-            System.out.printf("No %s found with at least %d occurrences%n", 
-                    plural, minOccurrences);
-            return;
-        }
-
-        if (showCounts) {
-            // Sort by count in descending order
-            List<Map.Entry<String, Integer>> sortedEntries = new ArrayList<>(entries.entrySet());
-            sortedEntries.sort(Map.Entry.<String, Integer>comparingByValue().reversed());
-
-            System.out.printf("%s counts (sorted by frequency):%n",
-                    capitalizeFirst(indexType));
-            for (Map.Entry<String, Integer> entry : sortedEntries) {
-                System.out.printf("%s: %d occurrences%n", entry.getKey(), entry.getValue());
-            }
-        } else {
-            System.out.printf("%s entries in index:%n", indexType);
-            for (String key : entries.keySet()) {
-                System.out.println(key);
-            }
-        }
-        System.out.printf("Total unique %s entries: %d%n", indexType, entries.size());
+        
+        System.out.printf("%nTotal entries: %d%n", totalEntries);
     }
 
     private static String formatDependencyKey(String key) {
@@ -330,5 +340,80 @@ public class LevelDBBrowser {
 
     private static byte[] bytes(String str) {
         return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private static void showSummary(DB db, String indexType) throws IOException {
+        logger.debug("Generating summary for {} index", indexType);
+        
+        long totalEntries = 0;
+        long totalOccurrences = 0;
+        long minOccurrences = Long.MAX_VALUE;
+        long maxOccurrences = 0;
+        Map<Integer, Long> occurrenceDistribution = new TreeMap<>();
+
+        try (DBIterator iterator = db.iterator()) {
+            for (iterator.seekToFirst(); iterator.hasNext(); iterator.next()) {
+                totalEntries++;
+                
+                PositionList positions = PositionList.deserialize(iterator.peekNext().getValue());
+                int occurrences = positions.size();
+                totalOccurrences += occurrences;
+                
+                minOccurrences = Math.min(minOccurrences, occurrences);
+                maxOccurrences = Math.max(maxOccurrences, occurrences);
+                
+                // Track distribution in buckets
+                int bucket = getBucket(occurrences);
+                occurrenceDistribution.merge(bucket, 1L, Long::sum);
+            }
+        }
+
+        if (totalEntries == 0) {
+            System.out.println("Index is empty");
+            return;
+        }
+
+        System.out.println("\nIndex Summary:");
+        System.out.println("=============");
+        System.out.printf("Index type: %s%n", indexType);
+        System.out.printf("Total unique entries: %,d%n", totalEntries);
+        System.out.printf("Total occurrences: %,d%n", totalOccurrences);
+        System.out.printf("Average occurrences per entry: %.2f%n", (double) totalOccurrences / totalEntries);
+        System.out.printf("Min occurrences for an entry: %d%n", minOccurrences);
+        System.out.printf("Max occurrences for an entry: %d%n", maxOccurrences);
+        
+        System.out.println("\nOccurrence Distribution:");
+        System.out.println("======================");
+        for (Map.Entry<Integer, Long> entry : occurrenceDistribution.entrySet()) {
+            String range = formatBucketRange(entry.getKey());
+            double percentage = (entry.getValue() * 100.0) / totalEntries;
+            System.out.printf("%s occurrences: %,d entries (%.1f%%)%n", 
+                    range, entry.getValue(), percentage);
+        }
+        System.out.println();
+    }
+
+    private static int getBucket(int occurrences) {
+        if (occurrences == 1) return 1;
+        if (occurrences <= 5) return 5;
+        if (occurrences <= 10) return 10;
+        if (occurrences <= 50) return 50;
+        if (occurrences <= 100) return 100;
+        if (occurrences <= 500) return 500;
+        if (occurrences <= 1000) return 1000;
+        return Integer.MAX_VALUE;
+    }
+
+    private static String formatBucketRange(int bucket) {
+        return switch (bucket) {
+            case 1 -> "1";
+            case 5 -> "2-5";
+            case 10 -> "6-10";
+            case 50 -> "11-50";
+            case 100 -> "51-100";
+            case 500 -> "101-500";
+            case 1000 -> "501-1000";
+            default -> "1000+";
+        };
     }
 }

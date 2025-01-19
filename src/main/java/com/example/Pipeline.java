@@ -59,7 +59,7 @@ public class Pipeline {
                 .help("Path to stopwords file (default: stopwords.txt)");
 
         parser.addArgument("--index-type")
-                .choices("unigram", "bigram", "trigram", "dependency", "all")
+                .choices("unigram", "bigram", "trigram", "dependency", "ner_date", "all")
                 .setDefault("all")
                 .help("Type of index to generate (default: all)");
 
