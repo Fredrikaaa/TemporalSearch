@@ -24,7 +24,7 @@ public class LevelDBBrowser {
                 .description("Browse contents of LevelDB index databases");
 
         parser.addArgument("index_type")
-                .choices("unigram", "bigram", "trigram", "dependency", "ner_date")
+                .choices("unigram", "bigram", "trigram", "dependency", "ner_date", "pos")
                 .help("Type of index to browse");
 
         parser.addArgument("db_path")
@@ -32,7 +32,7 @@ public class LevelDBBrowser {
 
         parser.addArgument("-w", "--words")
                 .nargs("+")
-                .help("Look up specific word(s). Use 1-3 words based on index type.");
+                .help("Look up specific word(s) or POS tags. Use 1-3 words based on index type.");
 
         parser.addArgument("-l", "--list")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
@@ -111,12 +111,11 @@ public class LevelDBBrowser {
 
     private static int getExpectedWordCount(String indexType) {
         return switch (indexType) {
-            case "unigram" -> 1;
+            case "unigram", "ner_date", "pos" -> 1;
             case "bigram" -> 2;
             case "trigram" -> 3;
-            case "dependency" -> -1; // Special handling for dependencies
-            case "ner_date" -> 1; // Date in YYYYMMDD format
-            default -> throw new IllegalArgumentException("Invalid index type");
+            case "dependency" -> 3;
+            default -> throw new IllegalArgumentException("Unknown index type: " + indexType);
         };
     }
 

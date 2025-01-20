@@ -187,4 +187,148 @@ class POSIndexIntegrationTest {
             assertEquals(100, posList.size(), "Should have 100 noun entries (one per document)");
         }
     }
-} 
+
+    @Test
+    void testPerformanceWithLargeDataset() throws SQLException, IOException, InterruptedException {
+        // Clean up existing tables
+        try (Statement stmt = sqliteConn.createStatement()) {
+            stmt.execute("DROP TABLE IF EXISTS annotations");
+            stmt.execute("DROP TABLE IF EXISTS documents");
+            
+            // Recreate tables
+            stmt.execute("CREATE TABLE documents (document_id INTEGER PRIMARY KEY, timestamp TEXT)");
+            stmt.execute("""
+                CREATE TABLE annotations (
+                    document_id INTEGER,
+                    sentence_id INTEGER,
+                    begin_char INTEGER,
+                    end_char INTEGER,
+                    lemma TEXT,
+                    pos TEXT,
+                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
+                )
+            """);
+        }
+
+        // Create a large dataset with 100K entries
+        try (Statement stmt = sqliteConn.createStatement()) {
+            // Insert 1000 documents
+            for (int i = 1; i <= 1000; i++) {
+                stmt.execute(String.format(
+                    "INSERT INTO documents (document_id, timestamp) VALUES (%d, '2024-01-%02dT10:00:00Z')",
+                    i, (i % 28) + 1
+                ));
+                
+                // Insert 100 POS annotations per document (100K total)
+                for (int j = 0; j < 100; j++) {
+                    stmt.execute(String.format(
+                        "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, lemma, pos) " +
+                        "VALUES (%d, %d, %d, %d, 'word_%d', '%s')",
+                        i, j, j*5, j*5+4, j,
+                        // Mix different POS tags
+                        new String[]{"NN", "VB", "JJ", "RB", "DT"}[j % 5]
+                    ));
+                }
+            }
+        }
+
+        // Measure performance
+        long startTime = System.currentTimeMillis();
+        Runtime runtime = Runtime.getRuntime();
+        long initialMemory = runtime.totalMemory() - runtime.freeMemory();
+
+        try (POSIndexGenerator indexer = new POSIndexGenerator(
+            levelDbPath.toString(),
+            stopwordsPath.toString(),
+            1000, // Larger batch size for performance
+            sqliteConn
+        )) {
+            indexer.generateIndex();
+        }
+
+        long duration = System.currentTimeMillis() - startTime;
+        System.gc(); // Force GC for accurate memory measurement
+        Thread.sleep(100); // Give GC time to complete
+        long finalMemory = runtime.totalMemory() - runtime.freeMemory();
+
+        // Verify performance (should process 100K entries in under 30 seconds)
+        assertTrue(duration < 30000, 
+            String.format("Large dataset processing took too long: %dms", duration));
+
+        // Verify memory usage (should not grow more than 100MB)
+        assertTrue((finalMemory - initialMemory) < 100_000_000,
+            String.format("Memory usage grew too much: %dMB", (finalMemory - initialMemory) / 1024 / 1024));
+
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(levelDbPath.toFile(), options)) {
+            // Check common POS tags
+            for (String pos : new String[]{"nn", "vb", "jj", "rb", "dt"}) {
+                byte[] posListBytes = db.get(pos.getBytes());
+                assertNotNull(posListBytes, "Should have entries for " + pos);
+                PositionList posList = PositionList.deserialize(posListBytes);
+                assertEquals(20000, posList.size(), 
+                    String.format("Should have 20K entries for %s (100K/5 POS tags)", pos));
+            }
+        }
+    }
+
+    @Test
+    void testErrorHandling() throws SQLException, IOException {
+        // Test invalid POS tags
+        try (Statement stmt = sqliteConn.createStatement()) {
+            // Insert document with various edge cases
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (100, '2024-01-01T00:00:00Z')");
+            
+            // Insert annotations with problematic POS tags
+            String[][] problematicTags = {
+                {"", "empty"},
+                {"   ", "whitespace"},
+                {"POS-WITH-DASHES", "dashes"},
+                {"POS WITH SPACES", "spaces"},
+                {"POS123", "numbers"},
+                {"!@#$", "special_chars"}
+            };
+
+            for (String[] tag : problematicTags) {
+                stmt.execute(String.format(
+                    "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, lemma, pos) " +
+                    "VALUES (100, 1, 0, 5, '%s_word', '%s')",
+                    tag[1], tag[0]
+                ));
+            }
+        }
+
+        // Run indexer
+        try (POSIndexGenerator indexer = new POSIndexGenerator(
+            levelDbPath.toString(),
+            stopwordsPath.toString(),
+            10,
+            sqliteConn
+        )) {
+            indexer.generateIndex();
+        }
+
+        // Verify handling of problematic cases
+        Options options = new Options();
+        try (DB db = factory.open(levelDbPath.toFile(), options)) {
+            // Empty and whitespace tags should be skipped
+            assertNull(db.get("".getBytes()), "Empty POS tag should be skipped");
+            assertNull(db.get("   ".getBytes()), "Whitespace POS tag should be skipped");
+
+            // Other problematic tags should be normalized and indexed
+            byte[] dashesTag = db.get("pos-with-dashes".getBytes());
+            assertNotNull(dashesTag, "Normalized POS tag with dashes should exist");
+
+            byte[] spacesTag = db.get("pos with spaces".getBytes());
+            assertNotNull(spacesTag, "Normalized POS tag with spaces should exist");
+
+            byte[] numbersTag = db.get("pos123".getBytes());
+            assertNotNull(numbersTag, "POS tag with numbers should exist");
+
+            // Special characters should be handled gracefully
+            byte[] specialCharsTag = db.get("!@#$".getBytes());
+            assertNotNull(specialCharsTag, "Special characters in POS tag should be handled");
+        }
+    }
+}

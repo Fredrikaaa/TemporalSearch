@@ -32,13 +32,13 @@ public class POSIndexGenerator extends BaseIndexGenerator {
         Map<String, PositionList> positionLists = new HashMap<>();
         
         for (IndexEntry entry : partition) {
-            // Skip entries with null POS tags
-            if (entry.pos == null) {
+            // Skip entries with null or empty POS tags
+            if (entry.pos == null || entry.pos.trim().isEmpty()) {
                 continue;
             }
             
             // Convert POS tag to lowercase for consistency
-            String key = entry.pos.toLowerCase();
+            String key = entry.pos.toLowerCase().trim();
             
             Position position = new Position(entry.documentId, entry.sentenceId,
                 entry.beginChar, entry.endChar, entry.timestamp);
