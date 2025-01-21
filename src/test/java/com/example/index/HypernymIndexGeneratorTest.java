@@ -79,14 +79,14 @@ class HypernymIndexGeneratorTest {
     }
     
     @Test
-    void testProcessPartitionWithEmptyList() {
-        List<IndexEntry> emptyPartition = new ArrayList<>();
+    void testProcessPartitionWithEmptyList() throws IOException {
+        List<DependencyEntry> emptyPartition = new ArrayList<>();
         ListMultimap<String, PositionList> result = generator.processPartition(emptyPartition);
         assertTrue(result.isEmpty());
     }
 
     @Test
-    void testProcessHypernymRelation() throws SQLException {
+    void testProcessHypernymRelation() throws SQLException, IOException {
         // Mock document timestamp query
         PreparedStatement timestampStmt = mock(PreparedStatement.class);
         ResultSet timestampRs = mock(ResultSet.class);
@@ -111,8 +111,9 @@ class HypernymIndexGeneratorTest {
         when(depsRs.getInt("end_char")).thenReturn(20);
 
         // Process a single document
-        IndexEntry entry = new IndexEntry(1, 1, 10, 20, "animal", "nmod:such_as", TEST_DATE);
-        List<IndexEntry> partition = List.of(entry);
+        DependencyEntry entry = new DependencyEntry(
+            1, 1, 10, 20, "animal", "cat", "nmod:such_as", TEST_DATE);
+        List<DependencyEntry> partition = List.of(entry);
         ListMultimap<String, PositionList> result = generator.processPartition(partition);
 
         // Verify results
@@ -134,7 +135,7 @@ class HypernymIndexGeneratorTest {
     }
 
     @Test
-    void testSkipStopwords() throws SQLException {
+    void testSkipStopwords() throws SQLException, IOException {
         // Mock document timestamp query
         PreparedStatement timestampStmt = mock(PreparedStatement.class);
         ResultSet timestampRs = mock(ResultSet.class);
@@ -156,8 +157,9 @@ class HypernymIndexGeneratorTest {
         when(depsRs.getString("dependent_lemma")).thenReturn("cat");
 
         // Process a single document
-        IndexEntry entry = new IndexEntry(1, 1, 10, 20, "the", "nmod:such_as", TEST_DATE);
-        List<IndexEntry> partition = List.of(entry);
+        DependencyEntry entry = new DependencyEntry(
+            1, 1, 10, 20, "the", "cat", "nmod:such_as", TEST_DATE);
+        List<DependencyEntry> partition = List.of(entry);
         ListMultimap<String, PositionList> result = generator.processPartition(partition);
 
         // Verify stopword pair was skipped

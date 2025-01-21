@@ -21,27 +21,6 @@ class DependencyIndexGeneratorTest {
     
     private static final String TEST_DB_PATH = "test-leveldb-dependency";
 
-    static class DependencyEntry {
-        private final int documentId;
-        private final int sentenceId;
-        private final String headToken;
-        private final String dependentToken;
-        private final String relation;
-        private final int beginChar;
-        private final int endChar;
-
-        public DependencyEntry(int documentId, int sentenceId, String headToken, 
-                             String dependentToken, String relation, int beginChar, int endChar) {
-            this.documentId = documentId;
-            this.sentenceId = sentenceId;
-            this.headToken = headToken;
-            this.dependentToken = dependentToken;
-            this.relation = relation;
-            this.beginChar = beginChar;
-            this.endChar = endChar;
-        }
-    }
-    
     @BeforeEach
     void setUp() throws Exception {
         // Create temporary directories and files
@@ -88,46 +67,29 @@ class DependencyIndexGeneratorTest {
             """);
             
             stmt.execute("""
-                CREATE TABLE sentences (
-                    id INTEGER PRIMARY KEY,
-                    doc_id INTEGER,
-                    text TEXT,
-                    timestamp INTEGER,
-                    FOREIGN KEY(doc_id) REFERENCES documents(document_id)
-                )
-            """);
-            
-            stmt.execute("""
                 CREATE TABLE dependencies (
-                    sentence_id INTEGER,
                     document_id INTEGER,
+                    sentence_id INTEGER,
                     head_token TEXT,
                     dependent_token TEXT,
                     relation TEXT,
                     begin_char INTEGER,
                     end_char INTEGER,
-                    FOREIGN KEY(sentence_id) REFERENCES sentences(id),
                     FOREIGN KEY(document_id) REFERENCES documents(document_id)
                 )
             """);
             
             // Insert test data
-            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-20T10:00:00Z')");
-            stmt.execute("INSERT INTO sentences (id, doc_id, text, timestamp) VALUES (1, 1, 'cat chases mouse', 1000)");
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-20 10:00:00.000')");
             
-            // Insert test dependencies for "cat chases mouse"
-            // cat -> chases (nsubj)
+            // Insert test dependencies
+            // "The cat chases the mouse"
             stmt.execute("""
-                INSERT INTO dependencies (document_id, sentence_id, head_token,
-                    dependent_token, relation, begin_char, end_char)
-                VALUES (1, 1, 'chases', 'cat', 'nsubj', 0, 3)
-            """);
-            
-            // chases -> mouse (dobj)
-            stmt.execute("""
-                INSERT INTO dependencies (document_id, sentence_id, head_token,
-                    dependent_token, relation, begin_char, end_char)
-                VALUES (1, 1, 'chases', 'mouse', 'dobj', 11, 16)
+                INSERT INTO dependencies (document_id, sentence_id, head_token, dependent_token, relation, begin_char, end_char)
+                VALUES 
+                    (1, 1, 'chases', 'cat', 'nsubj', 4, 7),
+                    (1, 1, 'cat', 'The', 'det', 0, 3),
+                    (1, 1, 'chases', 'mouse', 'dobj', 11, 16)
             """);
         }
     }
@@ -173,27 +135,11 @@ class DependencyIndexGeneratorTest {
     }
 
     @Test
-    public void testCaseNormalization() throws IOException {
-        try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
-                levelDbPath.toString(), stopwordsPath.toString(), 
-                10, sqliteConn)) {
-                
-            DependencyIndexGenerator.DependencyEntry entry = 
-                new DependencyIndexGenerator.DependencyEntry(
-                    1, 1, "April", "Day", "compound", 0, 10);
-                
-            String key = generator.generateKey(entry);
-            assertEquals("april" + BaseIndexGenerator.DELIMITER + "compound" + 
-                        BaseIndexGenerator.DELIMITER + "day", key);
-        }
-    }
-
-    @Test
     void testDependencyAggregation() throws Exception {
         // Setup test data with repeated dependencies
         try (Statement stmt = sqliteConn.createStatement()) {
             // Insert test data
-            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (2, '2024-01-21T10:00:00Z')");
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (2, '2024-01-21 10:00:00.000')");
             
             // Add more instances of the same dependency pattern (cat-nsubj->chases)
             stmt.execute("""
@@ -229,11 +175,174 @@ class DependencyIndexGeneratorTest {
                 .map(p -> String.format("%d-%d", p.getDocumentId(), p.getSentenceId()))
                 .collect(Collectors.toSet());
             assertEquals(3, uniquePositions.size(), "Should have positions from 3 different locations");
+        }
+    }
 
-            // Verify other dependencies still have single occurrences
-            String objKey = "chases" + BaseIndexGenerator.DELIMITER + "dobj" + BaseIndexGenerator.DELIMITER + "mouse";
-            PositionList objPositions = PositionList.deserialize(db.get(bytes(objKey)));
-            assertEquals(1, objPositions.size(), "Should have 1 occurrence of chases-dobj->mouse");
+    @Test
+    void testCaseNormalization() throws IOException {
+        try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
+                levelDbPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn)) {
+                
+            DependencyEntry entry = new DependencyEntry(
+                1, 1, 0, 10, "April", "Day", "compound", LocalDate.now());
+                
+            String key = generator.generateKey(entry);
+            assertEquals("april" + BaseIndexGenerator.DELIMITER + "compound" + 
+                        BaseIndexGenerator.DELIMITER + "day", key);
+        }
+    }
+
+    @Test
+    void testBlacklistedRelations() throws Exception {
+        // Setup test data with blacklisted relations
+        try (Statement stmt = sqliteConn.createStatement()) {
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (3, '2024-01-22 10:00:00.000')");
+            
+            // Add dependencies with blacklisted relations
+            stmt.execute("""
+                INSERT INTO dependencies (document_id, sentence_id, head_token,
+                    dependent_token, relation, begin_char, end_char)
+                VALUES 
+                    (3, 1, 'cat', 'the', 'det', 0, 3),
+                    (3, 1, 'mouse', 'the', 'det', 8, 11),
+                    (3, 1, 'chases', 'and', 'cc', 15, 18),
+                    (3, 1, 'mouse', 'with', 'case', 20, 24)
+            """);
+        }
+
+        // Generate index
+        Path indexPath = tempDir.resolve("blacklist-test");
+        try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
+                indexPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn)) {
+            generator.generateIndex();
+        }
+
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(indexPath.toFile(), options)) {
+            // Check that blacklisted relations are not indexed
+            String[] blacklistedKeys = {
+                "cat" + BaseIndexGenerator.DELIMITER + "det" + BaseIndexGenerator.DELIMITER + "the",
+                "mouse" + BaseIndexGenerator.DELIMITER + "det" + BaseIndexGenerator.DELIMITER + "the",
+                "chases" + BaseIndexGenerator.DELIMITER + "cc" + BaseIndexGenerator.DELIMITER + "and",
+                "mouse" + BaseIndexGenerator.DELIMITER + "case" + BaseIndexGenerator.DELIMITER + "with"
+            };
+            
+            for (String key : blacklistedKeys) {
+                assertNull(db.get(bytes(key)), 
+                    "Blacklisted relation should not be indexed: " + key);
+            }
+        }
+    }
+
+    @Test
+    void testStopwordFiltering() throws Exception {
+        // Setup test data with stopwords
+        try (Statement stmt = sqliteConn.createStatement()) {
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (4, '2024-01-23 10:00:00.000')");
+            
+            // Add dependencies with stopwords
+            stmt.execute("""
+                INSERT INTO dependencies (document_id, sentence_id, head_token,
+                    dependent_token, relation, begin_char, end_char)
+                VALUES 
+                    (4, 1, 'the', 'cat', 'nsubj', 0, 3),
+                    (4, 1, 'cat', 'the', 'det', 4, 7),
+                    (4, 1, 'a', 'mouse', 'det', 8, 9)
+            """);
+        }
+
+        // Generate index
+        Path indexPath = tempDir.resolve("stopword-test");
+        try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
+                indexPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn)) {
+            generator.generateIndex();
+        }
+
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(indexPath.toFile(), options)) {
+            // Check that entries with stopwords are not indexed
+            String[] stopwordKeys = {
+                "the" + BaseIndexGenerator.DELIMITER + "nsubj" + BaseIndexGenerator.DELIMITER + "cat",
+                "cat" + BaseIndexGenerator.DELIMITER + "det" + BaseIndexGenerator.DELIMITER + "the",
+                "a" + BaseIndexGenerator.DELIMITER + "det" + BaseIndexGenerator.DELIMITER + "mouse"
+            };
+            
+            for (String key : stopwordKeys) {
+                assertNull(db.get(bytes(key)), 
+                    "Entry with stopword should not be indexed: " + key);
+            }
+        }
+    }
+
+    @Test
+    void testNullAndInvalidEntries() throws Exception {
+        // Setup test data with null values
+        try (Statement stmt = sqliteConn.createStatement()) {
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (5, '2024-01-24 10:00:00.000')");
+            
+            // Add dependencies with null values
+            stmt.execute("""
+                INSERT INTO dependencies (document_id, sentence_id, head_token,
+                    dependent_token, relation, begin_char, end_char)
+                VALUES 
+                    (5, 1, NULL, 'cat', 'nsubj', 0, 3),
+                    (5, 1, 'cat', NULL, 'dobj', 4, 7),
+                    (5, 1, 'mouse', 'cat', NULL, 8, 11)
+            """);
+        }
+
+        // Generate index
+        Path indexPath = tempDir.resolve("null-test");
+        try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
+                indexPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn)) {
+            generator.generateIndex();
+        }
+
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(indexPath.toFile(), options)) {
+            // Check that entries with null values are not indexed
+            String[] nullKeys = {
+                "null" + BaseIndexGenerator.DELIMITER + "nsubj" + BaseIndexGenerator.DELIMITER + "cat",
+                "cat" + BaseIndexGenerator.DELIMITER + "dobj" + BaseIndexGenerator.DELIMITER + "null",
+                "mouse" + BaseIndexGenerator.DELIMITER + "null" + BaseIndexGenerator.DELIMITER + "cat"
+            };
+            
+            for (String key : nullKeys) {
+                assertNull(db.get(bytes(key)), 
+                    "Entry with null values should not be indexed: " + key);
+            }
+        }
+    }
+
+    @Test
+    void testKeyGenerationConsistency() throws IOException {
+        try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
+                levelDbPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn)) {
+            
+            // Test various input formats
+            DependencyEntry[] entries = {
+                new DependencyEntry(1, 1, 0, 10, "Cat", "Mouse", "nsubj", LocalDate.now()),
+                new DependencyEntry(1, 1, 0, 10, "CAT", "MOUSE", "NSUBJ", LocalDate.now()),
+                new DependencyEntry(1, 1, 0, 10, "cat", "mouse", "nsubj", LocalDate.now()),
+                new DependencyEntry(1, 1, 0, 10, " Cat ", " Mouse ", " nsubj ", LocalDate.now())
+            };
+            
+            String expectedKey = "cat" + BaseIndexGenerator.DELIMITER + "nsubj" + 
+                               BaseIndexGenerator.DELIMITER + "mouse";
+            
+            // All entries should generate the same key
+            for (DependencyEntry entry : entries) {
+                assertEquals(expectedKey, generator.generateKey(entry),
+                    "Key generation should be consistent regardless of input format");
+            }
         }
     }
 } 

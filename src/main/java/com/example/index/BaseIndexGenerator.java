@@ -26,10 +26,14 @@ import com.example.logging.ProgressTracker;
  * with configurable sizes and memory management. Subclasses implement specific indexing strategies
  * while inheriting common functionality like stopword handling and database interactions. Includes
  * built-in progress tracking and performance optimization through configurable cache and buffer sizes.
+ * @param <T> The type of index entry this generator processes
  */
-public abstract class BaseIndexGenerator implements AutoCloseable {
-    private static final Logger logger = LoggerFactory.getLogger(BaseIndexGenerator.class);
-    public static final String DELIMITER = "\u0000";
+public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCloseable {
+    protected static final Logger logger = LoggerFactory.getLogger(BaseIndexGenerator.class);
+    public static final String DELIMITER = "\0";
+    // Use ASCII unit separator (0x1F) as it's unlikely to appear in natural text
+    public static final char ESCAPE_CHAR = '\u001F';
+    public static final String ESCAPED_NULL = ESCAPE_CHAR + "0" + ESCAPE_CHAR;
     protected final DB levelDb;
     protected final Set<String> stopwords;
     protected final int batchSize;
@@ -38,7 +42,7 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
     private final ExecutorService executorService;
     private final int threadCount;
     private final Path tempDir;
-    private long totalEntries = 0;
+    protected long totalEntries = 0;
     protected final ProgressTracker progress;
 
     protected BaseIndexGenerator(String levelDbPath, String stopwordsPath,
@@ -97,58 +101,140 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
         return word == null || stopwords.contains(word.toLowerCase());
     }
 
-    protected List<IndexEntry> fetchBatch(int offset) throws SQLException {
-        List<IndexEntry> entries = new ArrayList<>();
-        try (Statement stmt = sqliteConn.createStatement()) {
-            // First get document timestamps
-            Map<Integer, LocalDate> documentDates = new HashMap<>();
-            try (ResultSet rs = stmt.executeQuery("SELECT document_id, timestamp FROM documents")) {
-                while (rs.next()) {
-                    documentDates.put(
-                        rs.getInt("document_id"),
-                        ZonedDateTime.parse(rs.getString("timestamp")).toLocalDate()
-                    );
-                }
-            }
-            
-            ResultSet rs = stmt.executeQuery(
-                String.format("SELECT * FROM annotations ORDER BY document_id, sentence_id, begin_char LIMIT %d OFFSET %d",
-                    batchSize, offset)
-            );
-            
-            while (rs.next()) {
-                int docId = rs.getInt("document_id");
-                LocalDate timestamp = documentDates.get(docId);
-                if (timestamp == null) {
-                    throw new SQLException("Document " + docId + " not found in documents table");
-                }
-                
-                entries.add(new IndexEntry(
-                    docId,
-                    rs.getInt("sentence_id"),
-                    rs.getInt("begin_char"),
-                    rs.getInt("end_char"),
-                    rs.getString("lemma"),
-                    rs.getString("pos"),
-                    timestamp
-                ));
-            }
+    /**
+     * Escapes null bytes in text by replacing them with a reversible escape sequence.
+     * This prevents conflicts with our delimiter while preserving the original meaning.
+     * The escape sequence uses ASCII unit separator (0x1F) as it's unlikely to appear in natural text.
+     * 
+     * @param text The text to sanitize
+     * @return The sanitized text with null bytes escaped
+     */
+    protected static String sanitizeText(String text) {
+        if (text == null) {
+            return null;
         }
-        return entries;
+        // Replace null bytes with our escape sequence
+        return text.replace(DELIMITER, ESCAPED_NULL).trim();
     }
 
-    private static class DocumentInfo {
-        final int documentId;
-        final LocalDate timestamp;
-        
-        DocumentInfo(int documentId, LocalDate timestamp) {
-            this.documentId = documentId;
-            this.timestamp = timestamp;
+    /**
+     * Reverses the null byte escaping done by sanitizeText.
+     * 
+     * @param text The text with escaped null bytes
+     * @return The original text with null bytes restored
+     */
+    protected static String desanitizeText(String text) {
+        if (text == null) {
+            return null;
         }
+        // Replace our escape sequence with actual null bytes
+        return text.replace(ESCAPED_NULL, DELIMITER);
     }
 
-    protected void writeToLevelDb(String key, byte[] value) throws IOException {
-        levelDb.put(bytes(key), value);
+    /**
+     * Fetches a batch of entries from the SQLite database.
+     * @param offset The offset to start fetching from
+     * @return A list of index entries
+     * @throws SQLException if there is an error accessing the database
+     */
+    protected abstract List<T> fetchBatch(int offset) throws SQLException;
+
+    /**
+     * Process a single partition of entries.
+     * @param partition The partition of entries to process
+     * @return A multimap of keys to position lists
+     * @throws IOException if there is an error writing to LevelDB
+     */
+    protected abstract ListMultimap<String, PositionList> processPartition(List<T> partition) throws IOException;
+
+    /**
+     * Partitions the input entries into batches for parallel processing.
+     * Creates one partition per thread to enable parallel processing.
+     * Ensures that entries from the same document are kept together
+     * to maintain consistency and prevent overlapping entries.
+     * @param entries The entries to partition
+     * @return A list of partitions
+     */
+    protected List<List<T>> partitionEntries(List<T> entries) {
+        if (entries == null || entries.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        // For single thread, return a single partition
+        if (threadCount == 1) {
+            List<List<T>> partitions = new ArrayList<>();
+            partitions.add(new ArrayList<>(entries));
+            return partitions;
+        }
+
+        // Group entries by document ID
+        Map<Integer, List<T>> documentGroups = new HashMap<>();
+        for (T entry : entries) {
+            documentGroups.computeIfAbsent(entry.getDocumentId(), k -> new ArrayList<>()).add(entry);
+        }
+
+        // Sort documents by ID
+        List<Integer> sortedDocIds = new ArrayList<>(documentGroups.keySet());
+        Collections.sort(sortedDocIds);
+
+        // For small inputs, create one partition per document (up to thread count)
+        if (entries.size() < 1000) {
+            List<List<T>> partitions = new ArrayList<>();
+            List<T> currentPartition = new ArrayList<>();
+            int currentDocCount = 0;
+            int targetDocsPerPartition = Math.max(1, sortedDocIds.size() / threadCount);
+
+            for (Integer docId : sortedDocIds) {
+                currentPartition.addAll(documentGroups.get(docId));
+                currentDocCount++;
+
+                if (currentDocCount >= targetDocsPerPartition && partitions.size() < threadCount - 1) {
+                    partitions.add(currentPartition);
+                    currentPartition = new ArrayList<>();
+                    currentDocCount = 0;
+                }
+            }
+
+            if (!currentPartition.isEmpty()) {
+                partitions.add(currentPartition);
+            }
+
+            return partitions;
+        }
+
+        // For larger inputs, partition based on size
+        // Calculate target size for each partition
+        int targetSize = entries.size() / threadCount;
+
+        // Create partitions
+        List<List<T>> partitions = new ArrayList<>();
+        List<T> currentPartition = new ArrayList<>();
+        int currentSize = 0;
+
+        // Distribute documents to partitions
+        for (Integer docId : sortedDocIds) {
+            List<T> docEntries = documentGroups.get(docId);
+            
+            // If adding this document would exceed target size and we have enough for a partition,
+            // start a new partition (unless this is the last possible partition)
+            if (currentSize > 0 && currentSize + docEntries.size() > targetSize * 1.5 && 
+                partitions.size() < threadCount - 1) {
+                partitions.add(currentPartition);
+                currentPartition = new ArrayList<>();
+                currentSize = 0;
+            }
+            
+            // Add all entries for this document to current partition
+            currentPartition.addAll(docEntries);
+            currentSize += docEntries.size();
+        }
+
+        // Add the last partition if it's not empty
+        if (!currentPartition.isEmpty()) {
+            partitions.add(currentPartition);
+        }
+
+        return partitions;
     }
 
     /**
@@ -167,83 +253,19 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
     }
 
     /**
-     * Partitions the input entries into batches for parallel processing.
-     * Partitions are created along document boundaries to ensure no document
-     * is split across partitions.
+     * Writes a value to LevelDB with the given key.
+     * @param key The key to write
+     * @param value The value to write
+     * @throws IOException if there is an error writing to LevelDB
      */
-    protected List<List<IndexEntry>> partitionEntries(List<IndexEntry> entries) {
-        if (entries == null || entries.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        // Group entries by document ID
-        Map<Integer, List<IndexEntry>> entriesByDoc = new HashMap<>();
-        for (IndexEntry entry : entries) {
-            entriesByDoc.computeIfAbsent(entry.documentId, k -> new ArrayList<>()).add(entry);
-        }
-
-        // Calculate optimal number of documents per partition
-        int totalDocs = entriesByDoc.size();
-        int optimalThreadCount = Math.min(threadCount, Math.max(2, totalDocs));
-        int docsPerPartition = Math.max(1, totalDocs / optimalThreadCount);
-
-        List<List<IndexEntry>> partitions = new ArrayList<>();
-        List<IndexEntry> currentPartition = new ArrayList<>();
-        int currentDocCount = 0;
-
-        // Create partitions by document
-        for (List<IndexEntry> docEntries : entriesByDoc.values()) {
-            currentPartition.addAll(docEntries);
-            currentDocCount++;
-
-            if (currentDocCount >= docsPerPartition) {
-                partitions.add(currentPartition);
-                currentPartition = new ArrayList<>();
-                currentDocCount = 0;
-            }
-        }
-
-        // Add any remaining entries as the last partition
-        if (!currentPartition.isEmpty()) {
-            partitions.add(currentPartition);
-        }
-
-        // Log partition information
-        if (logger.isDebugEnabled()) {
-            for (int i = 0; i < partitions.size(); i++) {
-                List<IndexEntry> partition = partitions.get(i);
-                Set<Integer> docsInPartition = partition.stream()
-                    .map(e -> e.documentId)
-                    .collect(Collectors.toSet());
-                logger.debug("Partition {} contains {} entries from {} documents", 
-                    i, partition.size(), docsInPartition.size());
-            }
-        }
-
-        return partitions;
+    protected void writeToLevelDb(String key, byte[] value) throws IOException {
+        levelDb.put(bytes(key), value);
     }
-
-    private int countOverlappingEntries(List<IndexEntry> partition1, List<IndexEntry> partition2) {
-        Set<String> entries1 = partition1.stream()
-            .map(e -> String.format("%d-%d-%d-%d", e.documentId, e.sentenceId, e.beginChar, e.endChar))
-            .collect(Collectors.toSet());
-        
-        return (int) partition2.stream()
-            .map(e -> String.format("%d-%d-%d-%d", e.documentId, e.sentenceId, e.beginChar, e.endChar))
-            .filter(entries1::contains)
-            .count();
-    }
-
-    /**
-     * Process a single partition of entries.
-     * To be implemented by concrete subclasses.
-     */
-    protected abstract ListMultimap<String, PositionList> processPartition(List<IndexEntry> partition) throws IOException;
 
     /**
      * Processes entries in parallel using the thread pool.
      */
-    protected void processBatch(List<IndexEntry> entries) throws IOException {
+    protected void processBatch(List<T> entries) throws IOException {
         try {
             // For small batches or single thread, process directly
             if (entries.size() < 10000 || threadCount == 1) {
@@ -270,12 +292,14 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
                 return;
             }
 
-            // Use partitionEntries to maintain n-gram continuity
-            List<List<IndexEntry>> partitions = partitionEntries(entries);
+            // Process in parallel
             List<Future<ListMultimap<String, PositionList>>> futures = new ArrayList<>();
 
             // Submit tasks
-            for (List<IndexEntry> partition : partitions) {
+            for (int i = 0; i < threadCount; i++) {
+                int start = i * entries.size() / threadCount;
+                int end = (i + 1) * entries.size() / threadCount;
+                List<T> partition = entries.subList(start, end);
                 futures.add(executorService.submit(new IndexGenerationTask(partition)));
             }
 
@@ -315,8 +339,6 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
                     writeToLevelDb(key, merged.serialize());
                 }
             }
-        } catch (NullPointerException e) {
-            throw new IOException("Failed to process entries: encountered null entry", e);
         } catch (Exception e) {
             throw new IOException("Failed to process entries in parallel", e);
         }
@@ -326,9 +348,9 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
      * Task for processing a partition of entries.
      */
     private class IndexGenerationTask implements Callable<ListMultimap<String, PositionList>> {
-        private final List<IndexEntry> partition;
+        private final List<T> partition;
 
-        IndexGenerationTask(List<IndexEntry> partition) {
+        IndexGenerationTask(List<T> partition) {
             this.partition = partition;
         }
 
@@ -338,46 +360,36 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
         }
     }
 
+    /**
+     * Generates the index by processing all entries in batches.
+     * @throws SQLException if there is an error accessing the database
+     * @throws IOException if there is an error writing to LevelDB
+     */
     public void generateIndex() throws SQLException, IOException {
-        try {
-            // Count total entries first
+        // Count total entries
             try (Statement stmt = sqliteConn.createStatement()) {
-                String table = tableName.equals("dependencies") ? "dependencies" : "annotations";
-                ResultSet rs = stmt.executeQuery("SELECT COUNT(*) as total FROM " + table);
+            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM " + tableName);
                 if (rs.next()) {
-                    totalEntries = rs.getLong("total");
-                }
+                totalEntries = rs.getLong(1);
+            }
             }
 
+        // Process entries in batches
+        int offset = 0;
             progress.startIndex(tableName, totalEntries);
 
-            int offset = 0;
             while (true) {
-                List<IndexEntry> batch = fetchBatch(offset);
-                if (batch.isEmpty()) {
+            List<T> entries = fetchBatch(offset);
+            if (entries.isEmpty()) {
                     break;
                 }
                 
-                processBatch(batch);
-                progress.updateIndex(batch.size());
-                
-                offset += batchSize;
+            processBatch(entries);
+            offset += entries.size();
+            progress.updateIndex(entries.size());
             }
 
             progress.completeIndex();
-        } catch (SQLException e) {
-            throw e;  // Propagate SQLException directly
-        } catch (IOException e) {
-            throw e;  // Propagate IOException directly
-        } catch (Exception e) {
-            if (e.getCause() instanceof SQLException) {
-                throw (SQLException) e.getCause();
-            }
-            if (e.getCause() instanceof IOException) {
-                throw (IOException) e.getCause();
-            }
-            throw new SQLException("Error generating index", e);
-        }
     }
 
     @Override
@@ -391,34 +403,6 @@ public abstract class BaseIndexGenerator implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        if (levelDb != null) {
             levelDb.close();
-        }
-    }
-}
-
-/**
- * Data transfer object representing a single annotation entry from the SQLite database.
- * Encapsulates all relevant information about a token including its position, lemmatized form,
- * part-of-speech tag, and temporal information.
- */
-class IndexEntry {
-    final int documentId;
-    final int sentenceId;
-    final int beginChar;
-    final int endChar;
-    final String lemma;
-    final String pos;
-    final LocalDate timestamp;
-
-    IndexEntry(int documentId, int sentenceId, int beginChar, int endChar,
-            String lemma, String pos, LocalDate timestamp) {
-        this.documentId = documentId;
-        this.sentenceId = sentenceId;
-        this.beginChar = beginChar;
-        this.endChar = endChar;
-        this.lemma = lemma;
-        this.pos = pos;
-        this.timestamp = timestamp;
     }
 }

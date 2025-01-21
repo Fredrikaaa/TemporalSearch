@@ -1,46 +1,108 @@
 package com.example.index;
 
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.MultimapBuilder;
 import java.io.IOException;
 import java.sql.Connection;
-import java.util.*;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.LocalDate;
+import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
- * Generates unigram indexes from annotated text.
- * Each unigram (single word) is stored with its positions in the corpus.
+ * Generates a unigram index from annotation entries.
+ * Each entry maps a single lemmatized token to its positions in the corpus.
  */
-public class UnigramIndexGenerator extends BaseIndexGenerator {
-    
+public final class UnigramIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
+
     public UnigramIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "unigrams");
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations");
     }
 
     public UnigramIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn, int threadCount) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "unigrams", threadCount);
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", threadCount);
     }
 
     @Override
-    protected ListMultimap<String, PositionList> processPartition(List<IndexEntry> partition) throws IOException {
-        if (partition == null) {
-            throw new IOException("Partition cannot be null");
+    protected List<AnnotationEntry> fetchBatch(int offset) throws SQLException {
+        List<AnnotationEntry> entries = new ArrayList<>();
+        try (Statement stmt = sqliteConn.createStatement()) {
+            // First get document timestamps
+            Map<Integer, LocalDate> documentDates = new HashMap<>();
+            try (ResultSet rs = stmt.executeQuery("SELECT document_id, timestamp FROM documents")) {
+                while (rs.next()) {
+                    documentDates.put(
+                        rs.getInt("document_id"),
+                        ZonedDateTime.parse(rs.getString("timestamp")).toLocalDate()
+                    );
+                }
+            }
+            
+            ResultSet rs = stmt.executeQuery(
+                String.format("SELECT * FROM annotations ORDER BY document_id, sentence_id, begin_char LIMIT %d OFFSET %d",
+                    batchSize, offset)
+            );
+            
+            while (rs.next()) {
+                int docId = rs.getInt("document_id");
+                LocalDate timestamp = documentDates.get(docId);
+                if (timestamp == null) {
+                    throw new SQLException("Document " + docId + " not found in documents table");
+                }
+
+                // Sanitize text fields before creating entry
+                String lemma = sanitizeText(rs.getString("lemma"));
+                String pos = sanitizeText(rs.getString("pos"));
+
+                // Skip if lemma is null or empty after sanitization
+                if (lemma == null || lemma.isEmpty()) {
+                    continue;
+                }
+                
+                entries.add(new AnnotationEntry(
+                    docId,
+                    rs.getInt("sentence_id"),
+                    rs.getInt("begin_char"),
+                    rs.getInt("end_char"),
+                    lemma,
+                    pos,
+                    timestamp
+                ));
+            }
         }
-        
-        ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
+        return entries;
+    }
+
+    @Override
+    protected ListMultimap<String, PositionList> processPartition(List<AnnotationEntry> partition) {
+        ListMultimap<String, PositionList> index = ArrayListMultimap.create();
         Map<String, PositionList> positionLists = new HashMap<>();
         
-        for (IndexEntry entry : partition) {
-            if (entry.lemma == null || isStopword(entry.lemma)) {
+        for (AnnotationEntry entry : partition) {
+            // Skip entries with null or empty lemmas
+            if (entry.getLemma() == null || entry.getLemma().trim().isEmpty()) {
                 continue;
             }
-
-            String key = entry.lemma.toLowerCase();
-            Position position = new Position(entry.documentId, entry.sentenceId, 
-                                          entry.beginChar, entry.endChar, entry.timestamp);
-
-            // Get or create position list for this term
+            
+            // Convert lemma to lowercase for consistency
+            String key = entry.getLemma().toLowerCase().trim();
+            
+            // Skip stopwords
+            if (isStopword(key)) {
+                continue;
+            }
+            
+            Position position = new Position(entry.getDocumentId(), entry.getSentenceId(),
+                entry.getBeginChar(), entry.getEndChar(), entry.getTimestamp());
+            
+            // Get or create position list for this lemma
             PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
             posList.add(position);
         }

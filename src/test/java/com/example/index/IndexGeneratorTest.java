@@ -38,7 +38,7 @@ class IndexGeneratorTest {
     
     @AfterEach
     void tearDown() throws Exception {
-        if (sqliteConn != null) {
+        if (sqliteConn != null && !sqliteConn.isClosed()) {
             sqliteConn.close();
         }
         
@@ -47,9 +47,9 @@ class IndexGeneratorTest {
              .sorted(Comparator.reverseOrder())
              .forEach(path -> {
                  try {
-                     Files.delete(path);
+                     Files.deleteIfExists(path);
                  } catch (IOException e) {
-                     e.printStackTrace();
+                     // Ignore cleanup errors
                  }
              });
     }
@@ -162,11 +162,14 @@ class IndexGeneratorTest {
         Options options = new Options();
         try (DB db = factory.open(indexPath.toFile(), options)) {
             // Check some expected bigrams
-            assertNotNull(db.get(bytes("quick\u0000brown")), "quick brown should be indexed");
-            assertNotNull(db.get(bytes("brown\u0000fox")), "brown fox should be indexed");
+            String quickBrown = "quick" + BaseIndexGenerator.DELIMITER + "brown";
+            String brownFox = "brown" + BaseIndexGenerator.DELIMITER + "fox";
+            
+            assertNotNull(db.get(bytes(quickBrown)), "quick brown should be indexed");
+            assertNotNull(db.get(bytes(brownFox)), "brown fox should be indexed");
             
             // Verify a specific position
-            PositionList quickBrownPositions = PositionList.deserialize(db.get(bytes("quick\u0000brown")));
+            PositionList quickBrownPositions = PositionList.deserialize(db.get(bytes(quickBrown)));
             assertEquals(3, quickBrownPositions.size(), "quick brown should appear three times");
             
             Position pos = quickBrownPositions.getPositions().get(0);
@@ -191,11 +194,16 @@ class IndexGeneratorTest {
         Options options = new Options();
         try (DB db = factory.open(indexPath.toFile(), options)) {
             // Check some expected trigrams
-            assertNotNull(db.get(bytes("quick\u0000brown\u0000fox")), "quick brown fox should be indexed");
-            assertNotNull(db.get(bytes("brown\u0000fox\u0000jumps")), "brown fox jumps should be indexed");
+            String quickBrownFox = "quick" + BaseIndexGenerator.DELIMITER + "brown" + 
+                                 BaseIndexGenerator.DELIMITER + "fox";
+            String brownFoxJumps = "brown" + BaseIndexGenerator.DELIMITER + "fox" + 
+                                 BaseIndexGenerator.DELIMITER + "jumps";
+            
+            assertNotNull(db.get(bytes(quickBrownFox)), "quick brown fox should be indexed");
+            assertNotNull(db.get(bytes(brownFoxJumps)), "brown fox jumps should be indexed");
             
             // Verify a specific position
-            PositionList quickBrownFoxPositions = PositionList.deserialize(db.get(bytes("quick\u0000brown\u0000fox")));
+            PositionList quickBrownFoxPositions = PositionList.deserialize(db.get(bytes(quickBrownFox)));
             assertEquals(2, quickBrownFoxPositions.size(), "quick brown fox should appear twice");
             
             Position pos = quickBrownFoxPositions.getPositions().get(0);

@@ -110,26 +110,26 @@ class NerDateIndexGeneratorTest {
 
     @Test
     void testFetchBatch() throws Exception {
-        List<IndexEntry> batch = indexer.fetchBatch(0);
+        List<AnnotationEntry> batch = indexer.fetchBatch(0);
         
         // Should only get entries where ner = 'DATE' and normalized_ner is not null
         assertEquals(3, batch.size());
         
         // Verify first entry
-        IndexEntry first = batch.get(0);
-        assertEquals(1, first.documentId);
-        assertEquals(1, first.sentenceId);
-        assertEquals(0, first.beginChar);
-        assertEquals(10, first.endChar);
-        assertEquals("2024-01-20", first.lemma);
-        assertEquals("DATE", first.pos);
-        assertEquals(LocalDate.parse("2024-01-15"), first.timestamp);
+        AnnotationEntry first = batch.get(0);
+        assertEquals(1, first.getDocumentId());
+        assertEquals(1, first.getSentenceId());
+        assertEquals(0, first.getBeginChar());
+        assertEquals(10, first.getEndChar());
+        assertEquals("2024-01-20", first.getLemma());
+        assertEquals("DATE", first.getPos());
+        assertEquals(LocalDate.parse("2024-01-15"), first.getTimestamp());
     }
 
     @Test
     void testProcessPartition() throws Exception {
         // Create test entries
-        List<IndexEntry> batch = indexer.fetchBatch(0);
+        List<AnnotationEntry> batch = indexer.fetchBatch(0);
         var result = indexer.processPartition(batch);
         
         // Should have three unique dates

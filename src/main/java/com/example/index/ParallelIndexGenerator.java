@@ -22,8 +22,9 @@ import java.util.Collections;
 /**
  * Abstract base class for parallel index generation.
  * Manages thread pool and parallel processing of document batches.
+ * @param <T> The type of index entry this generator processes
  */
-public abstract class ParallelIndexGenerator extends BaseIndexGenerator {
+public abstract class ParallelIndexGenerator<T extends IndexEntry> extends BaseIndexGenerator<T> {
     private static final Logger logger = LoggerFactory.getLogger(ParallelIndexGenerator.class);
     private final ExecutorService executorService;
     private final int threadCount;
@@ -58,20 +59,20 @@ public abstract class ParallelIndexGenerator extends BaseIndexGenerator {
      * Partitions the input entries into batches for parallel processing.
      */
     @Override
-    protected List<List<IndexEntry>> partitionEntries(List<IndexEntry> entries) {
+    protected List<List<T>> partitionEntries(List<T> entries) {
         if (entries == null || entries.isEmpty()) {
             return new ArrayList<>();
         }
 
         // Group entries by document ID
-        Map<Integer, List<IndexEntry>> entriesByDoc = new HashMap<>();
-        for (IndexEntry entry : entries) {
-            entriesByDoc.computeIfAbsent(entry.documentId, k -> new ArrayList<>()).add(entry);
+        Map<Integer, List<T>> entriesByDoc = new HashMap<>();
+        for (T entry : entries) {
+            entriesByDoc.computeIfAbsent(entry.getDocumentId(), k -> new ArrayList<>()).add(entry);
         }
 
         // If we only have one document, return all entries as a single partition
         if (entriesByDoc.size() == 1) {
-            List<List<IndexEntry>> partitions = new ArrayList<>();
+            List<List<T>> partitions = new ArrayList<>();
             partitions.add(new ArrayList<>(entries));
             return partitions;
         }
@@ -85,12 +86,12 @@ public abstract class ParallelIndexGenerator extends BaseIndexGenerator {
         int optimalThreadCount = Math.min(threadCount, totalDocs);
         int docsPerPartition = Math.max(1, (totalDocs + optimalThreadCount - 1) / optimalThreadCount);
 
-        List<List<IndexEntry>> partitions = new ArrayList<>();
-        List<IndexEntry> currentPartition = new ArrayList<>();
+        List<List<T>> partitions = new ArrayList<>();
+        List<T> currentPartition = new ArrayList<>();
 
         // Create partitions by document
         for (int i = 0; i < docIds.size(); i++) {
-            List<IndexEntry> docEntries = entriesByDoc.get(docIds.get(i));
+            List<T> docEntries = entriesByDoc.get(docIds.get(i));
             
             // If this is the first document in a partition, or if adding this document
             // would exceed the target size, start a new partition
@@ -117,18 +118,19 @@ public abstract class ParallelIndexGenerator extends BaseIndexGenerator {
      * Process a single partition of entries.
      * To be implemented by concrete subclasses.
      */
-    protected abstract ListMultimap<String, PositionList> processPartition(List<IndexEntry> partition);
+    @Override
+    protected abstract ListMultimap<String, PositionList> processPartition(List<T> partition) throws IOException;
 
     /**
      * Processes entries in parallel using the thread pool.
      */
     @Override
-    protected void processBatch(List<IndexEntry> entries) throws IOException {
-        List<List<IndexEntry>> partitions = partitionEntries(entries);
+    protected void processBatch(List<T> entries) throws IOException {
+        List<List<T>> partitions = partitionEntries(entries);
         List<Future<ListMultimap<String, PositionList>>> futures = new ArrayList<>();
 
         // Submit tasks
-        for (List<IndexEntry> partition : partitions) {
+        for (List<T> partition : partitions) {
             futures.add(executorService.submit(new IndexGenerationTask(partition)));
         }
 
@@ -170,14 +172,14 @@ public abstract class ParallelIndexGenerator extends BaseIndexGenerator {
      * Task for processing a partition of entries.
      */
     private class IndexGenerationTask implements Callable<ListMultimap<String, PositionList>> {
-        private final List<IndexEntry> partition;
+        private final List<T> partition;
 
-        IndexGenerationTask(List<IndexEntry> partition) {
+        IndexGenerationTask(List<T> partition) {
             this.partition = partition;
         }
 
         @Override
-        public ListMultimap<String, PositionList> call() {
+        public ListMultimap<String, PositionList> call() throws IOException {
             return processPartition(partition);
         }
     }

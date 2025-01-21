@@ -1,12 +1,13 @@
 package com.example.index;
 
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.MultimapBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static org.iq80.leveldb.impl.Iq80DBFactory.bytes;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.*;
@@ -15,34 +16,17 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.ZonedDateTime;
 
-public class DependencyIndexGenerator extends BaseIndexGenerator {
+/**
+ * Generates a dependency index from dependency relation entries.
+ * Each entry maps a head token, relation type, and dependent token to their positions in the corpus.
+ */
+public final class DependencyIndexGenerator extends BaseIndexGenerator<DependencyEntry> {
     private static final Logger logger = LoggerFactory.getLogger(DependencyIndexGenerator.class);
     private static final int BATCH_SIZE = 1000;
 
-    private static final Set<String> BLACKLISTED_RELATIONS = new HashSet<>(Arrays.asList(
+    private static final Set<String> BLACKLISTED_RELATIONS = Set.of(
         "punct", "det", "case", "cc"
-    ));
-
-    static class DependencyEntry {
-        final int documentId;
-        final int sentenceId;
-        final String headToken;
-        final String dependentToken;
-        final String relation;
-        final int beginChar;
-        final int endChar;
-
-        public DependencyEntry(int documentId, int sentenceId, String headToken, 
-                             String dependentToken, String relation, int beginChar, int endChar) {
-            this.documentId = documentId;
-            this.sentenceId = sentenceId;
-            this.headToken = headToken;
-            this.dependentToken = dependentToken;
-            this.relation = relation;
-            this.beginChar = beginChar;
-            this.endChar = endChar;
-        }
-    }
+    );
 
     public DependencyIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn) throws IOException {
@@ -55,247 +39,91 @@ public class DependencyIndexGenerator extends BaseIndexGenerator {
     }
 
     @Override
-    protected List<IndexEntry> fetchBatch(int offset) throws SQLException {
-        List<IndexEntry> entries = new ArrayList<>();
-        try (Statement stmt = sqliteConn.createStatement()) {
-            // First get document timestamps
-            Map<Integer, LocalDate> documentDates = new HashMap<>();
-            try (ResultSet rs = stmt.executeQuery("SELECT document_id, timestamp FROM documents")) {
+    protected List<DependencyEntry> fetchBatch(int offset) throws SQLException {
+        List<DependencyEntry> entries = new ArrayList<>();
+        String sql = """
+            SELECT d.document_id, d.sentence_id, d.head_token, d.dependent_token,
+                   d.relation, d.begin_char, d.end_char, doc.timestamp
+            FROM dependencies d
+            JOIN documents doc ON d.document_id = doc.document_id
+            ORDER BY d.document_id, d.sentence_id
+            LIMIT ? OFFSET ?
+        """;
+
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(sql)) {
+            stmt.setInt(1, batchSize);
+            stmt.setInt(2, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
-                    documentDates.put(
-                        rs.getInt("document_id"),
-                        ZonedDateTime.parse(rs.getString("timestamp")).toLocalDate()
-                    );
-                }
-            }
-            
-            // Get dependencies
-            String query = String.format("""
-                SELECT * FROM dependencies
-                ORDER BY document_id, sentence_id
-                LIMIT %d OFFSET %d
-                """, batchSize, offset);
-            
-            logger.debug("Fetching batch at offset {} with query: {}", offset, query);
-            
-            try (ResultSet rs = stmt.executeQuery(query)) {
-                while (rs.next()) {
-                    int docId = rs.getInt("document_id");
-                    LocalDate timestamp = documentDates.get(docId);
-                    if (timestamp == null) {
-                        throw new SQLException("Document " + docId + " not found in documents table");
-                    }
-                    
-                    // Skip blacklisted relations
-                    String relation = rs.getString("relation");
-                    if (BLACKLISTED_RELATIONS.contains(relation)) {
-                        logger.debug("Skipping blacklisted relation: {}", relation);
+                    // Sanitize text fields
+                    String headToken = sanitizeText(rs.getString("head_token"));
+                    String dependentToken = sanitizeText(rs.getString("dependent_token"));
+                    String relation = sanitizeText(rs.getString("relation"));
+
+                    // Skip entries where any required field is null or empty after sanitization
+                    if (headToken == null || headToken.isEmpty() ||
+                        dependentToken == null || dependentToken.isEmpty() ||
+                        relation == null || relation.isEmpty()) {
+                        logger.debug("Skipping entry with null/empty fields: head={}, dependent={}, relation={}",
+                                   headToken, dependentToken, relation);
                         continue;
                     }
-                    
-                    String headToken = rs.getString("head_token");
-                    String dependentToken = rs.getString("dependent_token");
-                    logger.debug("Processing dependency: {} -{}- {}", headToken, relation, dependentToken);
-                    
-                    // Create an entry for the head token
-                    entries.add(new IndexEntry(
-                        docId,
+
+                    entries.add(new DependencyEntry(
+                        rs.getInt("document_id"),
                         rs.getInt("sentence_id"),
                         rs.getInt("begin_char"),
                         rs.getInt("end_char"),
-                        rs.getString("head_token"),
-                        relation, // Use relation as POS tag for head
-                        timestamp
-                    ));
-                    
-                    // Create an entry for the dependent token
-                    entries.add(new IndexEntry(
-                        docId,
-                        rs.getInt("sentence_id"),
-                        rs.getInt("begin_char"),
-                        rs.getInt("end_char"),
-                        rs.getString("dependent_token"),
-                        relation, // Use relation as POS tag for dependent
-                        timestamp
+                        headToken,
+                        dependentToken,
+                        relation,
+                        LocalDate.parse(rs.getString("timestamp").substring(0, 10))
                     ));
                 }
             }
-            
-            logger.debug("Fetched {} entries at offset {}", entries.size(), offset);
         }
         return entries;
     }
 
     @Override
-    protected ListMultimap<String, PositionList> processPartition(List<IndexEntry> entries) {
-        ListMultimap<String, PositionList> result = ArrayListMultimap.create();
-        Map<String, PositionList> positionLists = new HashMap<>();
+    protected ListMultimap<String, PositionList> processPartition(List<DependencyEntry> partition) throws IOException {
+        ListMultimap<String, PositionList> results = MultimapBuilder.hashKeys().arrayListValues().build();
 
-        // Group entries by document and sentence
-        Map<Integer, Map<Integer, List<IndexEntry>>> docSentMap = new HashMap<>();
-        for (IndexEntry entry : entries) {
-            docSentMap
-                .computeIfAbsent(entry.documentId, k -> new HashMap<>())
-                .computeIfAbsent(entry.sentenceId, k -> new ArrayList<>())
-                .add(entry);
-        }
-
-        // Process each document
-        for (Map.Entry<Integer, Map<Integer, List<IndexEntry>>> docEntry : docSentMap.entrySet()) {
-            int docId = docEntry.getKey();
-
-            // Process each sentence
-            for (Map.Entry<Integer, List<IndexEntry>> sentEntry : docEntry.getValue().entrySet()) {
-                int sentId = sentEntry.getKey();
-                List<IndexEntry> sentEntries = sentEntry.getValue();
-                
-                // Process entries in pairs (head and dependent)
-                for (int i = 0; i < sentEntries.size(); i += 2) {
-                    if (i + 1 >= sentEntries.size()) {
-                        break; // Skip incomplete pair at end
-                    }
-                    
-                    IndexEntry headEntry = sentEntries.get(i);
-                    IndexEntry depEntry = sentEntries.get(i + 1);
-                    
-                    // Skip if either word is a stopword
-                    if (isStopword(headEntry.lemma) || isStopword(depEntry.lemma)) {
-                        continue;
-                    }
-                    
-                    // Create the key with the relation type
-                    String key = String.format("%s%s%s%s%s", 
-                        headEntry.lemma.toLowerCase(),
-                        DELIMITER,
-                        headEntry.pos, // relation type stored in pos field
-                        DELIMITER,
-                        depEntry.lemma.toLowerCase());
-                    
-                    // Use the minimum and maximum character positions to span both tokens
-                    int beginPos = Math.min(headEntry.beginChar, depEntry.beginChar);
-                    int endPos = Math.max(headEntry.endChar, depEntry.endChar);
-                    
-                    Position pos = new Position(
-                        docId,
-                        sentId,
-                        beginPos,
-                        endPos,
-                        headEntry.timestamp
-                    );
-                    
-                    // Add to position list
-                    PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
-                    posList.add(pos);
-                }
+        for (DependencyEntry entry : partition) {
+            // Skip stopwords and blacklisted relations
+            if (isStopword(entry.getHeadToken()) || 
+                isStopword(entry.getDependentToken()) ||
+                BLACKLISTED_RELATIONS.contains(entry.getRelation())) {
+                continue;
             }
-        }
-        
-        // Add all position lists to result
-        for (Map.Entry<String, PositionList> entry : positionLists.entrySet()) {
-            result.put(entry.getKey(), entry.getValue());
-        }
-        
-        return result;
-    }
 
-    @Override
-    public void generateIndex() throws SQLException, IOException {
-        // Get total count for progress tracking
-        try (Statement stmt = sqliteConn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) as total FROM dependencies")) {
-            rs.next();
-            int totalCount = rs.getInt("total");
-            logger.info("Total dependencies to process: {}", totalCount);
-
-            List<DependencyEntry> batch = new ArrayList<>();
-            int offset = 0;
-
-            while (true) {
-                try (Statement batchStmt = sqliteConn.createStatement();
-                     ResultSet batchRs = batchStmt.executeQuery(String.format(
-                         "SELECT * FROM dependencies ORDER BY document_id, sentence_id LIMIT %d OFFSET %d",
-                         BATCH_SIZE, offset))) {
-
-                    if (!batchRs.next()) {
-                        break;
-                    }
-
-                    do {
-                        int documentId = batchRs.getInt("document_id");
-                        int sentenceId = batchRs.getInt("sentence_id");
-                        String headToken = batchRs.getString("head_token");
-                        String dependentToken = batchRs.getString("dependent_token");
-                        String relation = batchRs.getString("relation");
-                        int beginChar = batchRs.getInt("begin_char");
-                        int endChar = batchRs.getInt("end_char");
-
-                        // Skip blacklisted relations
-                        if (BLACKLISTED_RELATIONS.contains(relation)) {
-                            continue;
-                        }
-
-                        // Create dependency entry
-                        batch.add(new DependencyEntry(
-                            documentId,
-                            sentenceId,
-                            headToken,
-                            dependentToken,
-                            relation,
-                            beginChar,
-                            endChar
-                        ));
-                    } while (batchRs.next());
-
-                    // Process the batch
-                    processDependencyBatch(batch);
-                    batch.clear();
-                    offset += BATCH_SIZE;
-                }
-            }
-        }
-    }
-
-    private void processDependencyBatch(List<DependencyEntry> entries) throws IOException {
-        Map<String, PositionList> positionLists = new HashMap<>();
-
-        for (DependencyEntry entry : entries) {
+            // Create key in format: headToken\0relation\0dependentToken
             String key = generateKey(entry);
-            
-            // Get or create position list for this dependency
-            PositionList positions = positionLists.computeIfAbsent(key, k -> {
-                // Try to read existing positions from LevelDB
-                byte[] existingData = levelDb.get(bytes(k));
-                if (existingData != null) {
-                    try {
-                        return PositionList.deserialize(existingData);
-                    } catch (Exception e) {
-                        logger.error("Error deserializing positions for key {}: {}", k, e.getMessage());
-                        return new PositionList();
-                    }
-                }
-                return new PositionList();
-            });
 
-            // Add new position
-            positions.add(new Position(entry.documentId, entry.sentenceId, 
-                entry.beginChar, entry.endChar, LocalDate.now()));
+            // Create position list for this entry
+            PositionList positions = new PositionList();
+            positions.add(new Position(
+                entry.getDocumentId(),
+                entry.getSentenceId(),
+                entry.getBeginChar(),
+                entry.getEndChar(),
+                entry.getTimestamp()
+            ));
+
+            results.put(key, positions);
         }
 
-        // Write all position lists back to LevelDB
-        for (Map.Entry<String, PositionList> entry : positionLists.entrySet()) {
-            levelDb.put(bytes(entry.getKey()), entry.getValue().serialize());
-            logger.debug("Indexed dependency {} with {} occurrences", 
-                entry.getKey().replace(DELIMITER, "-"), entry.getValue().size());
-        }
+        return results;
     }
 
-    // Add new helper method for key generation
+    // Helper method for key generation
     protected String generateKey(DependencyEntry entry) {
         return String.format("%s%s%s%s%s", 
-            entry.headToken.toLowerCase(),
+            entry.getHeadToken().trim().toLowerCase(),
             DELIMITER,
-            entry.relation.toLowerCase(),
+            entry.getRelation().trim().toLowerCase(),
             DELIMITER,
-            entry.dependentToken.toLowerCase());
+            entry.getDependentToken().trim().toLowerCase());
     }
 } 

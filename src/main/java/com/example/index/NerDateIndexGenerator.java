@@ -20,24 +20,24 @@ import java.util.*;
  * Extracts dates from the normalized_ner column where ner type is "DATE",
  * normalizes them to YYYYMMDD format, and stores their positions.
  */
-public class NerDateIndexGenerator extends BaseIndexGenerator {
+public class NerDateIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
     private static final Logger logger = LoggerFactory.getLogger(NerDateIndexGenerator.class);
     private static final DateTimeFormatter INPUT_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter KEY_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
 
     public NerDateIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "ner_dates");
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations");
     }
 
     public NerDateIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn, int threadCount) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "ner_dates", threadCount);
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", threadCount);
     }
 
     @Override
-    protected List<IndexEntry> fetchBatch(int offset) throws SQLException {
-        List<IndexEntry> entries = new ArrayList<>();
+    protected List<AnnotationEntry> fetchBatch(int offset) throws SQLException {
+        List<AnnotationEntry> entries = new ArrayList<>();
         try (Statement stmt = sqliteConn.createStatement()) {
             // First get document timestamps
             Map<Integer, LocalDate> documentDates = new HashMap<>();
@@ -70,7 +70,7 @@ public class NerDateIndexGenerator extends BaseIndexGenerator {
                     continue;
                 }
                 
-                entries.add(new IndexEntry(
+                entries.add(new AnnotationEntry(
                     docId,
                     rs.getInt("sentence_id"),
                     rs.getInt("begin_char"),
@@ -85,7 +85,7 @@ public class NerDateIndexGenerator extends BaseIndexGenerator {
     }
 
     @Override
-    protected ListMultimap<String, PositionList> processPartition(List<IndexEntry> partition) throws IOException {
+    protected ListMultimap<String, PositionList> processPartition(List<AnnotationEntry> partition) throws IOException {
         if (partition == null) {
             throw new IOException("Partition cannot be null");
         }
@@ -93,15 +93,20 @@ public class NerDateIndexGenerator extends BaseIndexGenerator {
         ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
         Map<String, PositionList> positionLists = new HashMap<>();
         
-        for (IndexEntry entry : partition) {
-            String normalizedDate = normalizeDate(entry.lemma);
+        for (AnnotationEntry entry : partition) {
+            String normalizedDate = normalizeDate(entry.getLemma());
             if (normalizedDate == null) {
-                logger.debug("Skipping invalid date format: {}", entry.lemma);
+                logger.debug("Skipping invalid date format: {}", entry.getLemma());
                 continue;
             }
 
-            Position position = new Position(entry.documentId, entry.sentenceId, 
-                                          entry.beginChar, entry.endChar, entry.timestamp);
+            Position position = new Position(
+                entry.getDocumentId(), 
+                entry.getSentenceId(), 
+                entry.getBeginChar(), 
+                entry.getEndChar(), 
+                entry.getTimestamp()
+            );
 
             // Get or create position list for this date
             PositionList posList = positionLists.computeIfAbsent(normalizedDate, k -> new PositionList());

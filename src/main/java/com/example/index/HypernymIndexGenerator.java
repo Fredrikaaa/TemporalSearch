@@ -28,7 +28,7 @@ import java.util.ArrayList;
  * - Uses IndexEntry.pos for instance (hyponym)
  * - This overloading of fields will be replaced with proper DependencyEntry class
  */
-public class HypernymIndexGenerator extends ParallelIndexGenerator {
+public class HypernymIndexGenerator extends ParallelIndexGenerator<DependencyEntry> {
     private static final Logger logger = LoggerFactory.getLogger(HypernymIndexGenerator.class);
     
     private static final Set<String> HYPERNYM_RELATIONS = Set.of(
@@ -61,8 +61,8 @@ public class HypernymIndexGenerator extends ParallelIndexGenerator {
      * The query logic will remain similar, but the entry creation will be cleaner
      */
     @Override
-    protected List<IndexEntry> fetchBatch(int offset) throws SQLException {
-        List<IndexEntry> entries = new ArrayList<>();
+    protected List<DependencyEntry> fetchBatch(int offset) throws SQLException {
+        List<DependencyEntry> entries = new ArrayList<>();
         try (Statement stmt = sqliteConn.createStatement()) {
             // First get document timestamps
             Map<Integer, LocalDate> documentDates = new HashMap<>();
@@ -100,23 +100,33 @@ public class HypernymIndexGenerator extends ParallelIndexGenerator {
                         throw new SQLException("Document " + docId + " not found in documents table");
                     }
 
-                    // Create an entry for this hypernym relation
-                    String headLemma = rs.getString("head_lemma");
-                    String dependentLemma = rs.getString("dependent_lemma");
+                    // Sanitize text fields
+                    String headLemma = sanitizeText(rs.getString("head_lemma"));
+                    String dependentLemma = sanitizeText(rs.getString("dependent_lemma"));
+                    String relation = sanitizeText(rs.getString("relation"));
+                    
+                    // Skip if any required field is null or empty after sanitization
+                    if (headLemma == null || headLemma.isEmpty() ||
+                        dependentLemma == null || dependentLemma.isEmpty() ||
+                        relation == null || relation.isEmpty()) {
+                        logger.debug("Skipping entry with null/empty fields: head={}, dependent={}, relation={}",
+                                   headLemma, dependentLemma, relation);
+                        continue;
+                    }
                     
                     // Skip if either term is a stopword
                     if (isStopword(headLemma) || isStopword(dependentLemma)) {
                         continue;
                     }
 
-                    // TODO: After refactor, this will create a DependencyEntry instead
-                    entries.add(new IndexEntry(
+                    entries.add(new DependencyEntry(
                         docId,
                         rs.getInt("sentence_id"),
                         rs.getInt("begin_char"),
                         rs.getInt("end_char"),
-                        headLemma,  // category as lemma
-                        dependentLemma,  // instance as pos (reusing the field)
+                        headLemma,
+                        dependentLemma,
+                        relation,
                         timestamp
                     ));
                 }
@@ -130,37 +140,38 @@ public class HypernymIndexGenerator extends ParallelIndexGenerator {
      * The position list creation logic will remain similar, but field access will be cleaner
      */
     @Override
-    protected ListMultimap<String, PositionList> processPartition(List<IndexEntry> partition) {
-        ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
-        Map<String, PositionList> positionLists = new HashMap<>();
+    protected ListMultimap<String, PositionList> processPartition(List<DependencyEntry> partition) throws IOException {
+        ListMultimap<String, PositionList> results = MultimapBuilder.hashKeys().arrayListValues().build();
         
-        for (IndexEntry entry : partition) {
+        for (DependencyEntry entry : partition) {
             // Create position for this occurrence
             Position position = new Position(
-                entry.documentId,
-                entry.sentenceId,
-                entry.beginChar,
-                entry.endChar,
-                entry.timestamp
+                entry.getDocumentId(),
+                entry.getSentenceId(),
+                entry.getBeginChar(),
+                entry.getEndChar(),
+                entry.getTimestamp()
             );
 
-            // TODO: After refactor, will use entry.headToken and entry.dependentToken instead
-            String key = createKey(entry.lemma, entry.pos);
+            // Skip if either term is a stopword
+            if (isStopword(entry.getHeadToken()) || isStopword(entry.getDependentToken())) {
+                continue;
+            }
+
+            // Create key in format: category\0instance
+            String key = createKey(entry.getHeadToken(), entry.getDependentToken());
             
-            // Get or create position list for this hypernym pair
-            PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
-            posList.add(position);
+            // Create position list for this entry
+            PositionList positions = new PositionList();
+            positions.add(position);
+            
+            results.put(key, positions);
             
             logger.debug("Added hypernym relation: {} -> {} at position {}", 
-                entry.lemma, entry.pos, position);
+                entry.getHeadToken(), entry.getDependentToken(), position);
         }
         
-        // Add all position lists to result
-        for (Map.Entry<String, PositionList> entry : positionLists.entrySet()) {
-            index.put(entry.getKey(), entry.getValue());
-        }
-        
-        return index;
+        return results;
     }
 
     /**
@@ -170,6 +181,6 @@ public class HypernymIndexGenerator extends ParallelIndexGenerator {
      * @return A delimited key in the format category${DELIMITER}instance
      */
     protected String createKey(String category, String instance) {
-        return category.toLowerCase() + BaseIndexGenerator.DELIMITER + instance.toLowerCase();
+        return category.toLowerCase() + DELIMITER + instance.toLowerCase();
     }
 } 

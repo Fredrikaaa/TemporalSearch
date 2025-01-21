@@ -192,6 +192,7 @@ public class LevelDBBrowser {
                     words.get(0).substring(0, 4),
                     words.get(0).substring(4, 6),
                     words.get(0).substring(6, 8));
+            case "pos" -> String.format("POS tag '%s'", words.get(0).toLowerCase());
             default -> throw new IllegalArgumentException("Invalid index type");
         };
     }

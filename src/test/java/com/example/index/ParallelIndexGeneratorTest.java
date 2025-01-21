@@ -179,7 +179,7 @@ class ParallelIndexGeneratorTest {
     @Test
     void testErrorHandling() {
         // Test handling of null entries
-        List<IndexEntry> entries = new ArrayList<>();
+        List<AnnotationEntry> entries = new ArrayList<>();
         entries.add(null);
         
         Exception exception = assertThrows(IOException.class, () -> {
@@ -230,8 +230,8 @@ class ParallelIndexGeneratorTest {
                 sqliteConn,
                 2  // Use 2 threads to force multiple partitions
         )) {
-            List<IndexEntry> entries = generator.fetchBatch(0);
-            List<List<IndexEntry>> partitions = generator.partitionEntries(entries);
+            List<AnnotationEntry> entries = generator.fetchBatch(0);
+            List<List<AnnotationEntry>> partitions = generator.partitionEntries(entries);
             
             // Verify we have multiple partitions
             assertTrue(partitions.size() >= 2, "Should have at least 2 partitions");
@@ -262,11 +262,11 @@ class ParallelIndexGeneratorTest {
                 sqliteConn,
                 2  // Use 2 threads to force multiple partitions
         )) {
-            List<IndexEntry> entries = generator.fetchBatch(0);
-            List<List<IndexEntry>> partitions = generator.partitionEntries(entries);
+            List<AnnotationEntry> entries = generator.fetchBatch(0);
+            List<List<AnnotationEntry>> partitions = generator.partitionEntries(entries);
             
             // Verify each partition contains complete documents
-            for (List<IndexEntry> partition : partitions) {
+            for (List<AnnotationEntry> partition : partitions) {
                 verifyDocumentCompleteness(partition);
             }
         }
@@ -291,8 +291,8 @@ class ParallelIndexGeneratorTest {
                 sqliteConn,
                 3  // Use 3 threads to test distribution
         )) {
-            List<IndexEntry> entries = generator.fetchBatch(0);
-            List<List<IndexEntry>> partitions = generator.partitionEntries(entries);
+            List<AnnotationEntry> entries = generator.fetchBatch(0);
+            List<List<AnnotationEntry>> partitions = generator.partitionEntries(entries);
             
             // Verify reasonable work distribution
             verifyWorkDistribution(partitions);
@@ -309,26 +309,26 @@ class ParallelIndexGeneratorTest {
                 sqliteConn,
                 2
         )) {
-            List<List<IndexEntry>> emptyPartitions = generator.partitionEntries(new ArrayList<>());
+            List<List<AnnotationEntry>> emptyPartitions = generator.partitionEntries(new ArrayList<>());
             assertTrue(emptyPartitions.isEmpty(), "Empty input should result in empty partitions");
             
             // Test null input
-            List<List<IndexEntry>> nullPartitions = generator.partitionEntries(null);
+            List<List<AnnotationEntry>> nullPartitions = generator.partitionEntries(null);
             assertTrue(nullPartitions.isEmpty(), "Null input should result in empty partitions");
             
             // Test single document
             setupMultiDocumentDatabase(new String[][] {
                 {"single document single sentence"}
             });
-            List<IndexEntry> entries = generator.fetchBatch(0);
-            List<List<IndexEntry>> singleDocPartitions = generator.partitionEntries(entries);
+            List<AnnotationEntry> entries = generator.fetchBatch(0);
+            List<List<AnnotationEntry>> singleDocPartitions = generator.partitionEntries(entries);
             assertEquals(1, singleDocPartitions.size(), "Single document should result in single partition");
         }
     }
 
     private Throwable getRootCause(Throwable throwable) {
         Throwable rootCause = throwable;
-        while (rootCause.getCause() != null && rootCause.getCause() != rootCause) {
+        while (rootCause.getCause() != null) {
             rootCause = rootCause.getCause();
         }
         return rootCause;
@@ -374,23 +374,32 @@ class ParallelIndexGeneratorTest {
         }
     }
 
-    private boolean hasOverlappingEntries(List<IndexEntry> partition1, List<IndexEntry> partition2) {
-        Set<String> entries1 = partition1.stream()
-            .map(e -> String.format("%d-%d-%s", e.documentId, e.sentenceId, e.lemma))
-            .collect(Collectors.toSet());
+    private boolean hasOverlappingEntries(List<? extends IndexEntry> partition1, List<? extends IndexEntry> partition2) {
+        // Create a set of unique identifiers for entries in partition1
+        Set<String> entries1 = new HashSet<>();
+        for (IndexEntry e : partition1) {
+            entries1.add(String.format("%d-%d", e.getDocumentId(), e.getSentenceId()));
+        }
         
-        return partition2.stream()
-            .map(e -> String.format("%d-%d-%s", e.documentId, e.sentenceId, e.lemma))
-            .anyMatch(entries1::contains);
+        // Check if any entry in partition2 has the same identifier
+        for (IndexEntry e : partition2) {
+            if (entries1.contains(String.format("%d-%d", e.getDocumentId(), e.getSentenceId()))) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    private void verifyPartitionContinuity(List<IndexEntry> partition) {
-        for (int i = 1; i < partition.size(); i++) {
-            IndexEntry prev = partition.get(i - 1);
-            IndexEntry curr = partition.get(i);
-            if (prev.documentId == curr.documentId && prev.sentenceId != curr.sentenceId) {
-                fail("Found entries from different sentences within same document in partition");
+    private void verifyPartitionContinuity(List<? extends IndexEntry> partition) {
+        IndexEntry prev = null;
+        for (IndexEntry curr : partition) {
+            if (prev != null) {
+                assertTrue(curr.getDocumentId() > prev.getDocumentId() || 
+                    (curr.getDocumentId() == prev.getDocumentId() && 
+                     curr.getSentenceId() >= prev.getSentenceId()),
+                    "Entries should be ordered by document ID and sentence ID");
             }
+            prev = curr;
         }
     }
 
@@ -416,49 +425,37 @@ class ParallelIndexGeneratorTest {
         return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    private void verifyDocumentCompleteness(List<IndexEntry> partition) {
-        Map<Integer, Set<Integer>> docSentences = new HashMap<>();
+    private void verifyDocumentCompleteness(List<? extends IndexEntry> partition) {
+        // Group entries by document ID
+        Map<Integer, List<IndexEntry>> byDocument = partition.stream()
+            .collect(Collectors.groupingBy(IndexEntry::getDocumentId));
         
-        // Collect all sentences for each document
-        for (IndexEntry entry : partition) {
-            docSentences.computeIfAbsent(entry.documentId, k -> new HashSet<>())
-                       .add(entry.sentenceId);
-        }
-        
-        // Verify each document's sentences are consecutive
-        for (Set<Integer> sentences : docSentences.values()) {
-            int minSentence = Collections.min(sentences);
-            int maxSentence = Collections.max(sentences);
-            for (int i = minSentence; i <= maxSentence; i++) {
-                assertTrue(sentences.contains(i), 
-                    "Document is missing sentence " + i + " (not contiguous)");
-            }
+        // For each document, verify all sentences are present
+        for (List<IndexEntry> docEntries : byDocument.values()) {
+            Set<Integer> sentenceIds = docEntries.stream()
+                .map(IndexEntry::getSentenceId)
+                .collect(Collectors.toSet());
+            
+            // Verify no gaps in sentence IDs
+            int minId = sentenceIds.stream().mapToInt(Integer::intValue).min().getAsInt();
+            int maxId = sentenceIds.stream().mapToInt(Integer::intValue).max().getAsInt();
+            assertEquals(maxId - minId + 1, sentenceIds.size(),
+                "All sentences should be present without gaps");
         }
     }
 
-    private void verifyWorkDistribution(List<List<IndexEntry>> partitions) {
-        // Calculate statistics about partition sizes
-        int totalEntries = partitions.stream()
+    private void verifyWorkDistribution(List<List<AnnotationEntry>> partitions) {
+        // Calculate average partition size
+        double avgSize = partitions.stream()
             .mapToInt(List::size)
-            .sum();
-        double avgEntriesPerPartition = (double) totalEntries / partitions.size();
+            .average()
+            .orElse(0.0);
         
-        // No partition should be empty
-        assertTrue(partitions.stream().noneMatch(List::isEmpty),
-            "No partition should be empty");
-        
-        // No partition should have more than 2x the average entries
-        // (allowing some imbalance due to keeping documents together)
-        assertTrue(partitions.stream()
-            .allMatch(p -> p.size() <= 2 * avgEntriesPerPartition),
-            "No partition should have more than 2x the average number of entries");
-        
-        // Verify each partition has at least one complete document
-        for (List<IndexEntry> partition : partitions) {
-            Set<Integer> docIds = partition.stream()
-                .map(e -> e.documentId)
-                .collect(Collectors.toSet());
-            assertFalse(docIds.isEmpty(), "Each partition should have at least one document");
+        // Verify no partition is too far from average
+        for (List<AnnotationEntry> partition : partitions) {
+            double ratio = partition.size() / avgSize;
+            assertTrue(ratio >= 0.5 && ratio <= 1.5,
+                "Partition size should be within 50% of average");
         }
     }
 } 
