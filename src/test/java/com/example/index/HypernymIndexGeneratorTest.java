@@ -99,7 +99,7 @@ class HypernymIndexGeneratorTest extends BaseIndexTest {
         
         // Initialize indexer
         String levelDbPath = tempDir.resolve("leveldb").toString();
-        indexer = new HypernymIndexGenerator(levelDbPath, TEST_STOPWORDS_PATH, 100, sqliteConn);
+        indexer = new HypernymIndexGenerator(levelDbPath, TEST_STOPWORDS_PATH, 100, sqliteConn, "dependencies", 4);
     }
 
     @AfterEach
