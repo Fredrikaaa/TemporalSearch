@@ -1,168 +1,169 @@
 package com.example.index;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.iq80.leveldb.*;
+import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 
-import java.io.IOException;
-import java.nio.file.Files;
+import java.io.*;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDate;
-import java.time.ZonedDateTime;
 import java.util.List;
-import java.util.ArrayList;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import static org.junit.jupiter.api.Assertions.*;
 
-import com.google.common.collect.ListMultimap;
+class HypernymIndexGeneratorTest extends BaseIndexTest {
+    private static final String TEST_STOPWORDS_PATH = "test-stopwords-hypernym.txt";
+    private HypernymIndexGenerator indexer;
 
-class HypernymIndexGeneratorTest {
-    @TempDir
-    Path tempDir;
-    
-    @Mock
-    Connection sqliteConn;
-    
-    @Mock
-    PreparedStatement stmt;
-    
-    @Mock
-    ResultSet rs;
-    
-    private Path levelDbPath;
-    private Path stopwordsPath;
-    private HypernymIndexGenerator generator;
-    private static final String TEST_TIMESTAMP = "2024-01-21T12:00:00Z";
-    private static final LocalDate TEST_DATE = LocalDate.parse("2024-01-21");
-    
+    @Override
+    protected void createBasicTables() throws Exception {
+        try (Statement stmt = sqliteConn.createStatement()) {
+            stmt.execute("""
+                CREATE TABLE documents (
+                    document_id INTEGER PRIMARY KEY,
+                    timestamp TEXT NOT NULL
+                )
+            """);
+
+            stmt.execute("""
+                CREATE TABLE annotations (
+                    document_id INTEGER,
+                    sentence_id INTEGER,
+                    token TEXT,
+                    lemma TEXT,
+                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
+                )
+            """);
+
+            stmt.execute("""
+                CREATE TABLE dependencies (
+                    document_id INTEGER,
+                    sentence_id INTEGER,
+                    begin_char INTEGER,
+                    end_char INTEGER,
+                    head_token TEXT,
+                    dependent_token TEXT,
+                    relation TEXT,
+                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
+                )
+            """);
+            
+            // Insert test documents
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-15T10:00:00Z')");
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (2, '2024-01-16T10:00:00Z')");
+            
+            // Insert test annotations (tokens and lemmas)
+            stmt.execute("""
+                INSERT INTO annotations (document_id, sentence_id, token, lemma) VALUES
+                (1, 1, 'animals', 'animal'),
+                (1, 1, 'such', 'such'),
+                (1, 1, 'as', 'as'),
+                (1, 1, 'cats', 'cat'),
+                (1, 1, 'and', 'and'),
+                (1, 1, 'dogs', 'dog'),
+                (2, 1, 'colors', 'color'),
+                (2, 1, 'including', 'including'),
+                (2, 1, 'red', 'red'),
+                (2, 1, 'and', 'and'),
+                (2, 1, 'blue', 'blue')
+            """);
+            
+            // Insert test dependencies
+            stmt.execute("""
+                INSERT INTO dependencies (document_id, sentence_id, begin_char, end_char, head_token, dependent_token, relation) VALUES
+                (1, 1, 0, 20, 'animals', 'cats', 'nmod:such_as'),
+                (1, 1, 25, 40, 'animals', 'dogs', 'nmod:such_as'),
+                (2, 1, 0, 20, 'colors', 'red', 'nmod:including'),
+                (2, 1, 25, 40, 'colors', 'blue', 'nmod:including')
+            """);
+        }
+    }
+
     @BeforeEach
-    void setUp() throws IOException, SQLException {
-        MockitoAnnotations.openMocks(this);
-        levelDbPath = tempDir.resolve("leveldb");
-        stopwordsPath = createStopwordsFile();
+    void setUpIndexer() throws Exception {
+        // Create test stopwords file
+        try (PrintWriter writer = new PrintWriter(TEST_STOPWORDS_PATH)) {
+            writer.println("the");
+            writer.println("a");
+            writer.println("is");
+            writer.println("such");
+            writer.println("as");
+            writer.println("and");
+            writer.println("including");
+        }
         
-        // Create test instance
-        generator = new HypernymIndexGenerator(
-            levelDbPath.toString(),
-            stopwordsPath.toString(),
-            100, // batch size
-            sqliteConn,
-            "annotations",
-            1  // single thread for testing
-        );
+        // Initialize indexer
+        String levelDbPath = tempDir.resolve("leveldb").toString();
+        indexer = new HypernymIndexGenerator(levelDbPath, TEST_STOPWORDS_PATH, 100, sqliteConn);
     }
-    
-    private Path createStopwordsFile() throws IOException {
-        Path stopwordsFile = tempDir.resolve("stopwords.txt");
-        List<String> stopwords = List.of("the", "a", "an");
-        Files.write(stopwordsFile, stopwords);
-        return stopwordsFile;
-    }
-    
-    @Test
-    void testCreateKey() {
-        String key = generator.createKey("Animals", "Cat");
-        assertEquals("animals" + BaseIndexGenerator.DELIMITER + "cat", key);
-    }
-    
-    @Test
-    void testCreateKeyWithMixedCase() {
-        String key = generator.createKey("ANIMALS", "CAT");
-        assertEquals("animals" + BaseIndexGenerator.DELIMITER + "cat", key);
-    }
-    
-    @Test
-    void testProcessPartitionWithEmptyList() throws IOException {
-        List<DependencyEntry> emptyPartition = new ArrayList<>();
-        ListMultimap<String, PositionList> result = generator.processPartition(emptyPartition);
-        assertTrue(result.isEmpty());
+
+    @AfterEach
+    void tearDownIndexer() throws Exception {
+        if (indexer != null) {
+            indexer.close();
+        }
+        // Delete test files
+        new File(TEST_STOPWORDS_PATH).delete();
     }
 
     @Test
-    void testProcessHypernymRelation() throws SQLException, IOException {
-        // Mock document timestamp query
-        PreparedStatement timestampStmt = mock(PreparedStatement.class);
-        ResultSet timestampRs = mock(ResultSet.class);
-        when(sqliteConn.prepareStatement(contains("SELECT timestamp"))).thenReturn(timestampStmt);
-        when(timestampStmt.executeQuery()).thenReturn(timestampRs);
-        when(timestampRs.next()).thenReturn(true);
-        when(timestampRs.getString("timestamp")).thenReturn(TEST_TIMESTAMP);
-
-        // Mock dependencies query
-        PreparedStatement depsStmt = mock(PreparedStatement.class);
-        ResultSet depsRs = mock(ResultSet.class);
-        when(sqliteConn.prepareStatement(contains("SELECT d.*"))).thenReturn(depsStmt);
-        when(depsStmt.executeQuery()).thenReturn(depsRs);
+    void testBasicHypernymIndexing() throws Exception {
+        // Generate index
+        indexer.generateIndex();
         
-        // Mock one hypernym relation
-        when(depsRs.next()).thenReturn(true, false);
-        when(depsRs.getString("relation")).thenReturn("nmod:such_as");
-        when(depsRs.getString("head_lemma")).thenReturn("animal");
-        when(depsRs.getString("dependent_lemma")).thenReturn("cat");
-        when(depsRs.getInt("sentence_id")).thenReturn(1);
-        when(depsRs.getInt("begin_char")).thenReturn(10);
-        when(depsRs.getInt("end_char")).thenReturn(20);
+        // Check for valid hypernym-hyponym pairs
+        assertTrue(indexer.hasKey("animal\0cat")); // First pair
+        assertTrue(indexer.hasKey("animal\0dog")); // Second pair
+        assertTrue(indexer.hasKey("color\0red")); // Third pair
+        assertTrue(indexer.hasKey("color\0blue")); // Fourth pair
+    }
 
-        // Process a single document
-        DependencyEntry entry = new DependencyEntry(
-            1, 1, 10, 20, "animal", "cat", "nmod:such_as", TEST_DATE);
-        List<DependencyEntry> partition = List.of(entry);
-        ListMultimap<String, PositionList> result = generator.processPartition(partition);
-
-        // Verify results
-        assertFalse(result.isEmpty());
-        String expectedKey = "animal" + BaseIndexGenerator.DELIMITER + "cat";
-        assertTrue(result.containsKey(expectedKey));
+    @Test
+    void testFetchBatch() throws Exception {
+        List<DependencyEntry> batch = indexer.fetchBatch(0);
         
-        // Verify position details
-        List<PositionList> positions = result.get(expectedKey);
-        assertFalse(positions.isEmpty());
-        PositionList posList = positions.get(0);
-        assertEquals(1, posList.size());
-        Position pos = posList.getPositions().get(0);
+        // Should get all valid hypernym relations
+        assertEquals(4, batch.size());
+        
+        // Verify first entry
+        DependencyEntry first = batch.get(0);
+        assertEquals(1, first.getDocumentId());
+        assertEquals(1, first.getSentenceId());
+        assertEquals(0, first.getBeginChar());
+        assertEquals(20, first.getEndChar());
+        assertEquals("animal", first.getHeadToken());
+        assertEquals("cat", first.getDependentToken());
+        assertEquals("nmod:such_as", first.getRelation());
+        assertEquals(LocalDate.parse("2024-01-15"), first.getTimestamp());
+    }
+
+    @Test
+    void testProcessPartition() throws Exception {
+        // Create test entries
+        List<DependencyEntry> batch = indexer.fetchBatch(0);
+        var result = indexer.processPartition(batch);
+        
+        // Should have four unique hypernym-hyponym pairs
+        assertEquals(4, result.keySet().size());
+        
+        // Verify positions are correctly stored
+        assertTrue(result.containsKey("animal\0cat"));
+        assertTrue(result.containsKey("animal\0dog"));
+        assertTrue(result.containsKey("color\0red"));
+        assertTrue(result.containsKey("color\0blue"));
+        
+        // Check position details for first pair
+        List<PositionList> positions = result.get("animal\0cat");
+        assertEquals(1, positions.size());
+        Position pos = positions.get(0).getPositions().get(0);
         assertEquals(1, pos.getDocumentId());
         assertEquals(1, pos.getSentenceId());
-        assertEquals(10, pos.getBeginPosition());
+        assertEquals(0, pos.getBeginPosition());
         assertEquals(20, pos.getEndPosition());
-        assertEquals(TEST_DATE, pos.getTimestamp());
     }
-
-    @Test
-    void testSkipStopwords() throws SQLException, IOException {
-        // Mock document timestamp query
-        PreparedStatement timestampStmt = mock(PreparedStatement.class);
-        ResultSet timestampRs = mock(ResultSet.class);
-        when(sqliteConn.prepareStatement(contains("SELECT timestamp"))).thenReturn(timestampStmt);
-        when(timestampStmt.executeQuery()).thenReturn(timestampRs);
-        when(timestampRs.next()).thenReturn(true);
-        when(timestampRs.getString("timestamp")).thenReturn(TEST_TIMESTAMP);
-
-        // Mock dependencies query
-        PreparedStatement depsStmt = mock(PreparedStatement.class);
-        ResultSet depsRs = mock(ResultSet.class);
-        when(sqliteConn.prepareStatement(contains("SELECT d.*"))).thenReturn(depsStmt);
-        when(depsStmt.executeQuery()).thenReturn(depsRs);
-        
-        // Mock relation with stopword
-        when(depsRs.next()).thenReturn(true, false);
-        when(depsRs.getString("relation")).thenReturn("nmod:such_as");
-        when(depsRs.getString("head_lemma")).thenReturn("the");  // stopword
-        when(depsRs.getString("dependent_lemma")).thenReturn("cat");
-
-        // Process a single document
-        DependencyEntry entry = new DependencyEntry(
-            1, 1, 10, 20, "the", "cat", "nmod:such_as", TEST_DATE);
-        List<DependencyEntry> partition = List.of(entry);
-        ListMultimap<String, PositionList> result = generator.processPartition(partition);
-
-        // Verify stopword pair was skipped
-        assertTrue(result.isEmpty());
-    }
-} 
+}

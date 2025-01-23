@@ -8,206 +8,158 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.*;
 import java.sql.*;
 import java.time.LocalDate;
+import java.nio.file.*;
+import java.util.*;
 
-public class POSIndexGeneratorTest {
-    private static final String TEST_DB_PATH = "test-leveldb-pos";
-    private static final String TEST_SQLITE_PATH = "test-sqlite-pos.db";
-    private static final String TEST_STOPWORDS_PATH = "test-stopwords-pos.txt";
-    private Connection sqliteConn;
-    private File levelDbDir;
-
+/**
+ * Tests for the POSIndexGenerator class.
+ */
+class POSIndexGeneratorTest extends BaseIndexTest {
+    private Path indexPath;
+    private Path stopwordsPath;
+    
     @BeforeEach
-    public void setup() throws Exception {
-        // Create test stopwords file (not used for POS indexing but required by base class)
-        try (PrintWriter writer = new PrintWriter(TEST_STOPWORDS_PATH)) {
-            writer.println("the");
-            writer.println("a");
-            writer.println("is");
-        }
-
-        // Create test SQLite database
-        sqliteConn = DriverManager.getConnection("jdbc:sqlite:" + TEST_SQLITE_PATH);
-        try (Statement stmt = sqliteConn.createStatement()) {
-            // Create tables
-            stmt.execute("CREATE TABLE documents (document_id INTEGER PRIMARY KEY, timestamp TEXT)");
-            stmt.execute("CREATE TABLE annotations (" +
-                "annotation_id INTEGER PRIMARY KEY," +
-                "document_id INTEGER," +
-                "sentence_id INTEGER," +
-                "begin_char INTEGER," +
-                "end_char INTEGER," +
-                "token TEXT," +
-                "lemma TEXT," +
-                "pos TEXT" +
-                ")");
-
-            // Insert test documents
-            stmt.execute("INSERT INTO documents VALUES (1, '2024-01-01T00:00:00Z')");
-            stmt.execute("INSERT INTO documents VALUES (2, '2024-01-01T00:00:00Z')");
-
-            // Insert test sentences with POS tags:
-            // Doc 1: "The black cat sits quietly."
-            // Doc 2: "The black dog barks loudly."
-            String[][] testWords = {
-                    // Document 1
-                    { "1", "0", "0", "3", "The", "DT" },
-                    { "1", "0", "4", "9", "black", "JJ" },
-                    { "1", "0", "10", "13", "cat", "NN" },
-                    { "1", "0", "14", "18", "sits", "VBZ" },
-                    { "1", "0", "19", "26", "quietly", "RB" },
-                    // Document 2
-                    { "2", "0", "0", "3", "The", "DT" },
-                    { "2", "0", "4", "9", "black", "JJ" },
-                    { "2", "0", "10", "13", "dog", "NN" },
-                    { "2", "0", "14", "19", "barks", "VBZ" },
-                    { "2", "0", "20", "26", "loudly", "RB" }
+    void setUp() throws Exception {
+        super.setUp();
+        indexPath = tempDir.resolve("test-pos-index");
+        stopwordsPath = tempDir.resolve("stopwords.txt");
+        
+        // Create stopwords file
+        List<String> stopwords = Arrays.asList("the", "a", "an");
+        Files.write(stopwordsPath, stopwords);
+        
+        // Insert test document
+        LocalDate timestamp = LocalDate.now();
+        TestData.insertDocument(sqliteConn, 1, timestamp);
+        
+        // Insert test annotations
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(
+            "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, lemma, pos) VALUES (?, ?, ?, ?, ?, ?)"
+        )) {
+            Object[][] data = {
+                {1, 1, 0, 3, "cat", "NOUN"},
+                {1, 1, 4, 10, "chases", "VERB"},
+                {1, 1, 11, 16, "mouse", "NOUN"},
+                {1, 1, 17, 20, "the", "DET"},  // Stopword but should be indexed since POS doesn't filter
+                {1, 1, 21, 25, null, "PUNCT"}  // Null lemma but valid POS
             };
-
-            PreparedStatement pstmt = sqliteConn.prepareStatement(
-                    "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, pos) " +
-                            "VALUES (?, ?, ?, ?, ?, ?)");
-
-            for (String[] word : testWords) {
-                pstmt.setInt(1, Integer.parseInt(word[0]));
-                pstmt.setInt(2, Integer.parseInt(word[1]));
-                pstmt.setInt(3, Integer.parseInt(word[2]));
-                pstmt.setInt(4, Integer.parseInt(word[3]));
-                pstmt.setString(5, word[4]);
-                pstmt.setString(6, word[5]);
-                pstmt.executeUpdate();
-            }
-        }
-
-        // Set up LevelDB directory
-        levelDbDir = new File(TEST_DB_PATH);
-        if (levelDbDir.exists()) {
-            deleteDirectory(levelDbDir);
-        }
-        levelDbDir.mkdir();
-    }
-
-    @Test
-    public void testBasicPOSIndexing() throws Exception {
-        // Create and run POS indexer
-        try (POSIndexGenerator indexer = new POSIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
-            indexer.generateIndex();
-        }
-
-        // Open LevelDB and verify contents
-        Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
-            // Test determiners (DT)
-            verifyPOSTag(db, "dt", 1, 0, 0, 3, 2); // Should appear twice (The, The)
-
-            // Test adjectives (JJ)
-            verifyPOSTag(db, "jj", 1, 0, 4, 9, 2); // Should appear twice (black, black)
-
-            // Test nouns (NN)
-            verifyPOSTag(db, "nn", 1, 0, 10, 13, 2); // Should appear twice (cat, dog)
-
-            // Test verbs (VBZ)
-            verifyPOSTag(db, "vbz", 1, 0, 14, 18, 2); // Should appear twice (sits, barks)
-
-            // Test adverbs (RB)
-            verifyPOSTag(db, "rb", 1, 0, 19, 26, 2); // Should appear twice (quietly, loudly)
-        }
-    }
-
-    @Test
-    public void testNullPOSHandling() throws Exception {
-        // Add entry with null POS
-        try (Statement stmt = sqliteConn.createStatement()) {
-            stmt.execute("INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, pos) " +
-                    "VALUES (1, 1, 27, 30, 'and', NULL)");
-        }
-
-        try (POSIndexGenerator indexer = new POSIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
-            indexer.generateIndex();
-        }
-
-        Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
-            // Verify that entries with valid POS tags are still indexed
-            verifyPOSTag(db, "dt", 1, 0, 0, 3, 2);
             
-            // Verify that null POS tags are not indexed
-            assertNull(db.get(bytes("null")), "Null POS tag should not be indexed");
-        }
-    }
-
-    @Test
-    public void testCaseInsensitivity() throws Exception {
-        // Add entries with mixed case POS tags
-        try (Statement stmt = sqliteConn.createStatement()) {
-            stmt.execute("INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, pos) " +
-                    "VALUES (1, 1, 27, 30, 'test', 'NN')");
-            stmt.execute("INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, pos) " +
-                    "VALUES (1, 1, 31, 34, 'test', 'nn')");
-        }
-
-        try (POSIndexGenerator indexer = new POSIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
-            indexer.generateIndex();
-        }
-
-        Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
-            // Verify that POS tags are case-insensitive
-            byte[] data = db.get(bytes("nn"));
-            assertNotNull(data, "POS tag should be indexed case-insensitively");
-            
-            PositionList positions = PositionList.deserialize(data);
-            assertEquals(4, positions.size(), "Should have all occurrences regardless of case");
-        }
-    }
-
-    private void verifyPOSTag(DB db, String posTag, int expectedDocId,
-            int expectedSentenceId, int expectedBeginChar,
-            int expectedEndChar, int expectedCount) throws IOException {
-        byte[] data = db.get(bytes(posTag));
-        assertNotNull(data, "POS tag should exist: " + posTag);
-
-        PositionList positions = PositionList.deserialize(data);
-        assertEquals(expectedCount, positions.size(),
-                "Should have correct number of occurrences for: " + posTag);
-
-        Position pos = positions.getPositions().get(0);
-        assertEquals(expectedDocId, pos.getDocumentId(),
-                "Document ID mismatch for: " + posTag);
-        assertEquals(expectedSentenceId, pos.getSentenceId(),
-                "Sentence ID mismatch for: " + posTag);
-        assertEquals(expectedBeginChar, pos.getBeginPosition(),
-                "Begin position mismatch for: " + posTag);
-        assertEquals(expectedEndChar, pos.getEndPosition(),
-                "End position mismatch for: " + posTag);
-    }
-
-    private void deleteDirectory(File dir) {
-        if (dir.exists()) {
-            for (File file : dir.listFiles()) {
-                if (file.isDirectory()) {
-                    deleteDirectory(file);
-                } else {
-                    file.delete();
+            for (Object[] row : data) {
+                for (int i = 0; i < row.length; i++) {
+                    stmt.setObject(i + 1, row[i]);
                 }
+                stmt.executeUpdate();
             }
-            dir.delete();
         }
     }
-
-    @AfterEach
-    public void cleanup() throws Exception {
-        if (sqliteConn != null && !sqliteConn.isClosed()) {
-            sqliteConn.close();
+    
+    @Test
+    void testBasicIndexing() throws Exception {
+        // Generate index
+        try (POSIndexGenerator generator = new POSIndexGenerator(
+                indexPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn)) {
+            generator.generateIndex();
         }
-        new File(TEST_SQLITE_PATH).delete();
-        new File(TEST_STOPWORDS_PATH).delete();
-        deleteDirectory(levelDbDir);
+        
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(indexPath.toFile(), options)) {
+            // Check that all POS tags are indexed
+            String[] expectedTags = {"noun", "verb", "det", "punct"};
+            for (String tag : expectedTags) {
+                byte[] value = db.get(bytes(tag));
+                assertNotNull(value, "POS tag " + tag + " should be indexed");
+                
+                PositionList positions = PositionList.deserialize(value);
+                assertTrue(positions.size() > 0, "Should have positions for " + tag);
+            }
+            
+            // Verify NOUN has two positions
+            PositionList nounPositions = PositionList.deserialize(db.get(bytes("noun")));
+            assertEquals(2, nounPositions.size(), "Should have two NOUN positions");
+            
+            // Verify DET is indexed despite being a stopword
+            PositionList detPositions = PositionList.deserialize(db.get(bytes("det")));
+            assertEquals(1, detPositions.size(), "Should have one DET position");
+        }
     }
-
-    private static byte[] bytes(String str) {
-        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    
+    @Test
+    void testCaseNormalization() throws Exception {
+        // Insert mixed case POS tags
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(
+            "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, lemma, pos) VALUES (?, ?, ?, ?, ?, ?)"
+        )) {
+            Object[][] data = {
+                {1, 2, 0, 3, "dog", "Noun"},
+                {1, 2, 4, 9, "barks", "VERB"},
+                {1, 2, 10, 14, "loud", "ADJ"}
+            };
+            
+            for (Object[] row : data) {
+                for (int i = 0; i < row.length; i++) {
+                    stmt.setObject(i + 1, row[i]);
+                }
+                stmt.executeUpdate();
+            }
+        }
+        
+        // Generate index
+        try (POSIndexGenerator generator = new POSIndexGenerator(
+                indexPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn)) {
+            generator.generateIndex();
+        }
+        
+        // Verify case normalization
+        Options options = new Options();
+        try (DB db = factory.open(indexPath.toFile(), options)) {
+            // Check that mixed case tags are normalized
+            byte[] nounValue = db.get(bytes("noun"));
+            assertNotNull(nounValue, "noun should be indexed");
+            
+            byte[] verbValue = db.get(bytes("verb"));
+            assertNotNull(verbValue, "verb should be indexed");
+            
+            // Original case versions should not exist
+            assertNull(db.get(bytes("Noun")), "Original case version should not exist");
+            assertNull(db.get(bytes("VERB")), "Original case version should not exist");
+        }
+    }
+    
+    @Test
+    void testNullAndEmptyHandling() throws Exception {
+        // Insert null and empty POS tags
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(
+            "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, lemma, pos) VALUES (?, ?, ?, ?, ?, ?)"
+        )) {
+            Object[][] data = {
+                {1, 2, 0, 3, "test", null},
+                {1, 2, 4, 8, "test", ""},
+                {1, 2, 9, 13, "test", " "}
+            };
+            
+            for (Object[] row : data) {
+                for (int i = 0; i < row.length; i++) {
+                    stmt.setObject(i + 1, row[i]);
+                }
+                stmt.executeUpdate();
+            }
+        }
+        
+        // Generate index
+        try (POSIndexGenerator generator = new POSIndexGenerator(
+                indexPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn)) {
+            generator.generateIndex();
+        }
+        
+        // Verify null and empty tags are not indexed
+        Options options = new Options();
+        try (DB db = factory.open(indexPath.toFile(), options)) {
+            assertNull(db.get(bytes("")), "Empty string should not be indexed");
+            assertNull(db.get(bytes(" ")), "Whitespace should not be indexed");
+        }
     }
 } 

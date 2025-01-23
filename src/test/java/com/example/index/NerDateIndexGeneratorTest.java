@@ -4,52 +4,49 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.iq80.leveldb.*;
+import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 
 import java.io.*;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NerDateIndexGeneratorTest {
+class NerDateIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-ner.txt";
-    private Connection conn;
-    private File dbFile;
     private NerDateIndexGenerator indexer;
-    
-    @TempDir
-    Path tempDir;
 
-    @BeforeEach
-    void setUp() throws Exception {
-        // Create test stopwords file
-        createStopwordsFile();
+    @Override
+    protected void createBasicTables() throws Exception {
+        try (Statement stmt = sqliteConn.createStatement()) {
+            stmt.execute("""
+                CREATE TABLE documents (
+                    document_id INTEGER PRIMARY KEY,
+                    timestamp TEXT NOT NULL
+                )
+            """);
 
-        // Create temporary SQLite database
-        dbFile = tempDir.resolve("test.db").toFile();
-        conn = DriverManager.getConnection("jdbc:sqlite:" + dbFile.getAbsolutePath());
-        
-        // Create test tables
-        try (Statement stmt = conn.createStatement()) {
-            stmt.execute(
-                "CREATE TABLE documents (" +
-                "document_id INTEGER PRIMARY KEY, " +
-                "timestamp TEXT NOT NULL)"
-            );
-            stmt.execute(
-                "CREATE TABLE annotations (" +
-                "document_id INTEGER, " +
-                "sentence_id INTEGER, " +
-                "begin_char INTEGER, " +
-                "end_char INTEGER, " +
-                "ner TEXT, " +
-                "normalized_ner TEXT)"
-            );
+            stmt.execute("""
+                CREATE TABLE annotations (
+                    document_id INTEGER,
+                    sentence_id INTEGER,
+                    begin_char INTEGER,
+                    end_char INTEGER,
+                    ner TEXT,
+                    normalized_ner TEXT,
+                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
+                )
+            """);
             
             // Insert test documents
             stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-15T10:00:00Z')");
@@ -66,10 +63,16 @@ class NerDateIndexGeneratorTest {
                 "(2, 4, 50, 60, 'PERSON', '2024-01-01')"    // Wrong NER type
             );
         }
+    }
+
+    @BeforeEach
+    void setUpIndexer() throws Exception {
+        // Create test stopwords file
+        createStopwordsFile();
         
         // Initialize indexer
         String levelDbPath = tempDir.resolve("leveldb").toString();
-        indexer = new NerDateIndexGenerator(levelDbPath, TEST_STOPWORDS_PATH, 100, conn);
+        indexer = new NerDateIndexGenerator(levelDbPath, TEST_STOPWORDS_PATH, 100, sqliteConn);
     }
 
     private void createStopwordsFile() throws IOException {
@@ -81,12 +84,9 @@ class NerDateIndexGeneratorTest {
     }
 
     @AfterEach
-    void tearDown() throws Exception {
+    void tearDownIndexer() throws Exception {
         if (indexer != null) {
             indexer.close();
-        }
-        if (conn != null) {
-            conn.close();
         }
         // Delete test files
         new File(TEST_STOPWORDS_PATH).delete();
@@ -148,5 +148,107 @@ class NerDateIndexGeneratorTest {
         assertEquals(1, pos.getSentenceId());
         assertEquals(0, pos.getBeginPosition());
         assertEquals(10, pos.getEndPosition());
+    }
+
+    @Test
+    void testBasicDateIndexing() throws Exception {
+        // Generate index
+        indexer.generateIndex();
+        
+        // Close the indexer to release the file lock
+        indexer.close();
+        
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(new File(indexer.getIndexPath()), options)) {
+            // Check that valid dates are indexed
+            String[] expectedDates = {"20240120", "20240201", "20240115"};
+            for (String date : expectedDates) {
+                byte[] value = db.get(bytes(date));
+                assertNotNull(value, "Date " + date + " should be indexed");
+                
+                PositionList positions = PositionList.deserialize(value);
+                assertTrue(positions.size() > 0, "Should have positions for " + date);
+            }
+            
+            // Verify invalid dates are not indexed
+            String[] invalidDates = {"XXXXXXXX", "2024XXXX"};
+            for (String date : invalidDates) {
+                assertNull(db.get(bytes(date)), "Invalid date " + date + " should not be indexed");
+            }
+        }
+    }
+    
+    @Test
+    void testDateNormalization() throws Exception {
+        // Insert dates in different formats
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(
+            "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, ner, normalized_ner) VALUES (?, ?, ?, ?, ?, ?)"
+        )) {
+            Object[][] data = {
+                {1, 4, 0, 10, "DATE", "2024-01-01"},
+                {1, 4, 15, 25, "DATE", "2024-01-01"},
+                {1, 4, 30, 40, "DATE", "2024-01-01"}
+            };
+            
+            for (Object[] row : data) {
+                for (int i = 0; i < row.length; i++) {
+                    stmt.setObject(i + 1, row[i]);
+                }
+                stmt.executeUpdate();
+            }
+        }
+        
+        // Generate index
+        indexer.generateIndex();
+        
+        // Close the indexer to release the file lock
+        indexer.close();
+        
+        // Verify date normalization
+        Options options = new Options();
+        try (DB db = factory.open(new File(indexer.getIndexPath()), options)) {
+            // All three date formats should map to the same normalized form
+            byte[] value = db.get(bytes("20240101"));
+            assertNotNull(value, "Normalized date should be indexed");
+            
+            PositionList positions = PositionList.deserialize(value);
+            assertEquals(3, positions.size(), "Should have three positions for the same normalized date");
+        }
+    }
+    
+    @Test
+    void testInvalidDateHandling() throws Exception {
+        // Insert invalid date formats
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(
+            "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, ner, normalized_ner) VALUES (?, ?, ?, ?, ?, ?)"
+        )) {
+            Object[][] data = {
+                {1, 5, 0, 10, "DATE", "not-a-date"},
+                {1, 5, 15, 25, "DATE", "2024-13-01"},  // Invalid month
+                {1, 5, 30, 40, "DATE", "2024-01-32"}   // Invalid day
+            };
+            
+            for (Object[] row : data) {
+                for (int i = 0; i < row.length; i++) {
+                    stmt.setObject(i + 1, row[i]);
+                }
+                stmt.executeUpdate();
+            }
+        }
+        
+        // Generate index
+        indexer.generateIndex();
+        
+        // Close the indexer to release the file lock
+        indexer.close();
+        
+        // Verify invalid dates are not indexed
+        Options options = new Options();
+        try (DB db = factory.open(new File(indexer.getIndexPath()), options)) {
+            assertNull(db.get(bytes("not-a-date")), "Invalid date format should not be indexed");
+            assertNull(db.get(bytes("20241301")), "Invalid month should not be indexed");
+            assertNull(db.get(bytes("20240132")), "Invalid day should not be indexed");
+        }
     }
 } 
