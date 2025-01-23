@@ -6,32 +6,30 @@ import org.junit.jupiter.api.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.*;
-import java.nio.file.*;
 import java.sql.*;
-import java.time.LocalDate;
 import java.util.*;
 
-public class UnigramIndexGeneratorTest {
-    private static final String TEST_DB_PATH = "test-leveldb";
-    private static final String TEST_SQLITE_PATH = "test-sqlite.db";
+public class UnigramIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords.txt";
-    private Connection sqliteConn;
     private File levelDbDir;
 
     @BeforeEach
-    public void setup() throws Exception {
+    @Override
+    void setUp() throws Exception {
+        super.setUp();
+        
         // Create test stopwords file
         createStopwordsFile();
 
-        // Create test SQLite database
-        createTestSqliteDb();
-
         // Set up LevelDB directory
-        levelDbDir = new File(TEST_DB_PATH);
+        levelDbDir = tempDir.resolve("test-leveldb").toFile();
         if (levelDbDir.exists()) {
             deleteDirectory(levelDbDir);
         }
         levelDbDir.mkdir();
+        
+        // Insert test data
+        createTestData();
     }
 
     private void createStopwordsFile() throws IOException {
@@ -42,27 +40,8 @@ public class UnigramIndexGeneratorTest {
         }
     }
 
-    private void createTestSqliteDb() throws SQLException {
-        sqliteConn = DriverManager.getConnection("jdbc:sqlite:" + TEST_SQLITE_PATH);
+    private void createTestData() throws SQLException {
         try (Statement stmt = sqliteConn.createStatement()) {
-            // Create tables
-            stmt.execute("CREATE TABLE documents (document_id INTEGER PRIMARY KEY, timestamp TEXT)");
-            stmt.execute("""
-                        CREATE TABLE annotations (
-                            annotation_id INTEGER PRIMARY KEY,
-                            document_id INTEGER,
-                            sentence_id INTEGER,
-                            begin_char INTEGER,
-                            end_char INTEGER,
-                            token TEXT,
-                            lemma TEXT,
-                            pos TEXT,
-                            ner TEXT,
-                            normalized_ner TEXT,
-                            FOREIGN KEY (document_id) REFERENCES documents(document_id)
-                        )
-                    """);
-
             // Insert test documents with proper ISO-8601 timestamps
             stmt.execute("INSERT INTO documents VALUES (1, '2024-01-01T00:00:00Z')");
             stmt.execute("INSERT INTO documents VALUES (2, '2024-01-02T00:00:00Z')");
@@ -95,16 +74,9 @@ public class UnigramIndexGeneratorTest {
     }
 
     @AfterEach
-    public void cleanup() throws Exception {
-        // Close SQLite connection
-        if (sqliteConn != null && !sqliteConn.isClosed()) {
-            sqliteConn.close();
-        }
-
-        // Delete test files
-        new File(TEST_SQLITE_PATH).delete();
+    void tearDown() throws Exception {
+        super.tearDown();
         new File(TEST_STOPWORDS_PATH).delete();
-        deleteDirectory(levelDbDir);
     }
 
     private void deleteDirectory(File dir) {
@@ -124,13 +96,13 @@ public class UnigramIndexGeneratorTest {
     public void testBasicIndexing() throws Exception {
         // Create and run unigram indexer
         try (UnigramIndexGenerator indexer = new UnigramIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
+                levelDbDir.getPath(), TEST_STOPWORDS_PATH, 100, sqliteConn)) {
             indexer.generateIndex();
         }
 
         // Open LevelDB and verify contents
         Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
+        try (DB db = factory.open(levelDbDir, options)) {
             // Check for expected words
             assertWordExists(db, "cat");
             assertWordExists(db, "dog");
@@ -169,13 +141,13 @@ public class UnigramIndexGeneratorTest {
 
         // Run indexer with small batch size
         try (UnigramIndexGenerator indexer = new UnigramIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 10, sqliteConn)) {
+                levelDbDir.getPath(), TEST_STOPWORDS_PATH, 10, sqliteConn)) {
             indexer.generateIndex();
         }
 
         // Verify results
         Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
+        try (DB db = factory.open(levelDbDir, options)) {
             // Check random words from different batches
             assertWordExists(db, "word0");
             assertWordExists(db, "word499");

@@ -9,6 +9,8 @@ import java.util.List;
 
 class MemoryMonitorTest {
     private MemoryMonitor monitor;
+    @SuppressWarnings("unused")
+    private static volatile byte[] preventOptimization;
     
     @BeforeEach
     void setUp() {
@@ -38,7 +40,9 @@ class MemoryMonitorTest {
         try {
             // Allocate memory until we see batch size reduction
             for (int i = 0; i < 10; i++) {
-                memoryHog.add(new byte[1024 * 1024 * 10]); // 10MB chunks
+                byte[] chunk = new byte[1024 * 1024 * 10]; // 10MB chunks
+                memoryHog.add(chunk);
+                preventOptimization = chunk; // Prevent JVM optimization
                 monitor.update();
                 
                 if (monitor.getRecommendedBatchSize() < initialBatchSize) {
@@ -50,11 +54,11 @@ class MemoryMonitorTest {
             }
             
             // If we get here, we couldn't create enough memory pressure
-            // This is not necessarily a failure, as it depends on available memory
             System.out.println("Warning: Could not create enough memory pressure to test batch size reduction");
         } finally {
             // Clean up allocated memory
             memoryHog.clear();
+            preventOptimization = null;
             System.gc();
         }
     }
@@ -74,6 +78,7 @@ class MemoryMonitorTest {
         
         // Create some memory pressure
         byte[] memoryHog = new byte[1024 * 1024 * 10]; // 10MB
+        preventOptimization = memoryHog; // Prevent JVM optimization
         monitor.update();
         
         assertTrue(monitor.getPeakMemoryUsage() >= initialPeak,
@@ -81,6 +86,7 @@ class MemoryMonitorTest {
         
         // Clean up
         memoryHog = null;
+        preventOptimization = null;
         System.gc();
     }
     

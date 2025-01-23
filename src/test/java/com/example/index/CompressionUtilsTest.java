@@ -110,8 +110,10 @@ class CompressionUtilsTest {
         // Create empty file
         Files.createFile(sourcePath);
         
-        // Compress and decompress
-        double ratio = CompressionUtils.compressFile(sourcePath, compressedPath);
+        // Compress empty file
+        CompressionUtils.compressFile(sourcePath, compressedPath);
+        
+        // Decompress empty file
         CompressionUtils.decompressFile(compressedPath, decompressedPath);
         
         assertEquals(0, Files.size(sourcePath),
@@ -120,15 +122,5 @@ class CompressionUtilsTest {
             "Decompressed file should be empty");
         assertTrue(Files.size(compressedPath) > 0,
             "Compressed file should contain at least GZIP header");
-    }
-    
-    @Test
-    void testEstimateCompressedSize() {
-        long original = 1000000; // 1MB
-        long estimated = CompressionUtils.estimateCompressedSize(original);
-        assertTrue(estimated < original,
-            "Estimated compressed size should be smaller than original");
-        assertEquals(original / 2, estimated,
-            "Should estimate 2:1 compression ratio");
     }
 } 

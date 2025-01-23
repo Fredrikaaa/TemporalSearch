@@ -7,44 +7,36 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.*;
 import java.sql.*;
-import java.time.LocalDate;
 
-public class BigramIndexGeneratorTest {
-    private static final String TEST_DB_PATH = "test-leveldb-bigram";
-    private static final String TEST_SQLITE_PATH = "test-sqlite-bigram.db";
+public class BigramIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-bigram.txt";
-    private Connection sqliteConn;
     private File levelDbDir;
 
     @BeforeEach
-    public void setup() throws Exception {
-        // Create test stopwords file - we'll still create it even though we're
-        // including stopwords
-        // in bigrams, as it's used by the base generator infrastructure
+    @Override
+    void setUp() throws Exception {
+        super.setUp();
+        
+        // Create test stopwords file
         try (PrintWriter writer = new PrintWriter(TEST_STOPWORDS_PATH)) {
             writer.println("the");
             writer.println("a");
             writer.println("is");
         }
 
-        // Create test SQLite database
-        sqliteConn = DriverManager.getConnection("jdbc:sqlite:" + TEST_SQLITE_PATH);
-        try (Statement stmt = sqliteConn.createStatement()) {
-            // Create tables
-            stmt.execute("CREATE TABLE documents (document_id INTEGER PRIMARY KEY, timestamp TEXT)");
-            stmt.execute("""
-                        CREATE TABLE annotations (
-                            annotation_id INTEGER PRIMARY KEY,
-                            document_id INTEGER,
-                            sentence_id INTEGER,
-                            begin_char INTEGER,
-                            end_char INTEGER,
-                            token TEXT,
-                            lemma TEXT,
-                            pos TEXT
-                        )
-                    """);
+        // Set up LevelDB directory
+        levelDbDir = tempDir.resolve("test-leveldb-bigram").toFile();
+        if (levelDbDir.exists()) {
+            deleteDirectory(levelDbDir);
+        }
+        levelDbDir.mkdir();
 
+        // Insert test data
+        setupTestData();
+    }
+
+    private void setupTestData() throws SQLException {
+        try (Statement stmt = sqliteConn.createStatement()) {
             // Insert test documents
             stmt.execute("INSERT INTO documents VALUES (1, '2024-01-01T00:00:00Z')");
             stmt.execute("INSERT INTO documents VALUES (2, '2024-01-01T00:00:00Z')");
@@ -86,26 +78,25 @@ public class BigramIndexGeneratorTest {
                 pstmt.executeUpdate();
             }
         }
+    }
 
-        // Set up LevelDB directory
-        levelDbDir = new File(TEST_DB_PATH);
-        if (levelDbDir.exists()) {
-            deleteDirectory(levelDbDir);
-        }
-        levelDbDir.mkdir();
+    @AfterEach
+    void tearDown() throws Exception {
+        super.tearDown();
+        new File(TEST_STOPWORDS_PATH).delete();
     }
 
     @Test
     public void testBasicBigramIndexing() throws Exception {
         // Create and run bigram indexer
         try (BigramIndexGenerator indexer = new BigramIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
+                levelDbDir.getPath(), TEST_STOPWORDS_PATH, 100, sqliteConn)) {
             indexer.generateIndex();
         }
 
         // Open LevelDB and verify contents
         Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
+        try (DB db = factory.open(levelDbDir, options)) {
             // Test bigrams with stopwords
             verifyBigram(db, "the" + BaseIndexGenerator.DELIMITER + "black", 1, 0, 0, 9, 2); // Appears in both documents
 
@@ -123,12 +114,12 @@ public class BigramIndexGeneratorTest {
     @Test
     public void testSentenceBoundaries() throws Exception {
         try (BigramIndexGenerator indexer = new BigramIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
+                levelDbDir.getPath(), TEST_STOPWORDS_PATH, 100, sqliteConn)) {
             indexer.generateIndex();
         }
 
         Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
+        try (DB db = factory.open(levelDbDir, options)) {
             // Verify no bigram exists between sentences
             assertNull(db.get(bytes("quietly" + BaseIndexGenerator.DELIMITER + "it")),
                     "Bigram should not span sentence boundary");
@@ -166,12 +157,12 @@ public class BigramIndexGeneratorTest {
         }
 
         try (BigramIndexGenerator indexer = new BigramIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
+                levelDbDir.getPath(), TEST_STOPWORDS_PATH, 100, sqliteConn)) {
             indexer.generateIndex();
         }
 
         Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
+        try (DB db = factory.open(levelDbDir, options)) {
             // Verify "black dog" appears twice
             verifyBigram(db, "black" + BaseIndexGenerator.DELIMITER + "dog", 2, 0, 4, 13, 2);
         }
@@ -209,16 +200,6 @@ public class BigramIndexGeneratorTest {
             }
             dir.delete();
         }
-    }
-
-    @AfterEach
-    public void cleanup() throws Exception {
-        if (sqliteConn != null && !sqliteConn.isClosed()) {
-            sqliteConn.close();
-        }
-        new File(TEST_SQLITE_PATH).delete();
-        new File(TEST_STOPWORDS_PATH).delete();
-        deleteDirectory(levelDbDir);
     }
 
     private static byte[] bytes(String str) {

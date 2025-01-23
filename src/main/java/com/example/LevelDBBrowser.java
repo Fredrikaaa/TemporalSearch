@@ -334,10 +334,6 @@ public class LevelDBBrowser {
         return String.format("%s-%s->%s", parts[0], parts[1], parts[2]);
     }
 
-    private static String capitalizeFirst(String str) {
-        return str.substring(0, 1).toUpperCase() + str.substring(1);
-    }
-
     private static byte[] bytes(String str) {
         return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }

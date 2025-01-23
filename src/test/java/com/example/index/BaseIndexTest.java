@@ -52,8 +52,12 @@ public abstract class BaseIndexTest {
                     sentence_id INTEGER,
                     begin_char INTEGER,
                     end_char INTEGER,
+                    token TEXT,
                     lemma TEXT,
                     pos TEXT,
+                    ner TEXT,
+                    normalized_ner TEXT,
+                    annotation_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     FOREIGN KEY(document_id) REFERENCES documents(document_id)
                 )
             """);

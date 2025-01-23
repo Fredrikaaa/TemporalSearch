@@ -1,14 +1,9 @@
 package com.example.index;
-
-import com.google.common.collect.ListMultimap;
-import com.google.common.collect.ArrayListMultimap;
-import me.tongfei.progressbar.*;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 import com.example.logging.ProgressTracker;
 
 /**
@@ -153,7 +148,7 @@ public class DiskBasedMerger {
             // Initialize readers and current lines
             for (Path path : inputs) {
                 InputStream in = CompressionUtils.createDecompressionInputStream(path);
-                BufferedReader reader = new BufferedReader(new InputStreamReader(in));
+                BufferedReader reader = new BufferedReader(new InputStreamReader(in), (int)(memoryBudget / inputs.size()));
                 readers.add(reader);
                 String line = reader.readLine();
                 currentLines.add(line);
@@ -161,7 +156,7 @@ public class DiskBasedMerger {
             
             // Create writer for output file
             try (OutputStream out = CompressionUtils.createCompressedOutputStream(output);
-                 BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out))) {
+                 BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out), (int)(memoryBudget / 2))) {
                 
                 long linesProcessed = 0;
                 progress.startBatch(1_000_000);

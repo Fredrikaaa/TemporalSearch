@@ -3,7 +3,6 @@ package com.example.index;
 import com.example.logging.BatchStats;
 import com.example.logging.IndexingMetrics;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;

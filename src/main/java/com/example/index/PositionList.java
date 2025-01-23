@@ -6,7 +6,6 @@ import java.time.LocalDate;
 import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.example.logging.BatchStats;
 import com.example.logging.LogSampler;
 
 /**

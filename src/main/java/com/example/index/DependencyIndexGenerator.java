@@ -4,17 +4,14 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import static org.iq80.leveldb.impl.Iq80DBFactory.bytes;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Statement;
 import java.util.*;
 import java.io.IOException;
 import java.sql.SQLException;
 import java.time.LocalDate;
-import java.time.ZonedDateTime;
 
 /**
  * Generates a dependency index from dependency relation entries.
@@ -22,7 +19,6 @@ import java.time.ZonedDateTime;
  */
 public final class DependencyIndexGenerator extends BaseIndexGenerator<DependencyEntry> {
     private static final Logger logger = LoggerFactory.getLogger(DependencyIndexGenerator.class);
-    private static final int BATCH_SIZE = 1000;
 
     private static final Set<String> BLACKLISTED_RELATIONS = Set.of(
         "punct", "det", "case", "cc"

@@ -12,8 +12,7 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.Statement;
+
 
 public class IndexRunner {
     private static final Logger logger = LoggerFactory.getLogger(IndexRunner.class);
@@ -75,19 +74,6 @@ public class IndexRunner {
         }
     }
 
-    private static long countEntries(Connection conn, String indexType) throws Exception {
-        try (Statement stmt = conn.createStatement()) {
-            String table = switch (indexType) {
-                case "dependency" -> "dependencies";
-                default -> "annotations";
-            };
-            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) as total FROM " + table);
-            if (rs.next()) {
-                return rs.getLong("total");
-            }
-            return 0;
-        }
-    }
 
     public static void runIndexing(String dbPath, String indexDir, String stopwordsPath,
             int batchSize, String indexType) throws Exception {
@@ -109,7 +95,6 @@ public class IndexRunner {
             
             int currentStep = 0;
             progress.startOverall("Generating indexes", (long)totalSteps);
-            long totalWork = indexType.equals("all") ? 5 : 1; // Just track number of indexes
 
             if (indexType.equals("all") || indexType.equals("unigram")) {
                 currentStep++;

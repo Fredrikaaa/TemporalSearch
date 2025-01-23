@@ -12,73 +12,26 @@ import java.time.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-class DependencyIndexGeneratorTest {
-    private Path tempDir;
-    private Path levelDbPath;
-    private Path stopwordsPath;
-    private Path sqlitePath;
-    private Connection sqliteConn;
-    
-    private static final String TEST_DB_PATH = "test-leveldb-dependency";
+class DependencyIndexGeneratorTest extends BaseIndexTest {
+    protected Path levelDbPath;
+    protected Path stopwordsPath;
 
     @BeforeEach
+    @Override
     void setUp() throws Exception {
-        // Create temporary directories and files
-        tempDir = Files.createTempDirectory("dep-index-test-");
+        super.setUp();
         levelDbPath = tempDir.resolve("test-index");
         stopwordsPath = tempDir.resolve("stopwords.txt");
-        sqlitePath = tempDir.resolve("test.db");
         
         // Create stopwords file
         List<String> stopwords = Arrays.asList("the", "a", "an");
         Files.write(stopwordsPath, stopwords);
         
-        // Create and populate SQLite database
-        sqliteConn = DriverManager.getConnection("jdbc:sqlite:" + sqlitePath);
         setupDatabase();
     }
     
-    @AfterEach
-    void tearDown() throws Exception {
-        if (sqliteConn != null && !sqliteConn.isClosed()) {
-            sqliteConn.close();
-        }
-        
-        // Clean up temporary files
-        Files.walk(tempDir)
-             .sorted(Comparator.reverseOrder())
-             .forEach(path -> {
-                 try {
-                     Files.deleteIfExists(path);
-                 } catch (IOException e) {
-                     // Ignore cleanup errors
-                 }
-             });
-    }
-    
-    private void setupDatabase() throws SQLException {
+    private void setupDatabase() throws SQLException, Exception {
         try (Statement stmt = sqliteConn.createStatement()) {
-            // Create tables
-            stmt.execute("""
-                CREATE TABLE documents (
-                    document_id INTEGER PRIMARY KEY,
-                    timestamp TEXT NOT NULL
-                )
-            """);
-            
-            stmt.execute("""
-                CREATE TABLE dependencies (
-                    document_id INTEGER,
-                    sentence_id INTEGER,
-                    head_token TEXT,
-                    dependent_token TEXT,
-                    relation TEXT,
-                    begin_char INTEGER,
-                    end_char INTEGER,
-                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
-                )
-            """);
-            
             // Insert test data
             stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-20 10:00:00.000')");
             

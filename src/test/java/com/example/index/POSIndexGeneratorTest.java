@@ -5,7 +5,6 @@ import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import org.junit.jupiter.api.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-import java.io.*;
 import java.sql.*;
 import java.time.LocalDate;
 import java.nio.file.*;
@@ -19,6 +18,7 @@ class POSIndexGeneratorTest extends BaseIndexTest {
     private Path stopwordsPath;
     
     @BeforeEach
+    @Override
     void setUp() throws Exception {
         super.setUp();
         indexPath = tempDir.resolve("test-pos-index");
@@ -28,6 +28,11 @@ class POSIndexGeneratorTest extends BaseIndexTest {
         List<String> stopwords = Arrays.asList("the", "a", "an");
         Files.write(stopwordsPath, stopwords);
         
+        // Insert test data
+        setupTestData();
+    }
+    
+    private void setupTestData() throws SQLException {
         // Insert test document
         LocalDate timestamp = LocalDate.now();
         TestData.insertDocument(sqliteConn, 1, timestamp);

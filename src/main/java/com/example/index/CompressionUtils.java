@@ -122,15 +122,4 @@ public class CompressionUtils {
         return new GZIPInputStream(fileIn, BUFFER_SIZE);
     }
     
-    /**
-     * Estimates the compressed size of data without actually compressing it.
-     * This is a rough estimate based on typical compression ratios.
-     * 
-     * @param uncompressedSize The size of the uncompressed data in bytes
-     * @return Estimated size after compression in bytes
-     */
-    public static long estimateCompressedSize(long uncompressedSize) {
-        // Assume a conservative 2:1 compression ratio for text data
-        return uncompressedSize / 2;
-    }
 } 

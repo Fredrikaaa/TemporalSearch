@@ -3,20 +3,14 @@ package com.example.index;
 import org.iq80.leveldb.*;
 import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.MultimapBuilder;
 import java.io.*;
 import java.util.*;
 import java.sql.*;
-import java.time.LocalDate;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.concurrent.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import me.tongfei.progressbar.*;
-import java.util.stream.*;
 import com.example.logging.ProgressTracker;
 
 /**

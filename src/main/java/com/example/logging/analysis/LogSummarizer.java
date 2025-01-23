@@ -6,10 +6,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * Generates human-readable summary reports from analyzed log data.
@@ -17,8 +14,6 @@ import java.util.stream.Collectors;
  */
 public class LogSummarizer {
     private static final Logger logger = LoggerFactory.getLogger(LogSummarizer.class);
-    private static final DateTimeFormatter DATE_FORMAT = 
-        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     /**
      * Generates a summary report from log analysis results.

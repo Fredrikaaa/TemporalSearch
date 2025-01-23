@@ -21,12 +21,6 @@ import java.util.ArrayList;
 /**
  * Generates an index of hypernym-hyponym (category-instance) relationships from dependency annotations.
  * Supports bidirectional lookups through key structure: category${DELIMITER}instance -> PositionList
- * 
- * TODO: This implementation will be refactored as part of the IndexEntry redesign.
- * Current limitations:
- * - Uses IndexEntry.lemma for category (hypernym)
- * - Uses IndexEntry.pos for instance (hyponym)
- * - This overloading of fields will be replaced with proper DependencyEntry class
  */
 public class HypernymIndexGenerator extends ParallelIndexGenerator<DependencyEntry> {
     private static final Logger logger = LoggerFactory.getLogger(HypernymIndexGenerator.class);
@@ -56,10 +50,7 @@ public class HypernymIndexGenerator extends ParallelIndexGenerator<DependencyEnt
         super(levelDbPath, stopwordsPath, batchSize, sqliteConn, tableName, threadCount);
     }
 
-    /**
-     * TODO: After refactor, this will return List<DependencyEntry> instead of List<IndexEntry>
-     * The query logic will remain similar, but the entry creation will be cleaner
-     */
+
     @Override
     protected List<DependencyEntry> fetchBatch(int offset) throws SQLException {
         List<DependencyEntry> entries = new ArrayList<>();
@@ -135,10 +126,6 @@ public class HypernymIndexGenerator extends ParallelIndexGenerator<DependencyEnt
         return entries;
     }
 
-    /**
-     * TODO: After refactor, this will handle List<DependencyEntry> instead of List<IndexEntry>
-     * The position list creation logic will remain similar, but field access will be cleaner
-     */
     @Override
     protected ListMultimap<String, PositionList> processPartition(List<DependencyEntry> partition) throws IOException {
         ListMultimap<String, PositionList> results = MultimapBuilder.hashKeys().arrayListValues().build();

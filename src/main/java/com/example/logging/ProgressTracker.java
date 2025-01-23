@@ -1,7 +1,6 @@
 package com.example.logging;
 
 import me.tongfei.progressbar.*;
-import java.time.Duration;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**

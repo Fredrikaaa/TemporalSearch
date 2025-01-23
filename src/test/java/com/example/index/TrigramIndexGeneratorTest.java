@@ -8,15 +8,15 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.*;
 import java.sql.*;
 
-public class TrigramIndexGeneratorTest {
-    private static final String TEST_DB_PATH = "test-leveldb-trigram";
-    private static final String TEST_SQLITE_PATH = "test-sqlite-trigram.db";
+public class TrigramIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-trigram.txt";
-    private Connection sqliteConn;
     private File levelDbDir;
 
     @BeforeEach
-    public void setup() throws Exception {
+    @Override
+    void setUp() throws Exception {
+        super.setUp();
+        
         // Create test stopwords file
         try (PrintWriter writer = new PrintWriter(TEST_STOPWORDS_PATH)) {
             writer.println("the");
@@ -24,24 +24,19 @@ public class TrigramIndexGeneratorTest {
             writer.println("is");
         }
 
-        // Create test SQLite database
-        sqliteConn = DriverManager.getConnection("jdbc:sqlite:" + TEST_SQLITE_PATH);
-        try (Statement stmt = sqliteConn.createStatement()) {
-            // Create tables
-            stmt.execute("CREATE TABLE documents (document_id INTEGER PRIMARY KEY, timestamp TEXT)");
-            stmt.execute("""
-                        CREATE TABLE annotations (
-                            annotation_id INTEGER PRIMARY KEY,
-                            document_id INTEGER,
-                            sentence_id INTEGER,
-                            begin_char INTEGER,
-                            end_char INTEGER,
-                            token TEXT,
-                            lemma TEXT,
-                            pos TEXT
-                        )
-                    """);
+        // Set up LevelDB directory
+        levelDbDir = tempDir.resolve("test-leveldb-trigram").toFile();
+        if (levelDbDir.exists()) {
+            deleteDirectory(levelDbDir);
+        }
+        levelDbDir.mkdir();
 
+        // Insert test data
+        setupTestData();
+    }
+
+    private void setupTestData() throws SQLException {
+        try (Statement stmt = sqliteConn.createStatement()) {
             // Insert test documents
             stmt.execute("INSERT INTO documents VALUES (1, '2024-01-01T00:00:00Z')");
             stmt.execute("INSERT INTO documents VALUES (2, '2024-01-01T00:00:00Z')");
@@ -87,26 +82,38 @@ public class TrigramIndexGeneratorTest {
                 pstmt.executeUpdate();
             }
         }
+    }
 
-        // Set up LevelDB directory
-        levelDbDir = new File(TEST_DB_PATH);
-        if (levelDbDir.exists()) {
-            deleteDirectory(levelDbDir);
+    @AfterEach
+    void tearDown() throws Exception {
+        super.tearDown();
+        new File(TEST_STOPWORDS_PATH).delete();
+    }
+
+    private void deleteDirectory(File dir) {
+        if (dir.exists()) {
+            for (File file : dir.listFiles()) {
+                if (file.isDirectory()) {
+                    deleteDirectory(file);
+                } else {
+                    file.delete();
+                }
+            }
+            dir.delete();
         }
-        levelDbDir.mkdir();
     }
 
     @Test
     public void testBasicTrigramIndexing() throws Exception {
         // Create and run trigram indexer
         try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
+                levelDbDir.getPath(), TEST_STOPWORDS_PATH, 100, sqliteConn)) {
             indexer.generateIndex();
         }
 
         // Open LevelDB and verify contents
         Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
+        try (DB db = factory.open(levelDbDir, options)) {
             // Test trigrams with stopwords
             verifyTrigram(db, "the" + BaseIndexGenerator.DELIMITER + "black" + BaseIndexGenerator.DELIMITER + "cat", 1, 0, 0, 13, 2);
 
@@ -124,12 +131,12 @@ public class TrigramIndexGeneratorTest {
     @Test
     public void testSentenceBoundaries() throws Exception {
         try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
+                levelDbDir.getPath(), TEST_STOPWORDS_PATH, 100, sqliteConn)) {
             indexer.generateIndex();
         }
 
         Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
+        try (DB db = factory.open(levelDbDir, options)) {
             // Verify no trigram exists between sentences
             assertNull(db.get(bytes("quietly" + BaseIndexGenerator.DELIMITER + "now" + BaseIndexGenerator.DELIMITER + "it")),
                     "Trigram should not span sentence boundary");
@@ -159,19 +166,6 @@ public class TrigramIndexGeneratorTest {
                 "Begin position mismatch for: " + trigramKey);
         assertEquals(expectedEndChar, pos.getEndPosition(),
                 "End position mismatch for: " + trigramKey);
-    }
-
-    private void deleteDirectory(File dir) {
-        if (dir.exists()) {
-            for (File file : dir.listFiles()) {
-                if (file.isDirectory()) {
-                    deleteDirectory(file);
-                } else {
-                    file.delete();
-                }
-            }
-            dir.delete();
-        }
     }
 
     @Test
@@ -207,12 +201,12 @@ public class TrigramIndexGeneratorTest {
         }
 
         try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
+                levelDbDir.getPath(), TEST_STOPWORDS_PATH, 100, sqliteConn)) {
             indexer.generateIndex();
         }
 
         Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
+        try (DB db = factory.open(levelDbDir, options)) {
             // Verify all overlapping trigrams are present
             verifyTrigram(db, "the" + BaseIndexGenerator.DELIMITER + "quick" + BaseIndexGenerator.DELIMITER + "brown", 3, 0, 0, 15, 1);
             verifyTrigram(db, "quick" + BaseIndexGenerator.DELIMITER + "brown" + BaseIndexGenerator.DELIMITER + "fox", 3, 0, 4, 19, 1);
@@ -250,12 +244,12 @@ public class TrigramIndexGeneratorTest {
         }
 
         try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
+                levelDbDir.getPath(), TEST_STOPWORDS_PATH, 100, sqliteConn)) {
             indexer.generateIndex();
         }
 
         Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
+        try (DB db = factory.open(levelDbDir, options)) {
             // Verify the trigram appears three times (twice in original data, once in new
             // data)
             verifyTrigram(db, "the" + BaseIndexGenerator.DELIMITER + "black" + BaseIndexGenerator.DELIMITER + "cat", 1, 0, 0, 13, 3);
@@ -283,12 +277,12 @@ public class TrigramIndexGeneratorTest {
         }
 
         try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                TEST_DB_PATH, TEST_STOPWORDS_PATH, 100, sqliteConn)) {
+                levelDbDir.getPath(), TEST_STOPWORDS_PATH, 100, sqliteConn)) {
             indexer.generateIndex();
         }
 
         Options options = new Options();
-        try (DB db = factory.open(new File(TEST_DB_PATH), options)) {
+        try (DB db = factory.open(levelDbDir, options)) {
             // Verify no trigrams were created for the single-word sentence
             DBIterator iterator = db.iterator();
             iterator.seekToFirst();
@@ -299,19 +293,6 @@ public class TrigramIndexGeneratorTest {
                 iterator.next();
             }
         }
-    }
-
-    @AfterEach
-    public void cleanup() throws Exception {
-        // Close SQLite connection
-        if (sqliteConn != null && !sqliteConn.isClosed()) {
-            sqliteConn.close();
-        }
-
-        // Delete test files
-        new File(TEST_SQLITE_PATH).delete();
-        new File(TEST_STOPWORDS_PATH).delete();
-        deleteDirectory(levelDbDir);
     }
 
     private static byte[] bytes(String str) {

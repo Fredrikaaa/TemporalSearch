@@ -3,22 +3,15 @@ package com.example.index;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.iq80.leveldb.*;
 import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 
 import java.io.*;
-import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.util.Arrays;
 import java.util.List;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -26,28 +19,32 @@ class NerDateIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-ner.txt";
     private NerDateIndexGenerator indexer;
 
+    @BeforeEach
     @Override
-    protected void createBasicTables() throws Exception {
-        try (Statement stmt = sqliteConn.createStatement()) {
-            stmt.execute("""
-                CREATE TABLE documents (
-                    document_id INTEGER PRIMARY KEY,
-                    timestamp TEXT NOT NULL
-                )
-            """);
+    void setUp() throws Exception {
+        super.setUp();
+        
+        // Create test stopwords file
+        createStopwordsFile();
+        
+        // Initialize indexer
+        String levelDbPath = tempDir.resolve("leveldb").toString();
+        indexer = new NerDateIndexGenerator(levelDbPath, TEST_STOPWORDS_PATH, 100, sqliteConn);
+        
+        // Insert test data
+        setupTestData();
+    }
 
-            stmt.execute("""
-                CREATE TABLE annotations (
-                    document_id INTEGER,
-                    sentence_id INTEGER,
-                    begin_char INTEGER,
-                    end_char INTEGER,
-                    ner TEXT,
-                    normalized_ner TEXT,
-                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
-                )
-            """);
-            
+    private void createStopwordsFile() throws IOException {
+        try (PrintWriter writer = new PrintWriter(TEST_STOPWORDS_PATH)) {
+            writer.println("the");
+            writer.println("a");
+            writer.println("is");
+        }
+    }
+
+    private void setupTestData() throws SQLException {
+        try (Statement stmt = sqliteConn.createStatement()) {
             // Insert test documents
             stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-15T10:00:00Z')");
             stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (2, '2024-01-16T10:00:00Z')");
@@ -65,29 +62,12 @@ class NerDateIndexGeneratorTest extends BaseIndexTest {
         }
     }
 
-    @BeforeEach
-    void setUpIndexer() throws Exception {
-        // Create test stopwords file
-        createStopwordsFile();
-        
-        // Initialize indexer
-        String levelDbPath = tempDir.resolve("leveldb").toString();
-        indexer = new NerDateIndexGenerator(levelDbPath, TEST_STOPWORDS_PATH, 100, sqliteConn);
-    }
-
-    private void createStopwordsFile() throws IOException {
-        try (PrintWriter writer = new PrintWriter(TEST_STOPWORDS_PATH)) {
-            writer.println("the");
-            writer.println("a");
-            writer.println("is");
-        }
-    }
-
     @AfterEach
-    void tearDownIndexer() throws Exception {
+    void tearDown() throws Exception {
         if (indexer != null) {
             indexer.close();
         }
+        super.tearDown();
         // Delete test files
         new File(TEST_STOPWORDS_PATH).delete();
     }

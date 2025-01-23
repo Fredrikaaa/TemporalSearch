@@ -5,77 +5,32 @@ import org.junit.jupiter.api.*;
 import org.iq80.leveldb.*;
 import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 
-import java.io.*;
 import java.nio.file.*;
 import java.sql.*;
-import java.time.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-class IndexGeneratorTest {
-    private Path tempDir;
+class IndexGeneratorTest extends BaseIndexTest {
     private Path levelDbPath;
     private Path stopwordsPath;
-    private Path sqlitePath;
-    private Connection sqliteConn;
     
     @BeforeEach
+    @Override
     void setUp() throws Exception {
-        // Create temporary directories and files
-        tempDir = Files.createTempDirectory("index-test-");
+        super.setUp();
         levelDbPath = tempDir.resolve("test-index");
         stopwordsPath = tempDir.resolve("stopwords.txt");
-        sqlitePath = tempDir.resolve("test.db");
         
         // Create stopwords file
         List<String> stopwords = Arrays.asList("the", "a", "an");
         Files.write(stopwordsPath, stopwords);
         
-        // Create and populate SQLite database
-        sqliteConn = DriverManager.getConnection("jdbc:sqlite:" + sqlitePath);
-        setupDatabase();
+        // Insert test data
+        setupTestData();
     }
     
-    @AfterEach
-    void tearDown() throws Exception {
-        if (sqliteConn != null && !sqliteConn.isClosed()) {
-            sqliteConn.close();
-        }
-        
-        // Clean up temporary files
-        Files.walk(tempDir)
-             .sorted(Comparator.reverseOrder())
-             .forEach(path -> {
-                 try {
-                     Files.deleteIfExists(path);
-                 } catch (IOException e) {
-                     // Ignore cleanup errors
-                 }
-             });
-    }
-    
-    private void setupDatabase() throws SQLException {
+    private void setupTestData() throws SQLException {
         try (Statement stmt = sqliteConn.createStatement()) {
-            // Create tables
-            stmt.execute("""
-                CREATE TABLE documents (
-                    document_id INTEGER PRIMARY KEY,
-                    timestamp TEXT NOT NULL
-                )
-            """);
-            
-            stmt.execute("""
-                CREATE TABLE annotations (
-                    document_id INTEGER,
-                    sentence_id INTEGER,
-                    begin_char INTEGER,
-                    end_char INTEGER,
-                    lemma TEXT,
-                    pos TEXT,
-                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
-                )
-            """);
-            
             // Insert test data
             stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-20T10:00:00Z')");
             stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (2, '2024-01-21T10:00:00Z')");
@@ -119,17 +74,15 @@ class IndexGeneratorTest {
         int[] threadCounts = {1, 2, 4};
         
         for (int threadCount : threadCounts) {
-            Path indexPath = tempDir.resolve("unigram-" + threadCount);
-            
             try (UnigramIndexGenerator generator = new UnigramIndexGenerator(
-                    indexPath.toString(), stopwordsPath.toString(), 
+                    levelDbPath.toString(), stopwordsPath.toString(), 
                     10, sqliteConn, threadCount)) {
                 generator.generateIndex();
             }
             
             // Verify index contents
             Options options = new Options();
-            try (DB db = factory.open(indexPath.toFile(), options)) {
+            try (DB db = factory.open(levelDbPath.toFile(), options)) {
                 // Check some expected unigrams
                 assertNotNull(db.get(bytes("quick")), "quick should be indexed");
                 assertNotNull(db.get(bytes("fox")), "fox should be indexed");

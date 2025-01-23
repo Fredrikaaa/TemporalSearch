@@ -8,7 +8,6 @@ import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import java.io.*;
 import java.nio.file.*;
 import java.sql.*;
-import java.time.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -88,16 +87,14 @@ class ParallelIndexGeneratorTest {
             {"Another document here", "With multiple sentences"}
         });
         
-        Path indexPath = tempDir.resolve("cross-boundary");
-        
         try (TrigramIndexGenerator generator = new TrigramIndexGenerator(
-                indexPath.toString(), stopwordsPath.toString(),
+                levelDbPath.toString(), stopwordsPath.toString(),
                 10, sqliteConn, 2)) {
             generator.generateIndex();
         }
         
         // Verify no trigrams cross document or sentence boundaries
-        try (DB db = factory.open(indexPath.toFile(), new Options())) {
+        try (DB db = factory.open(levelDbPath.toFile(), new Options())) {
             // Verify no trigrams exist across sentence boundaries
             assertNull(db.get(bytes("sentence\u0000one\u0000this")), 
                 "Trigram should not exist across sentence boundary");
@@ -388,19 +385,6 @@ class ParallelIndexGeneratorTest {
             }
         }
         return false;
-    }
-
-    private void verifyPartitionContinuity(List<? extends IndexEntry> partition) {
-        IndexEntry prev = null;
-        for (IndexEntry curr : partition) {
-            if (prev != null) {
-                assertTrue(curr.getDocumentId() > prev.getDocumentId() || 
-                    (curr.getDocumentId() == prev.getDocumentId() && 
-                     curr.getSentenceId() >= prev.getSentenceId()),
-                    "Entries should be ordered by document ID and sentence ID");
-            }
-            prev = curr;
-        }
     }
 
     private void assertIndexesAreEqual(String path1, String path2) throws IOException {

@@ -8,7 +8,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,6 +84,8 @@ public class POSIndexGenerator extends BaseIndexGenerator<POSIndexGenerator.POSE
             // Get or create position list for this POS tag
             PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
             posList.add(position);
+            
+            logger.debug("Added POS tag: {} at position {}", key, position);
         }
         
         // Add all position lists to result
