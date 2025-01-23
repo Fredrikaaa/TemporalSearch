@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.*;
 import org.iq80.leveldb.*;
 import static org.iq80.leveldb.impl.Iq80DBFactory.*;
+import com.example.logging.ProgressTracker;
 
 import java.io.*;
 import java.nio.file.*;
@@ -13,8 +14,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 class DependencyIndexGeneratorTest extends BaseIndexTest {
-    protected Path levelDbPath;
-    protected Path stopwordsPath;
+    private Path levelDbPath;
+    private Path stopwordsPath;
 
     @BeforeEach
     @Override
@@ -27,10 +28,11 @@ class DependencyIndexGeneratorTest extends BaseIndexTest {
         List<String> stopwords = Arrays.asList("the", "a", "an");
         Files.write(stopwordsPath, stopwords);
         
-        setupDatabase();
+        // Insert test data
+        setupTestData();
     }
     
-    private void setupDatabase() throws SQLException, Exception {
+    private void setupTestData() throws SQLException, Exception {
         try (Statement stmt = sqliteConn.createStatement()) {
             // Insert test data
             stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-20 10:00:00.000')");
@@ -48,41 +50,35 @@ class DependencyIndexGeneratorTest extends BaseIndexTest {
     }
     
     @Test
-    void testBasicDependencyIndexing() throws Exception {
+    void testDependencyIndexGeneration() throws Exception {
         // Test with different thread counts
-        int[] threadCounts = {1, 2};
+        try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
+                levelDbPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn, new ProgressTracker())) {
+            generator.generateIndex();
+        }
         
-        for (int threadCount : threadCounts) {
-            Path indexPath = tempDir.resolve("dep-" + threadCount);
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(levelDbPath.toFile(), options)) {
+            // Check expected dependencies
+            String[] expectedKeys = {
+                "chases" + BaseIndexGenerator.DELIMITER + "nsubj" + BaseIndexGenerator.DELIMITER + "cat",   // Subject dependency
+                "chases" + BaseIndexGenerator.DELIMITER + "dobj" + BaseIndexGenerator.DELIMITER + "mouse"    // Object dependency
+            };
             
-            try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
-                    indexPath.toString(), stopwordsPath.toString(), 
-                    10, sqliteConn, threadCount)) {
-                generator.generateIndex();
-            }
-            
-            // Verify index contents
-            Options options = new Options();
-            try (DB db = factory.open(indexPath.toFile(), options)) {
-                // Check expected dependencies
-                String[] expectedKeys = {
-                    "chases" + BaseIndexGenerator.DELIMITER + "nsubj" + BaseIndexGenerator.DELIMITER + "cat",   // Subject dependency
-                    "chases" + BaseIndexGenerator.DELIMITER + "dobj" + BaseIndexGenerator.DELIMITER + "mouse"    // Object dependency
-                };
+            for (String key : expectedKeys) {
+                assertNotNull(db.get(bytes(key)), "Key should exist: " + key);
                 
-                for (String key : expectedKeys) {
-                    assertNotNull(db.get(bytes(key)), "Key should exist: " + key);
-                    
-                    // Verify position information
-                    PositionList positions = PositionList.deserialize(db.get(bytes(key)));
-                    assertEquals(1, positions.size(), "Should have one position for " + key);
-                    
-                    Position pos = positions.getPositions().get(0);
-                    assertEquals(1, pos.getDocumentId());
-                    assertEquals(1, pos.getSentenceId());
-                    assertTrue(pos.getBeginPosition() >= 0);
-                    assertTrue(pos.getEndPosition() <= 16); // "cat chases mouse".length() = 16
-                }
+                // Verify position information
+                PositionList positions = PositionList.deserialize(db.get(bytes(key)));
+                assertEquals(1, positions.size(), "Should have one position for " + key);
+                
+                Position pos = positions.getPositions().get(0);
+                assertEquals(1, pos.getDocumentId());
+                assertEquals(1, pos.getSentenceId());
+                assertTrue(pos.getBeginPosition() >= 0);
+                assertTrue(pos.getEndPosition() <= 16); // "cat chases mouse".length() = 16
             }
         }
     }
@@ -105,16 +101,15 @@ class DependencyIndexGeneratorTest extends BaseIndexTest {
         }
 
         // Generate index
-        Path indexPath = tempDir.resolve("dep-aggregation");
         try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
-                indexPath.toString(), stopwordsPath.toString(), 
-                10, sqliteConn)) {
+                levelDbPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn, new ProgressTracker())) {
             generator.generateIndex();
         }
 
         // Verify index contents
         Options options = new Options();
-        try (DB db = factory.open(indexPath.toFile(), options)) {
+        try (DB db = factory.open(levelDbPath.toFile(), options)) {
             // Check the aggregated dependency
             String key = "chases" + BaseIndexGenerator.DELIMITER + "nsubj" + BaseIndexGenerator.DELIMITER + "cat";
             byte[] data = db.get(bytes(key));
@@ -135,7 +130,7 @@ class DependencyIndexGeneratorTest extends BaseIndexTest {
     void testCaseNormalization() throws IOException {
         try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
                 levelDbPath.toString(), stopwordsPath.toString(), 
-                10, sqliteConn)) {
+                10, sqliteConn, new ProgressTracker())) {
                 
             DependencyEntry entry = new DependencyEntry(
                 1, 1, 0, 10, "April", "Day", "compound", LocalDate.now());
@@ -165,16 +160,15 @@ class DependencyIndexGeneratorTest extends BaseIndexTest {
         }
 
         // Generate index
-        Path indexPath = tempDir.resolve("blacklist-test");
         try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
-                indexPath.toString(), stopwordsPath.toString(), 
-                10, sqliteConn)) {
+                levelDbPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn, new ProgressTracker())) {
             generator.generateIndex();
         }
 
         // Verify index contents
         Options options = new Options();
-        try (DB db = factory.open(indexPath.toFile(), options)) {
+        try (DB db = factory.open(levelDbPath.toFile(), options)) {
             // Check that blacklisted relations are not indexed
             String[] blacklistedKeys = {
                 "cat" + BaseIndexGenerator.DELIMITER + "det" + BaseIndexGenerator.DELIMITER + "the",
@@ -208,16 +202,15 @@ class DependencyIndexGeneratorTest extends BaseIndexTest {
         }
 
         // Generate index
-        Path indexPath = tempDir.resolve("stopword-test");
         try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
-                indexPath.toString(), stopwordsPath.toString(), 
-                10, sqliteConn)) {
+                levelDbPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn, new ProgressTracker())) {
             generator.generateIndex();
         }
 
         // Verify index contents
         Options options = new Options();
-        try (DB db = factory.open(indexPath.toFile(), options)) {
+        try (DB db = factory.open(levelDbPath.toFile(), options)) {
             // Check that entries with stopwords are not indexed
             String[] stopwordKeys = {
                 "the" + BaseIndexGenerator.DELIMITER + "nsubj" + BaseIndexGenerator.DELIMITER + "cat",
@@ -250,16 +243,15 @@ class DependencyIndexGeneratorTest extends BaseIndexTest {
         }
 
         // Generate index
-        Path indexPath = tempDir.resolve("null-test");
         try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
-                indexPath.toString(), stopwordsPath.toString(), 
-                10, sqliteConn)) {
+                levelDbPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn, new ProgressTracker())) {
             generator.generateIndex();
         }
 
         // Verify index contents
         Options options = new Options();
-        try (DB db = factory.open(indexPath.toFile(), options)) {
+        try (DB db = factory.open(levelDbPath.toFile(), options)) {
             // Check that entries with null values are not indexed
             String[] nullKeys = {
                 "null" + BaseIndexGenerator.DELIMITER + "nsubj" + BaseIndexGenerator.DELIMITER + "cat",
@@ -278,7 +270,7 @@ class DependencyIndexGeneratorTest extends BaseIndexTest {
     void testKeyGenerationConsistency() throws IOException {
         try (DependencyIndexGenerator generator = new DependencyIndexGenerator(
                 levelDbPath.toString(), stopwordsPath.toString(), 
-                10, sqliteConn)) {
+                10, sqliteConn, new ProgressTracker())) {
             
             // Test various input formats
             DependencyEntry[] entries = {

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.*;
 import org.iq80.leveldb.*;
 import static org.iq80.leveldb.impl.Iq80DBFactory.*;
+import com.example.logging.ProgressTracker;
 
 import java.io.*;
 import java.nio.file.*;
@@ -11,74 +12,204 @@ import java.sql.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-class ParallelIndexGeneratorTest {
-    private Path tempDir;
+class ParallelIndexGeneratorTest extends BaseIndexTest {
     private Path levelDbPath;
     private Path stopwordsPath;
     private Path sqlitePath;
     private Connection sqliteConn;
     
     @BeforeEach
+    @Override
     void setUp() throws Exception {
-        // Create temporary directories and files
-        tempDir = Files.createTempDirectory("index-test-");
+        super.setUp();
         levelDbPath = tempDir.resolve("test-index");
         stopwordsPath = tempDir.resolve("stopwords.txt");
         sqlitePath = tempDir.resolve("test.db");
+        
+        // Initialize SQLite database
+        sqliteConn = DriverManager.getConnection("jdbc:sqlite:" + sqlitePath);
+        try (Statement stmt = sqliteConn.createStatement()) {
+            // Create tables
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS documents (
+                    document_id INTEGER PRIMARY KEY,
+                    timestamp TEXT NOT NULL
+                )
+            """);
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS annotations (
+                    annotation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id INTEGER NOT NULL,
+                    sentence_id INTEGER NOT NULL,
+                    lemma TEXT NOT NULL,
+                    pos TEXT NOT NULL,
+                    begin_char INTEGER NOT NULL,
+                    end_char INTEGER NOT NULL,
+                    FOREIGN KEY (document_id) REFERENCES documents(document_id)
+                )
+            """);
+        }
         
         // Create stopwords file
         List<String> stopwords = Arrays.asList("the", "a", "an");
         Files.write(stopwordsPath, stopwords);
         
-        // Create and populate SQLite database
-        sqliteConn = DriverManager.getConnection("jdbc:sqlite:" + sqlitePath);
-        setupDatabase();
+        // Insert test data
+        setupTestData();
     }
     
     @AfterEach
+    @Override
     void tearDown() throws Exception {
         if (sqliteConn != null) {
             sqliteConn.close();
         }
-        
-        // Clean up temporary files
-        Files.walk(tempDir)
-             .sorted(Comparator.reverseOrder())
-             .forEach(path -> {
-                 try {
-                     Files.delete(path);
-                 } catch (IOException e) {
-                     e.printStackTrace();
-                 }
-             });
+        super.tearDown();
     }
     
-    private void setupDatabase() throws SQLException {
+    private void setupTestData() throws SQLException {
         try (Statement stmt = sqliteConn.createStatement()) {
-            // Create tables
-            stmt.execute("""
-                CREATE TABLE documents (
-                    document_id INTEGER PRIMARY KEY,
-                    timestamp TEXT NOT NULL
-                )
-            """);
+            // Insert test data
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (1, '2024-01-20T10:00:00Z')");
+            stmt.execute("INSERT INTO documents (document_id, timestamp) VALUES (2, '2024-01-21T10:00:00Z')");
             
-            stmt.execute("""
-                CREATE TABLE annotations (
-                    document_id INTEGER,
-                    sentence_id INTEGER,
-                    begin_char INTEGER,
-                    end_char INTEGER,
-                    lemma TEXT,
-                    pos TEXT,
-                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
-                )
-            """);
+            // Insert test annotations with repeated words and phrases
+            // Document 1: "quick brown fox jumps over lazy dog"
+            // Document 2: "quick brown fox runs past quick brown rabbit"
+            String[][] words = {
+                // Document 1
+                {"quick", "ADJ", "1", "1", "0", "5"},
+                {"brown", "ADJ", "1", "1", "6", "11"},
+                {"fox", "NOUN", "1", "1", "12", "15"},
+                {"jumps", "VERB", "1", "1", "16", "21"},
+                {"over", "ADP", "1", "1", "22", "26"},
+                {"lazy", "ADJ", "1", "1", "27", "31"},
+                {"dog", "NOUN", "1", "1", "32", "35"},
+                // Document 2
+                {"quick", "ADJ", "2", "1", "0", "5"},
+                {"brown", "ADJ", "2", "1", "6", "11"},
+                {"fox", "NOUN", "2", "1", "12", "15"},
+                {"runs", "VERB", "2", "1", "16", "20"},
+                {"past", "ADP", "2", "1", "21", "25"},
+                {"quick", "ADJ", "2", "1", "26", "31"},
+                {"brown", "ADJ", "2", "1", "32", "37"},
+                {"rabbit", "NOUN", "2", "1", "38", "44"}
+            };
+            
+            for (String[] word : words) {
+                stmt.execute(String.format(
+                    "INSERT INTO annotations (lemma, pos, document_id, sentence_id, begin_char, end_char) " +
+                    "VALUES ('%s', '%s', %s, %s, %s, %s)",
+                    word[0], word[1], word[2], word[3], word[4], word[5]
+                ));
+            }
+        }
+    }
+    
+    private void clearDatabase() throws SQLException {
+        try (Statement stmt = sqliteConn.createStatement()) {
+            stmt.execute("DELETE FROM annotations");
+            stmt.execute("DELETE FROM documents");
+        }
+    }
+    
+    @Test
+    void testParallelIndexGeneration() throws Exception {
+        try (UnigramIndexGenerator generator = new UnigramIndexGenerator(
+                levelDbPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn, new ProgressTracker())) {
+            generator.generateIndex();
+        }
+        
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(levelDbPath.toFile(), options)) {
+            // Check some expected unigrams
+            assertNotNull(db.get(bytes("quick")), "quick should be indexed");
+            assertNotNull(db.get(bytes("fox")), "fox should be indexed");
+            assertNotNull(db.get(bytes("dog")), "dog should be indexed");
+            
+            // Verify a specific position
+            PositionList quickPositions = PositionList.deserialize(db.get(bytes("quick")));
+            assertEquals(3, quickPositions.size(), "quick should appear three times");
+            
+            Position pos = quickPositions.getPositions().get(0);
+            assertEquals(1, pos.getDocumentId());
+            assertEquals(1, pos.getSentenceId());
+            assertEquals(0, pos.getBeginPosition());
+            assertEquals(5, pos.getEndPosition());
+        }
+    }
+    
+    @Test
+    void testParallelBigramIndexGeneration() throws Exception {
+        Path indexPath = tempDir.resolve("bigram");
+        
+        try (BigramIndexGenerator generator = new BigramIndexGenerator(
+                indexPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn, new ProgressTracker())) {
+            generator.generateIndex();
+        }
+        
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(indexPath.toFile(), options)) {
+            // Check some expected bigrams
+            String quickBrown = "quick" + BaseIndexGenerator.DELIMITER + "brown";
+            String brownFox = "brown" + BaseIndexGenerator.DELIMITER + "fox";
+            
+            assertNotNull(db.get(bytes(quickBrown)), "quick brown should be indexed");
+            assertNotNull(db.get(bytes(brownFox)), "brown fox should be indexed");
+            
+            // Verify a specific position
+            PositionList quickBrownPositions = PositionList.deserialize(db.get(bytes(quickBrown)));
+            assertEquals(3, quickBrownPositions.size(), "quick brown should appear three times");
+            
+            Position pos = quickBrownPositions.getPositions().get(0);
+            assertEquals(1, pos.getDocumentId());
+            assertEquals(1, pos.getSentenceId());
+            assertEquals(0, pos.getBeginPosition());
+            assertTrue(pos.getEndPosition() > pos.getBeginPosition(), "end char should be after begin char");
+        }
+    }
+    
+    @Test
+    void testParallelTrigramIndexGeneration() throws Exception {
+        Path indexPath = tempDir.resolve("trigram");
+        
+        try (TrigramIndexGenerator generator = new TrigramIndexGenerator(
+                indexPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn, new ProgressTracker())) {
+            generator.generateIndex();
+        }
+        
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(indexPath.toFile(), options)) {
+            // Check some expected trigrams
+            String quickBrownFox = "quick" + BaseIndexGenerator.DELIMITER + "brown" + 
+                                 BaseIndexGenerator.DELIMITER + "fox";
+            String brownFoxJumps = "brown" + BaseIndexGenerator.DELIMITER + "fox" + 
+                                 BaseIndexGenerator.DELIMITER + "jumps";
+            
+            assertNotNull(db.get(bytes(quickBrownFox)), "quick brown fox should be indexed");
+            assertNotNull(db.get(bytes(brownFoxJumps)), "brown fox jumps should be indexed");
+            
+            // Verify a specific position
+            PositionList quickBrownFoxPositions = PositionList.deserialize(db.get(bytes(quickBrownFox)));
+            assertEquals(2, quickBrownFoxPositions.size(), "quick brown fox should appear twice");
+            
+            Position pos = quickBrownFoxPositions.getPositions().get(0);
+            assertEquals(1, pos.getDocumentId());
+            assertEquals(1, pos.getSentenceId());
+            assertEquals(0, pos.getBeginPosition());
+            assertTrue(pos.getEndPosition() > pos.getBeginPosition(), "end char should be after begin char");
         }
     }
 
     @Test
     void testCrossDocumentAndSentenceBoundaries() throws Exception {
+        clearDatabase();
         // Setup test data with multiple documents and sentences
         setupMultiDocumentDatabase(new String[][] {
             // doc1
@@ -89,7 +220,7 @@ class ParallelIndexGeneratorTest {
         
         try (TrigramIndexGenerator generator = new TrigramIndexGenerator(
                 levelDbPath.toString(), stopwordsPath.toString(),
-                10, sqliteConn, 2)) {
+                10, sqliteConn, new ProgressTracker())) {
             generator.generateIndex();
         }
         
@@ -110,6 +241,7 @@ class ParallelIndexGeneratorTest {
 
     @Test
     void testConcurrentProcessing() throws Exception {
+        clearDatabase();
         // Create a large enough dataset to test parallel processing
         setupLargeDatabase(10000);
         
@@ -121,7 +253,7 @@ class ParallelIndexGeneratorTest {
                 stopwordsPath.toString(),
                 1000, // larger batch size
                 sqliteConn,
-                1)) {
+                new ProgressTracker())) {
             singleThread.generateIndex();
         }
         
@@ -131,7 +263,7 @@ class ParallelIndexGeneratorTest {
                 stopwordsPath.toString(),
                 1000, // larger batch size
                 sqliteConn,
-                Runtime.getRuntime().availableProcessors())) {
+                new ProgressTracker())) {
             multiThread.generateIndex();
         }
         
@@ -141,6 +273,7 @@ class ParallelIndexGeneratorTest {
 
     @Test
     void testMemoryUsage() throws Exception {
+        clearDatabase();
         // Create a very large dataset to test memory handling
         setupLargeDatabase(10000); // 10K entries (reduced from 100K for test speed)
         
@@ -157,7 +290,7 @@ class ParallelIndexGeneratorTest {
                 stopwordsPath.toString(),
                 1000, // larger batch size
                 sqliteConn,
-                4)) {
+                new ProgressTracker())) {
             generator.generateIndex();
         }
         
@@ -185,7 +318,7 @@ class ParallelIndexGeneratorTest {
                     stopwordsPath.toString(),
                     10,
                     sqliteConn,
-                    2)) {
+                    new ProgressTracker())) {
                 generator.processBatch(entries);
             }
         });
@@ -203,7 +336,7 @@ class ParallelIndexGeneratorTest {
                     stopwordsPath.toString(),
                     10,
                     invalidConn,
-                    2)) {
+                    new ProgressTracker())) {
                 invalidConn.close(); // Close connection to simulate failure
                 generator.generateIndex();
             }
@@ -212,6 +345,7 @@ class ParallelIndexGeneratorTest {
 
     @Test
     void testNoOverlappingEntriesBetweenPartitions() throws Exception {
+        clearDatabase();
         // Setup test data with multiple documents
         setupMultiDocumentDatabase(new String[][] {
             {"doc one sentence one", "doc one sentence two"},
@@ -225,8 +359,7 @@ class ParallelIndexGeneratorTest {
                 stopwordsPath.toString(),
                 10,
                 sqliteConn,
-                2  // Use 2 threads to force multiple partitions
-        )) {
+                new ProgressTracker())) {
             List<AnnotationEntry> entries = generator.fetchBatch(0);
             List<List<AnnotationEntry>> partitions = generator.partitionEntries(entries);
             
@@ -245,6 +378,7 @@ class ParallelIndexGeneratorTest {
 
     @Test
     void testDocumentCompleteness() throws Exception {
+        clearDatabase();
         // Setup test data with multiple documents
         setupMultiDocumentDatabase(new String[][] {
             {"first doc sentence one", "first doc sentence two", "first doc sentence three"},
@@ -257,8 +391,7 @@ class ParallelIndexGeneratorTest {
                 stopwordsPath.toString(),
                 10,
                 sqliteConn,
-                2  // Use 2 threads to force multiple partitions
-        )) {
+                new ProgressTracker())) {
             List<AnnotationEntry> entries = generator.fetchBatch(0);
             List<List<AnnotationEntry>> partitions = generator.partitionEntries(entries);
             
@@ -271,6 +404,7 @@ class ParallelIndexGeneratorTest {
 
     @Test
     void testPartitionDistribution() throws Exception {
+        clearDatabase();
         // Setup test data with many documents of varying sizes
         setupMultiDocumentDatabase(new String[][] {
             {"doc1 single sentence"},
@@ -286,8 +420,7 @@ class ParallelIndexGeneratorTest {
                 stopwordsPath.toString(),
                 10,
                 sqliteConn,
-                3  // Use 3 threads to test distribution
-        )) {
+                new ProgressTracker())) {
             List<AnnotationEntry> entries = generator.fetchBatch(0);
             List<List<AnnotationEntry>> partitions = generator.partitionEntries(entries);
             
@@ -298,14 +431,14 @@ class ParallelIndexGeneratorTest {
 
     @Test
     void testEdgeCases() throws Exception {
+        clearDatabase();
         // Test empty input
         try (UnigramIndexGenerator generator = new UnigramIndexGenerator(
                 tempDir.resolve("edge-case-test").toString(), 
                 stopwordsPath.toString(),
                 10,
                 sqliteConn,
-                2
-        )) {
+                new ProgressTracker())) {
             List<List<AnnotationEntry>> emptyPartitions = generator.partitionEntries(new ArrayList<>());
             assertTrue(emptyPartitions.isEmpty(), "Empty input should result in empty partitions");
             

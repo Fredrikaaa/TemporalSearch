@@ -4,7 +4,6 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -14,6 +13,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import com.example.logging.ProgressTracker;
 
 /**
  * Generates indexes for date entities from annotated text.
@@ -31,8 +31,9 @@ public class NerDateIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
     }
 
     public NerDateIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn, int threadCount) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", threadCount);
+            int batchSize, Connection sqliteConn, ProgressTracker progress) throws IOException {
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", 
+              Runtime.getRuntime().availableProcessors(), progress);
     }
 
     @Override

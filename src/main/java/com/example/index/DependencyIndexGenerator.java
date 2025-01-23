@@ -12,6 +12,7 @@ import java.util.*;
 import java.io.IOException;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import com.example.logging.ProgressTracker;
 
 /**
  * Generates a dependency index from dependency relation entries.
@@ -30,8 +31,9 @@ public final class DependencyIndexGenerator extends BaseIndexGenerator<Dependenc
     }
 
     public DependencyIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn, int threadCount) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "dependencies", threadCount);
+            int batchSize, Connection sqliteConn, ProgressTracker progress) throws IOException {
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "dependencies", 
+              Runtime.getRuntime().availableProcessors(), progress);
     }
 
     @Override

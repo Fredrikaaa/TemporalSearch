@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import com.example.logging.ProgressTracker;
 
 /**
  * Generates a unigram index from annotation entries.
@@ -26,8 +27,9 @@ public final class UnigramIndexGenerator extends BaseIndexGenerator<AnnotationEn
     }
 
     public UnigramIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn, int threadCount) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", threadCount);
+            int batchSize, Connection sqliteConn, ProgressTracker progress) throws IOException {
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", 
+              Runtime.getRuntime().availableProcessors(), progress);
     }
 
     @Override

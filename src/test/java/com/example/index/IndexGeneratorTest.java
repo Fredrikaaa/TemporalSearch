@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.*;
 import org.iq80.leveldb.*;
 import static org.iq80.leveldb.impl.Iq80DBFactory.*;
+import com.example.logging.ProgressTracker;
 
 import java.nio.file.*;
 import java.sql.*;
@@ -71,33 +72,29 @@ class IndexGeneratorTest extends BaseIndexTest {
     @Test
     void testUnigramIndexGeneration() throws Exception {
         // Test with different thread counts
-        int[] threadCounts = {1, 2, 4};
+        try (UnigramIndexGenerator generator = new UnigramIndexGenerator(
+                levelDbPath.toString(), stopwordsPath.toString(), 
+                10, sqliteConn, new ProgressTracker())) {
+            generator.generateIndex();
+        }
         
-        for (int threadCount : threadCounts) {
-            try (UnigramIndexGenerator generator = new UnigramIndexGenerator(
-                    levelDbPath.toString(), stopwordsPath.toString(), 
-                    10, sqliteConn, threadCount)) {
-                generator.generateIndex();
-            }
+        // Verify index contents
+        Options options = new Options();
+        try (DB db = factory.open(levelDbPath.toFile(), options)) {
+            // Check some expected unigrams
+            assertNotNull(db.get(bytes("quick")), "quick should be indexed");
+            assertNotNull(db.get(bytes("fox")), "fox should be indexed");
+            assertNotNull(db.get(bytes("dog")), "dog should be indexed");
             
-            // Verify index contents
-            Options options = new Options();
-            try (DB db = factory.open(levelDbPath.toFile(), options)) {
-                // Check some expected unigrams
-                assertNotNull(db.get(bytes("quick")), "quick should be indexed");
-                assertNotNull(db.get(bytes("fox")), "fox should be indexed");
-                assertNotNull(db.get(bytes("dog")), "dog should be indexed");
-                
-                // Verify a specific position
-                PositionList quickPositions = PositionList.deserialize(db.get(bytes("quick")));
-                assertEquals(3, quickPositions.size(), "quick should appear three times");
-                
-                Position pos = quickPositions.getPositions().get(0);
-                assertEquals(1, pos.getDocumentId());
-                assertEquals(1, pos.getSentenceId());
-                assertEquals(0, pos.getBeginPosition());
-                assertEquals(5, pos.getEndPosition());
-            }
+            // Verify a specific position
+            PositionList quickPositions = PositionList.deserialize(db.get(bytes("quick")));
+            assertEquals(3, quickPositions.size(), "quick should appear three times");
+            
+            Position pos = quickPositions.getPositions().get(0);
+            assertEquals(1, pos.getDocumentId());
+            assertEquals(1, pos.getSentenceId());
+            assertEquals(0, pos.getBeginPosition());
+            assertEquals(5, pos.getEndPosition());
         }
     }
     
@@ -107,7 +104,7 @@ class IndexGeneratorTest extends BaseIndexTest {
         
         try (BigramIndexGenerator generator = new BigramIndexGenerator(
                 indexPath.toString(), stopwordsPath.toString(), 
-                10, sqliteConn, 2)) {
+                10, sqliteConn, new ProgressTracker())) {
             generator.generateIndex();
         }
         
@@ -139,7 +136,7 @@ class IndexGeneratorTest extends BaseIndexTest {
         
         try (TrigramIndexGenerator generator = new TrigramIndexGenerator(
                 indexPath.toString(), stopwordsPath.toString(), 
-                10, sqliteConn, 2)) {
+                10, sqliteConn, new ProgressTracker())) {
             generator.generateIndex();
         }
         

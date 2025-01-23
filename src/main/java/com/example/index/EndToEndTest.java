@@ -2,6 +2,7 @@ package com.example.index;
 
 import org.iq80.leveldb.*;
 import static org.iq80.leveldb.impl.Iq80DBFactory.*;
+import com.example.logging.ProgressTracker;
 
 import java.io.*;
 import java.nio.file.*;
@@ -35,7 +36,7 @@ public class EndToEndTest {
                     stopwordsPath.toString(),
                     1000, // batch size
                     conn,
-                    Runtime.getRuntime().availableProcessors())) {
+                    new ProgressTracker())) {
                 generator.generateIndex();
             }
             

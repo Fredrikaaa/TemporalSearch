@@ -44,6 +44,23 @@ public class ProgressTracker implements AutoCloseable {
             .build();
     }
 
+    public void updateOverallMessage(String message) {
+        if (!isEnabled) return;
+        if (overallProgress != null) {
+            long current = overallProgress.getCurrent();
+            long max = overallProgress.getMax();
+            overallProgress.close();
+            overallProgress = new ProgressBarBuilder()
+                .setTaskName(message)
+                .setInitialMax(max)
+                .setStyle(ProgressBarStyle.ASCII)
+                .setUpdateIntervalMillis(100)
+                .showSpeed()
+                .build();
+            overallProgress.stepTo(current);
+        }
+    }
+
     public void startIndex(String indexType, long total) {
         if (!isEnabled) return;
         if (currentIndexProgress != null) {

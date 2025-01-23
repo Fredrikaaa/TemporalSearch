@@ -9,6 +9,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.*;
+import com.example.logging.ProgressTracker;
 
 /**
  * Generates trigram indexes from annotated text.
@@ -56,8 +57,9 @@ public class TrigramIndexGenerator extends BaseIndexGenerator<TrigramIndexGenera
     }
 
     public TrigramIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn, int threadCount) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", threadCount);
+            int batchSize, Connection sqliteConn, ProgressTracker progress) throws IOException {
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", 
+              Runtime.getRuntime().availableProcessors(), progress);
     }
 
     @Override

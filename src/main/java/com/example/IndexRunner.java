@@ -94,15 +94,16 @@ public class IndexRunner {
             }
             
             int currentStep = 0;
-            progress.startOverall("Generating indexes", (long)totalSteps);
+            progress.startOverall("Generating indexes (Stage 0/6: Starting)", (long)totalSteps);
 
             if (indexType.equals("all") || indexType.equals("unigram")) {
                 currentStep++;
                 logger.info("Step {}/{}: Starting unigram index generation", currentStep, totalSteps);
                 String unigramDir = indexDir + "/unigram";
+                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: Unigram)", currentStep, totalSteps));
                 
                 try (UnigramIndexGenerator indexer = new UnigramIndexGenerator(
-                        unigramDir, stopwordsPath, batchSize, conn)) {
+                        unigramDir, stopwordsPath, batchSize, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -116,9 +117,10 @@ public class IndexRunner {
                 currentStep++;
                 logger.info("Step {}/{}: Starting bigram index generation", currentStep, totalSteps);
                 String bigramDir = indexDir + "/bigram";
+                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: Bigram)", currentStep, totalSteps));
                 
                 try (BigramIndexGenerator indexer = new BigramIndexGenerator(
-                        bigramDir, stopwordsPath, batchSize, conn)) {
+                        bigramDir, stopwordsPath, batchSize, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -132,9 +134,10 @@ public class IndexRunner {
                 currentStep++;
                 logger.info("Step {}/{}: Starting trigram index generation", currentStep, totalSteps);
                 String trigramDir = indexDir + "/trigram";
+                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: Trigram)", currentStep, totalSteps));
                 
                 try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                        trigramDir, stopwordsPath, batchSize, conn)) {
+                        trigramDir, stopwordsPath, batchSize, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -148,9 +151,10 @@ public class IndexRunner {
                 currentStep++;
                 logger.info("Step {}/{}: Starting dependency index generation", currentStep, totalSteps);
                 String dependencyDir = indexDir + "/dependency";
+                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: Dependency)", currentStep, totalSteps));
                 
                 try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
-                        dependencyDir, stopwordsPath, batchSize, conn)) {
+                        dependencyDir, stopwordsPath, batchSize, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -164,9 +168,10 @@ public class IndexRunner {
                 currentStep++;
                 logger.info("Step {}/{}: Starting NER date index generation", currentStep, totalSteps);
                 String nerDateDir = indexDir + "/ner_date";
+                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: NER Date)", currentStep, totalSteps));
                 
                 try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
-                        nerDateDir, stopwordsPath, batchSize, conn)) {
+                        nerDateDir, stopwordsPath, batchSize, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -180,9 +185,10 @@ public class IndexRunner {
                 currentStep++;
                 logger.info("Step {}/{}: Starting POS index generation", currentStep, totalSteps);
                 String posDir = indexDir + "/pos";
+                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: POS)", currentStep, totalSteps));
                 
                 try (POSIndexGenerator indexer = new POSIndexGenerator(
-                        posDir, stopwordsPath, batchSize, conn)) {
+                        posDir, stopwordsPath, batchSize, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;

@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.example.logging.ProgressTracker;
 
 /**
  * Generates indexes for part-of-speech tags from annotated text.
@@ -60,8 +61,9 @@ public class POSIndexGenerator extends BaseIndexGenerator<POSIndexGenerator.POSE
     }
 
     public POSIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn, int threadCount) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", threadCount);
+            int batchSize, Connection sqliteConn, ProgressTracker progress) throws IOException {
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", 
+              Runtime.getRuntime().availableProcessors(), progress);
     }
 
     @Override

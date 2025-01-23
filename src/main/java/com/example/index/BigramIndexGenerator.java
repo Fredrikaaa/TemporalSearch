@@ -10,6 +10,7 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.ZonedDateTime;
 import java.util.*;
+import com.example.logging.ProgressTracker;
 
 /**
  * Generates bigram indexes from annotated text.
@@ -23,8 +24,9 @@ public class BigramIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
     }
 
     public BigramIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn, int threadCount) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", threadCount);
+            int batchSize, Connection sqliteConn, ProgressTracker progress) throws IOException {
+        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", 
+              Runtime.getRuntime().availableProcessors(), progress);
     }
 
     @Override

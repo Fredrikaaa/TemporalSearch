@@ -43,11 +43,16 @@ public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCl
     protected BaseIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn, String tableName) throws IOException {
         this(levelDbPath, stopwordsPath, batchSize, sqliteConn, tableName, 
-             Runtime.getRuntime().availableProcessors());
+             Runtime.getRuntime().availableProcessors(), new ProgressTracker());
     }
 
     protected BaseIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn, String tableName, int threadCount) throws IOException {
+        this(levelDbPath, stopwordsPath, batchSize, sqliteConn, tableName, threadCount, new ProgressTracker());
+    }
+
+    protected BaseIndexGenerator(String levelDbPath, String stopwordsPath,
+            int batchSize, Connection sqliteConn, String tableName, int threadCount, ProgressTracker progress) throws IOException {
         Options options = new Options();
         options.createIfMissing(true);
         options.writeBufferSize(64 * 1024 * 1024); // 64MB write buffer
@@ -61,7 +66,7 @@ public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCl
         this.threadCount = Math.max(1, threadCount);
         this.executorService = Executors.newFixedThreadPool(this.threadCount);
         this.tempDir = Files.createTempDirectory("index-");
-        this.progress = new ProgressTracker();
+        this.progress = progress;
         this.levelDbPath = levelDbPath;
         
         // Ensure temp directory cleanup on JVM shutdown
@@ -363,29 +368,30 @@ public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCl
      */
     public void generateIndex() throws SQLException, IOException {
         // Count total entries
-            try (Statement stmt = sqliteConn.createStatement()) {
+        try (Statement stmt = sqliteConn.createStatement()) {
             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM " + tableName);
-                if (rs.next()) {
+            if (rs.next()) {
                 totalEntries = rs.getLong(1);
             }
-            }
+        }
 
         // Process entries in batches
         int offset = 0;
-            progress.startIndex(tableName, totalEntries);
+        String indexType = getClass().getSimpleName().replace("IndexGenerator", "").toLowerCase();
+        progress.startIndex("Generating " + indexType + " index", totalEntries);
 
-            while (true) {
+        while (true) {
             List<T> entries = fetchBatch(offset);
             if (entries.isEmpty()) {
-                    break;
-                }
-                
+                break;
+            }
+            
             processBatch(entries);
             offset += entries.size();
             progress.updateIndex(entries.size());
-            }
+        }
 
-            progress.completeIndex();
+        progress.completeIndex();
     }
 
     /**
