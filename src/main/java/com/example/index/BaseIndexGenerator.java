@@ -378,7 +378,7 @@ public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCl
         // Process entries in batches
         int offset = 0;
         String indexType = getClass().getSimpleName().replace("IndexGenerator", "").toLowerCase();
-        progress.startIndex("Generating " + indexType + " index", totalEntries);
+        progress.startIndex("entries", totalEntries);
 
         while (true) {
             List<T> entries = fetchBatch(offset);

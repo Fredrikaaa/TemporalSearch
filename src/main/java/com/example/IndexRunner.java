@@ -94,13 +94,12 @@ public class IndexRunner {
             }
             
             int currentStep = 0;
-            progress.startOverall("Generating indexes (Stage 0/6: Starting)", (long)totalSteps);
 
             if (indexType.equals("all") || indexType.equals("unigram")) {
                 currentStep++;
                 logger.info("Step {}/{}: Starting unigram index generation", currentStep, totalSteps);
                 String unigramDir = indexDir + "/unigram";
-                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: Unigram)", currentStep, totalSteps));
+                System.out.printf("Stage %d/%d: Unigram%n", currentStep, totalSteps);
                 
                 try (UnigramIndexGenerator indexer = new UnigramIndexGenerator(
                         unigramDir, stopwordsPath, batchSize, conn, progress)) {
@@ -110,14 +109,13 @@ public class IndexRunner {
                     
                     metrics.recordProcessingTime(stepDuration);
                 }
-                progress.updateOverall(1);
             }
 
             if (indexType.equals("all") || indexType.equals("bigram")) {
                 currentStep++;
                 logger.info("Step {}/{}: Starting bigram index generation", currentStep, totalSteps);
                 String bigramDir = indexDir + "/bigram";
-                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: Bigram)", currentStep, totalSteps));
+                System.out.printf("Stage %d/%d: Bigram%n", currentStep, totalSteps);
                 
                 try (BigramIndexGenerator indexer = new BigramIndexGenerator(
                         bigramDir, stopwordsPath, batchSize, conn, progress)) {
@@ -127,14 +125,13 @@ public class IndexRunner {
                     
                     metrics.recordProcessingTime(stepDuration);
                 }
-                progress.updateOverall(1);
             }
 
             if (indexType.equals("all") || indexType.equals("trigram")) {
                 currentStep++;
                 logger.info("Step {}/{}: Starting trigram index generation", currentStep, totalSteps);
                 String trigramDir = indexDir + "/trigram";
-                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: Trigram)", currentStep, totalSteps));
+                System.out.printf("Stage %d/%d: Trigram%n", currentStep, totalSteps);
                 
                 try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
                         trigramDir, stopwordsPath, batchSize, conn, progress)) {
@@ -144,14 +141,13 @@ public class IndexRunner {
                     
                     metrics.recordProcessingTime(stepDuration);
                 }
-                progress.updateOverall(1);
             }
 
             if (indexType.equals("all") || indexType.equals("dependency")) {
                 currentStep++;
                 logger.info("Step {}/{}: Starting dependency index generation", currentStep, totalSteps);
                 String dependencyDir = indexDir + "/dependency";
-                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: Dependency)", currentStep, totalSteps));
+                System.out.printf("Stage %d/%d: Dependency%n", currentStep, totalSteps);
                 
                 try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
                         dependencyDir, stopwordsPath, batchSize, conn, progress)) {
@@ -161,14 +157,13 @@ public class IndexRunner {
                     
                     metrics.recordProcessingTime(stepDuration);
                 }
-                progress.updateOverall(1);
             }
 
             if (indexType.equals("all") || indexType.equals("ner_date")) {
                 currentStep++;
                 logger.info("Step {}/{}: Starting NER date index generation", currentStep, totalSteps);
                 String nerDateDir = indexDir + "/ner_date";
-                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: NER Date)", currentStep, totalSteps));
+                System.out.printf("Stage %d/%d: NER Date%n", currentStep, totalSteps);
                 
                 try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
                         nerDateDir, stopwordsPath, batchSize, conn, progress)) {
@@ -178,14 +173,13 @@ public class IndexRunner {
                     
                     metrics.recordProcessingTime(stepDuration);
                 }
-                progress.updateOverall(1);
             }
 
             if (indexType.equals("all") || indexType.equals("pos")) {
                 currentStep++;
                 logger.info("Step {}/{}: Starting POS index generation", currentStep, totalSteps);
                 String posDir = indexDir + "/pos";
-                progress.updateOverallMessage(String.format("Generating indexes (Stage %d/%d: POS)", currentStep, totalSteps));
+                System.out.printf("Stage %d/%d: POS%n", currentStep, totalSteps);
                 
                 try (POSIndexGenerator indexer = new POSIndexGenerator(
                         posDir, stopwordsPath, batchSize, conn, progress)) {
@@ -195,10 +189,8 @@ public class IndexRunner {
                     
                     metrics.recordProcessingTime(stepDuration);
                 }
-                progress.updateOverall(1);
             }
 
-            progress.completeOverall();
             logger.info("Index generation completed");
             metrics.logMetrics(logger, "indexing_complete");
         }

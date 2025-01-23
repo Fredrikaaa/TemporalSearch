@@ -44,6 +44,14 @@ public class ProgressTracker implements AutoCloseable {
             .build();
     }
 
+    public void stepTo(long n) {
+        if (!isEnabled) return;
+        if (overallProgress != null) {
+            overallProgress.stepTo(n);
+            overallCount.set(n);
+        }
+    }
+
     public void updateOverallMessage(String message) {
         if (!isEnabled) return;
         if (overallProgress != null) {
@@ -68,7 +76,7 @@ public class ProgressTracker implements AutoCloseable {
         }
         indexCount.set(0);
         currentIndexProgress = new ProgressBarBuilder()
-            .setTaskName("Generating " + indexType + " index")
+            .setTaskName("Indexing " + indexType)
             .setInitialMax(total)
             .setStyle(ProgressBarStyle.ASCII)
             .setUpdateIntervalMillis(100)
@@ -82,13 +90,14 @@ public class ProgressTracker implements AutoCloseable {
             batchProgress.close();
         }
         batchCount.set(0);
-        batchProgress = new ProgressBarBuilder()
-            .setTaskName("Processing batch")
-            .setInitialMax(total)
-            .setStyle(ProgressBarStyle.ASCII)
-            .setUpdateIntervalMillis(100)
-            .showSpeed()
-            .build();
+        // We don't need batch progress bars for now as they add too much noise
+        // batchProgress = new ProgressBarBuilder()
+        //     .setTaskName("Processing batch")
+        //     .setInitialMax(total)
+        //     .setStyle(ProgressBarStyle.ASCII)
+        //     .setUpdateIntervalMillis(100)
+        //     .showSpeed()
+        //     .build();
     }
 
     public void updateOverall(long step) {

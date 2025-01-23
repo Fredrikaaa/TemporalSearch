@@ -4,11 +4,10 @@ import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
 import java.io.IOException;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDate;
-import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -35,48 +34,33 @@ public final class UnigramIndexGenerator extends BaseIndexGenerator<AnnotationEn
     @Override
     protected List<AnnotationEntry> fetchBatch(int offset) throws SQLException {
         List<AnnotationEntry> entries = new ArrayList<>();
-        try (Statement stmt = sqliteConn.createStatement()) {
-            // First get document timestamps
-            Map<Integer, LocalDate> documentDates = new HashMap<>();
-            try (ResultSet rs = stmt.executeQuery("SELECT document_id, timestamp FROM documents")) {
+        String sql = "SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char, a.lemma, a.pos, d.timestamp " +
+                    "FROM annotations a " +
+                    "JOIN documents d ON a.document_id = d.document_id " +
+                    "WHERE a.lemma IS NOT NULL " +
+                    "ORDER BY a.document_id, a.sentence_id, a.begin_char LIMIT ? OFFSET ?";
+                    
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(sql)) {
+            stmt.setInt(1, batchSize);
+            stmt.setInt(2, offset);
+            
+            try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
-                    documentDates.put(
+                    String lemma = sanitizeText(rs.getString("lemma"));
+                    if (lemma == null || lemma.isEmpty()) {
+                        continue;
+                    }
+                    
+                    entries.add(new AnnotationEntry(
                         rs.getInt("document_id"),
-                        ZonedDateTime.parse(rs.getString("timestamp")).toLocalDate()
-                    );
+                        rs.getInt("sentence_id"),
+                        rs.getInt("begin_char"),
+                        rs.getInt("end_char"),
+                        lemma,
+                        sanitizeText(rs.getString("pos")),
+                        LocalDate.parse(rs.getString("timestamp").substring(0, 10))
+                    ));
                 }
-            }
-            
-            ResultSet rs = stmt.executeQuery(
-                String.format("SELECT * FROM annotations ORDER BY document_id, sentence_id, begin_char LIMIT %d OFFSET %d",
-                    batchSize, offset)
-            );
-            
-            while (rs.next()) {
-                int docId = rs.getInt("document_id");
-                LocalDate timestamp = documentDates.get(docId);
-                if (timestamp == null) {
-                    throw new SQLException("Document " + docId + " not found in documents table");
-                }
-
-                // Sanitize text fields before creating entry
-                String lemma = sanitizeText(rs.getString("lemma"));
-                String pos = sanitizeText(rs.getString("pos"));
-
-                // Skip if lemma is null or empty after sanitization
-                if (lemma == null || lemma.isEmpty()) {
-                    continue;
-                }
-                
-                entries.add(new AnnotationEntry(
-                    docId,
-                    rs.getInt("sentence_id"),
-                    rs.getInt("begin_char"),
-                    rs.getInt("end_char"),
-                    lemma,
-                    pos,
-                    timestamp
-                ));
             }
         }
         return entries;
@@ -88,13 +72,7 @@ public final class UnigramIndexGenerator extends BaseIndexGenerator<AnnotationEn
         Map<String, PositionList> positionLists = new HashMap<>();
         
         for (AnnotationEntry entry : partition) {
-            // Skip entries with null or empty lemmas
-            if (entry.getLemma() == null || entry.getLemma().trim().isEmpty()) {
-                continue;
-            }
-            
-            // Convert lemma to lowercase for consistency
-            String key = entry.getLemma().toLowerCase().trim();
+            String key = entry.getLemma().toLowerCase();
             
             // Skip stopwords
             if (isStopword(key)) {

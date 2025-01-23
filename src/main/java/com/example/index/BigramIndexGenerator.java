@@ -4,11 +4,10 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import java.io.IOException;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Statement;
 import java.sql.SQLException;
 import java.time.LocalDate;
-import java.time.ZonedDateTime;
 import java.util.*;
 import com.example.logging.ProgressTracker;
 
@@ -32,64 +31,26 @@ public class BigramIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
     @Override
     protected List<AnnotationEntry> fetchBatch(int offset) throws SQLException {
         List<AnnotationEntry> entries = new ArrayList<>();
-        try (Statement stmt = sqliteConn.createStatement()) {
-            // First get document timestamps
-            Map<Integer, LocalDate> documentDates = new HashMap<>();
-            try (ResultSet rs = stmt.executeQuery("SELECT document_id, timestamp FROM documents")) {
-                while (rs.next()) {
-                    documentDates.put(
-                        rs.getInt("document_id"),
-                        ZonedDateTime.parse(rs.getString("timestamp")).toLocalDate()
-                    );
-                }
-            }
-            
-            // Get consecutive words
-            String query = String.format("""
-                SELECT a1.*, a2.lemma as next_lemma, a2.begin_char as next_begin, a2.end_char as next_end
-                FROM annotations a1
-                LEFT JOIN annotations a2 ON a1.document_id = a2.document_id 
-                    AND a1.sentence_id = a2.sentence_id
-                    AND a2.begin_char > a1.end_char
-                    AND NOT EXISTS (
-                        SELECT 1 FROM annotations a3
-                        WHERE a3.document_id = a1.document_id
-                            AND a3.sentence_id = a1.sentence_id
-                            AND a3.begin_char > a1.end_char
-                            AND a3.begin_char < a2.begin_char
-                    )
-                ORDER BY a1.document_id, a1.sentence_id, a1.begin_char
-                LIMIT %d OFFSET %d
-                """, batchSize, offset);
-            
-            try (ResultSet rs = stmt.executeQuery(query)) {
-                while (rs.next()) {
-                    int docId = rs.getInt("document_id");
-                    LocalDate timestamp = documentDates.get(docId);
-                    if (timestamp == null) {
-                        throw new SQLException("Document " + docId + " not found in documents table");
-                    }
-
-                    // Sanitize text fields
-                    String firstWord = sanitizeText(rs.getString("lemma"));
-                    String secondWord = sanitizeText(rs.getString("next_lemma"));
+        String sql = "SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char, a.lemma, d.timestamp " +
+                    "FROM annotations a " +
+                    "JOIN documents d ON a.document_id = d.document_id " +
+                    "WHERE a.lemma IS NOT NULL " +
+                    "ORDER BY a.document_id, a.sentence_id, a.begin_char LIMIT ? OFFSET ?";
                     
-                    // Skip if either word is null or empty after sanitization
-                    if (firstWord == null || firstWord.isEmpty() ||
-                        secondWord == null || secondWord.isEmpty()) {
-                        continue;
-                    }
-                    
-                    // Create an entry for the bigram
-                    // We store both words in the lemma field, separated by a delimiter
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(sql)) {
+            stmt.setInt(1, batchSize);
+            stmt.setInt(2, offset);
+            
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
                     entries.add(new AnnotationEntry(
-                        docId,
+                        rs.getInt("document_id"),
                         rs.getInt("sentence_id"),
                         rs.getInt("begin_char"),
-                        rs.getInt("next_end"),
-                        firstWord + DELIMITER + secondWord,
-                        rs.getString("pos"), // Original POS tag of first word
-                        timestamp
+                        rs.getInt("end_char"),
+                        sanitizeText(rs.getString("lemma")),
+                        "", // POS tag not needed for bigrams
+                        LocalDate.parse(rs.getString("timestamp").substring(0, 10))
                     ));
                 }
             }
@@ -99,31 +60,41 @@ public class BigramIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
 
     @Override
     protected ListMultimap<String, PositionList> processPartition(List<AnnotationEntry> partition) throws IOException {
-        ListMultimap<String, PositionList> results = MultimapBuilder.hashKeys().arrayListValues().build();
+        ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
+        Map<String, PositionList> positionLists = new HashMap<>();
         
-        for (AnnotationEntry entry : partition) {
-            // Split the combined lemma to get both words
-            String[] words = entry.getLemma().split(DELIMITER);
-            if (words.length != 2) {
-                continue; // Skip malformed entries
+        for (int i = 0; i < partition.size() - 1; i++) {
+            AnnotationEntry entry = partition.get(i);
+            AnnotationEntry nextEntry = partition.get(i + 1);
+            
+            // Skip if either word is null
+            if (entry.getLemma() == null || nextEntry.getLemma() == null) {
+                continue;
             }
             
-            // Create key in format: firstWord\0secondWord
-            String key = words[0].toLowerCase() + DELIMITER + words[1].toLowerCase();
-            
-            // Create position list for this entry
-            PositionList positions = new PositionList();
-            positions.add(new Position(
-                entry.getDocumentId(),
-                entry.getSentenceId(),
-                entry.getBeginChar(),
-                entry.getEndChar(),
-                entry.getTimestamp()
-            ));
-            
-            results.put(key, positions);
+            // Check if entries are from the same document and sentence
+            if (entry.getDocumentId() == nextEntry.getDocumentId() && 
+                entry.getSentenceId() == nextEntry.getSentenceId()) {
+                
+                String key = String.format("%s%s%s", 
+                    entry.getLemma().toLowerCase(),
+                    BaseIndexGenerator.DELIMITER,
+                    nextEntry.getLemma().toLowerCase());
+
+                Position position = new Position(nextEntry.getDocumentId(), nextEntry.getSentenceId(),
+                    entry.getBeginChar(), nextEntry.getEndChar(), nextEntry.getTimestamp());
+
+                // Get or create position list for this bigram
+                PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
+                posList.add(position);
+            }
         }
         
-        return results;
+        // Add all position lists to result
+        for (Map.Entry<String, PositionList> entry : positionLists.entrySet()) {
+            index.put(entry.getKey(), entry.getValue());
+        }
+        
+        return index;
     }
 }
