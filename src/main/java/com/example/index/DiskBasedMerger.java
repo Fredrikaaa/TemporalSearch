@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import com.example.logging.ProgressTracker;
 
 /**
  * Handles merging of temporary index files using external merge sort.
@@ -24,6 +25,7 @@ public class DiskBasedMerger {
     private final int mergeFactor;
     private final long memoryBudget;
     private final MemoryMonitor memoryMonitor;
+    private final ProgressTracker progress;
     
     /**
      * Creates a new DiskBasedMerger with default settings.
@@ -46,6 +48,7 @@ public class DiskBasedMerger {
         this.mergeFactor = mergeFactor;
         this.memoryBudget = memoryBudget;
         this.memoryMonitor = new MemoryMonitor(0.75); // 75% threshold
+        this.progress = new ProgressTracker();
         
         if (!Files.exists(tempDir)) {
             try {
@@ -73,18 +76,18 @@ public class DiskBasedMerger {
         
         // Compress input files if they're not already compressed
         List<Path> compressedPaths = new ArrayList<>();
-        try (ProgressBar pb = new ProgressBar("Compressing files", inputPaths.size())) {
-            for (Path path : inputPaths) {
-                if (!path.toString().endsWith(".gz")) {
-                    Path compressedPath = tempDir.resolve(path.getFileName() + ".gz");
-                    CompressionUtils.compressFile(path, compressedPath);
-                    compressedPaths.add(compressedPath);
-                } else {
-                    compressedPaths.add(path);
-                }
-                pb.step();
+        progress.startBatch(inputPaths.size());
+        for (Path path : inputPaths) {
+            if (!path.toString().endsWith(".gz")) {
+                Path compressedPath = tempDir.resolve(path.getFileName() + ".gz");
+                CompressionUtils.compressFile(path, compressedPath);
+                compressedPaths.add(compressedPath);
+            } else {
+                compressedPaths.add(path);
             }
+            progress.updateBatch(1);
         }
+        progress.completeBatch();
         
         // Perform multi-pass merge if necessary
         List<Path> currentPaths = compressedPaths;
@@ -102,14 +105,14 @@ public class DiskBasedMerger {
         mergeFiles(currentPaths, outputPath);
         
         // Clean up temporary files
-        try (ProgressBar pb = new ProgressBar("Cleaning up", compressedPaths.size())) {
-            for (Path path : compressedPaths) {
-                if (!path.equals(outputPath)) {
-                    Files.deleteIfExists(path);
-                }
-                pb.step();
+        progress.startBatch(compressedPaths.size());
+        for (Path path : compressedPaths) {
+            if (!path.equals(outputPath)) {
+                Files.deleteIfExists(path);
             }
+            progress.updateBatch(1);
         }
+        progress.completeBatch();
     }
     
     private List<Path> multiPassMerge(List<Path> paths) throws IOException {
@@ -118,25 +121,25 @@ public class DiskBasedMerger {
         int batchCount = 0;
         int totalBatches = (int) Math.ceil((double) paths.size() / mergeFactor);
         
-        try (ProgressBar pb = new ProgressBar("Merging batches", totalBatches)) {
-            for (Path path : paths) {
-                batch.add(path);
-                if (batch.size() == mergeFactor) {
-                    Path mergedPath = tempDir.resolve(String.format("merged_%d.gz", batchCount++));
-                    mergeFiles(batch, mergedPath);
-                    result.add(mergedPath);
-                    batch.clear();
-                    pb.step();
-                }
-            }
-            
-            if (!batch.isEmpty()) {
-                Path mergedPath = tempDir.resolve(String.format("merged_%d.gz", batchCount));
+        progress.startBatch(totalBatches);
+        for (Path path : paths) {
+            batch.add(path);
+            if (batch.size() == mergeFactor) {
+                Path mergedPath = tempDir.resolve(String.format("merged_%d.gz", batchCount++));
                 mergeFiles(batch, mergedPath);
                 result.add(mergedPath);
-                pb.step();
+                batch.clear();
+                progress.updateBatch(1);
             }
         }
+        
+        if (!batch.isEmpty()) {
+            Path mergedPath = tempDir.resolve(String.format("merged_%d.gz", batchCount));
+            mergeFiles(batch, mergedPath);
+            result.add(mergedPath);
+            progress.updateBatch(1);
+        }
+        progress.completeBatch();
         
         return result;
     }
@@ -161,7 +164,7 @@ public class DiskBasedMerger {
                  BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out))) {
                 
                 long linesProcessed = 0;
-                ProgressBar pb = new ProgressBar("Merging lines", 1_000_000);
+                progress.startBatch(1_000_000);
                 
                 // Merge while monitoring memory usage
                 while (true) {
@@ -192,11 +195,11 @@ public class DiskBasedMerger {
                     
                     linesProcessed++;
                     if (linesProcessed % 10000 == 0) {
-                        pb.stepTo(linesProcessed);
+                        progress.updateBatch(10000);
                     }
                 }
                 
-                pb.close();
+                progress.completeBatch();
             }
         } finally {
             // Close all readers
