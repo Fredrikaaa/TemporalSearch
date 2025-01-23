@@ -5,7 +5,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.example.logging.ProgressTracker;
 
 /**
  * Utility class for compressing and decompressing temporary index files.
@@ -13,8 +15,9 @@ import java.util.logging.Logger;
  * compression/decompression speed.
  */
 public class CompressionUtils {
-    private static final Logger logger = Logger.getLogger(CompressionUtils.class.getName());
+    private static final Logger logger = LoggerFactory.getLogger(CompressionUtils.class);
     private static final int BUFFER_SIZE = 8192; // 8KB buffer
+    private static final ProgressTracker progress = new ProgressTracker();
     
     private CompressionUtils() {
         // Utility class, prevent instantiation
@@ -32,6 +35,7 @@ public class CompressionUtils {
         long startTime = System.currentTimeMillis();
         long originalSize = Files.size(sourcePath);
         
+        progress.startBatch(originalSize);
         try (InputStream in = Files.newInputStream(sourcePath);
              OutputStream out = Files.newOutputStream(targetPath);
              GZIPOutputStream gzipOut = new GZIPOutputStream(out, BUFFER_SIZE)) {
@@ -40,21 +44,21 @@ public class CompressionUtils {
             int bytesRead;
             while ((bytesRead = in.read(buffer)) != -1) {
                 gzipOut.write(buffer, 0, bytesRead);
+                progress.updateBatch(bytesRead);
             }
         }
+        progress.completeBatch();
         
         long compressedSize = Files.size(targetPath);
         long endTime = System.currentTimeMillis();
         
         double compressionRatio = (double) originalSize / compressedSize;
-        logger.info(String.format(
-            "Compressed %s: %d KB -> %d KB (%.1fx reduction) in %d ms",
+        logger.debug("Compressed {} ({} KB -> {} KB, {:.1f}x reduction) in {} ms",
             sourcePath.getFileName(),
             originalSize / 1024,
             compressedSize / 1024,
             compressionRatio,
-            endTime - startTime
-        ));
+            endTime - startTime);
         
         return compressionRatio;
     }
@@ -70,6 +74,7 @@ public class CompressionUtils {
         long startTime = System.currentTimeMillis();
         long compressedSize = Files.size(sourcePath);
         
+        progress.startBatch(compressedSize);
         try (InputStream in = Files.newInputStream(sourcePath);
              GZIPInputStream gzipIn = new GZIPInputStream(in, BUFFER_SIZE);
              OutputStream out = Files.newOutputStream(targetPath)) {
@@ -78,19 +83,19 @@ public class CompressionUtils {
             int bytesRead;
             while ((bytesRead = gzipIn.read(buffer)) != -1) {
                 out.write(buffer, 0, bytesRead);
+                progress.updateBatch(bytesRead);
             }
         }
+        progress.completeBatch();
         
         long decompressedSize = Files.size(targetPath);
         long endTime = System.currentTimeMillis();
         
-        logger.info(String.format(
-            "Decompressed %s: %d KB -> %d KB in %d ms",
+        logger.debug("Decompressed {} ({} KB -> {} KB) in {} ms",
             sourcePath.getFileName(),
             compressedSize / 1024,
             decompressedSize / 1024,
-            endTime - startTime
-        ));
+            endTime - startTime);
     }
     
     /**
