@@ -44,6 +44,7 @@ public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCl
     private final Path tempDir;
     protected long totalEntries = 0;
     protected final ProgressTracker progress;
+    private final String levelDbPath;
 
     protected BaseIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn, String tableName) throws IOException {
@@ -67,6 +68,7 @@ public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCl
         this.executorService = Executors.newFixedThreadPool(this.threadCount);
         this.tempDir = Files.createTempDirectory("index-");
         this.progress = new ProgressTracker();
+        this.levelDbPath = levelDbPath;
         
         // Ensure temp directory cleanup on JVM shutdown
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -390,6 +392,14 @@ public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCl
             }
 
             progress.completeIndex();
+    }
+
+    /**
+     * Gets the path to the LevelDB index directory
+     * @return The path to the LevelDB index directory
+     */
+    public String getIndexPath() {
+        return levelDbPath;
     }
 
     @Override
