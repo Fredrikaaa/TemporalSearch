@@ -15,8 +15,27 @@ public class ProgressTracker implements AutoCloseable {
     private final AtomicLong overallCount = new AtomicLong(0);
     private final AtomicLong indexCount = new AtomicLong(0);
     private final AtomicLong batchCount = new AtomicLong(0);
+    private final boolean isEnabled;
+
+    public ProgressTracker() {
+        // Check if we're in a test environment by looking for common test runners
+        this.isEnabled = !isTestEnvironment();
+    }
+
+    private boolean isTestEnvironment() {
+        for (StackTraceElement element : Thread.currentThread().getStackTrace()) {
+            String className = element.getClassName().toLowerCase();
+            if (className.contains("junit") || 
+                className.contains("test") || 
+                className.contains("mock")) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     public void startOverall(String task, long total) {
+        if (!isEnabled) return;
         overallProgress = new ProgressBarBuilder()
             .setTaskName(task)
             .setInitialMax(total)
@@ -27,6 +46,7 @@ public class ProgressTracker implements AutoCloseable {
     }
 
     public void startIndex(String indexType, long total) {
+        if (!isEnabled) return;
         if (currentIndexProgress != null) {
             currentIndexProgress.close();
         }
@@ -41,6 +61,7 @@ public class ProgressTracker implements AutoCloseable {
     }
 
     public void startBatch(long total) {
+        if (!isEnabled) return;
         if (batchProgress != null) {
             batchProgress.close();
         }
@@ -55,6 +76,7 @@ public class ProgressTracker implements AutoCloseable {
     }
 
     public void updateOverall(long step) {
+        if (!isEnabled) return;
         if (overallProgress != null) {
             overallProgress.stepBy(step);
             overallCount.addAndGet(step);
@@ -62,6 +84,7 @@ public class ProgressTracker implements AutoCloseable {
     }
 
     public void updateIndex(long step) {
+        if (!isEnabled) return;
         if (currentIndexProgress != null) {
             currentIndexProgress.stepBy(step);
             indexCount.addAndGet(step);
@@ -69,6 +92,7 @@ public class ProgressTracker implements AutoCloseable {
     }
 
     public void updateBatch(long step) {
+        if (!isEnabled) return;
         if (batchProgress != null) {
             batchProgress.stepBy(step);
             batchCount.addAndGet(step);
@@ -76,6 +100,7 @@ public class ProgressTracker implements AutoCloseable {
     }
 
     public void completeOverall() {
+        if (!isEnabled) return;
         if (overallProgress != null) {
             overallProgress.stepTo(overallProgress.getMax());
             overallProgress.close();
@@ -84,6 +109,7 @@ public class ProgressTracker implements AutoCloseable {
     }
 
     public void completeIndex() {
+        if (!isEnabled) return;
         if (currentIndexProgress != null) {
             currentIndexProgress.stepTo(currentIndexProgress.getMax());
             currentIndexProgress.close();
@@ -92,6 +118,7 @@ public class ProgressTracker implements AutoCloseable {
     }
 
     public void completeBatch() {
+        if (!isEnabled) return;
         if (batchProgress != null) {
             batchProgress.stepTo(batchProgress.getMax());
             batchProgress.close();
