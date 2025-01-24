@@ -25,6 +25,8 @@ public class IndexingMetrics {
     private final AtomicLong documentsProcessed;
     private final AtomicLong ngramsGenerated;
     private final Map<String, AtomicLong> stateVerificationCounts;
+    private final Map<String, AtomicLong> stageProcessingTimes;
+    private final Map<String, AtomicLong> indexSizes;
     private final long startTime;
     private final LogSampler detailedMetricsSampler;
     private final LogSampler stateVerificationSampler;
@@ -36,14 +38,19 @@ public class IndexingMetrics {
         this.documentsProcessed = new AtomicLong(0);
         this.ngramsGenerated = new AtomicLong(0);
         this.stateVerificationCounts = new ConcurrentHashMap<>();
+        this.stageProcessingTimes = new ConcurrentHashMap<>();
+        this.indexSizes = new ConcurrentHashMap<>();
         this.startTime = System.currentTimeMillis();
         // Sample 100% of detailed metrics and 10% of state verifications
         this.detailedMetricsSampler = new LogSampler(1.0);
         this.stateVerificationSampler = new LogSampler(0.1);
     }
 
-    public void recordProcessingTime(long timeMs) {
-        totalProcessingTime.addAndGet(timeMs);
+    public void recordProcessingTime(long timeMs, String stage) {
+        // Convert milliseconds to seconds before storing
+        long timeSeconds = timeMs / 1000;
+        totalProcessingTime.addAndGet(timeSeconds);
+        stageProcessingTimes.computeIfAbsent(stage, k -> new AtomicLong()).addAndGet(timeSeconds);
     }
 
     public void incrementDocumentsProcessed() {
@@ -66,6 +73,16 @@ public class IndexingMetrics {
         }
     }
 
+    public void recordIndexSize(String indexName, long sizeBytes) {
+        indexSizes.computeIfAbsent(indexName, k -> new AtomicLong()).set(sizeBytes);
+    }
+
+    private long getTotalIndexSize() {
+        return indexSizes.values().stream()
+            .mapToLong(AtomicLong::get)
+            .sum();
+    }
+
     /**
      * Logs current metrics in JSON format.
      * Uses sampling for detailed metrics to reduce log volume.
@@ -77,8 +94,19 @@ public class IndexingMetrics {
             .put("phase", phase)
             .put("documents_processed", documentsProcessed.get())
             .put("ngrams_generated", ngramsGenerated.get())
-            .put("total_processing_ms", totalProcessingTime.get())
-            .put("throughput_docs_per_sec", calculateThroughput());
+            .put("total_processing_sec", totalProcessingTime.get())
+            .put("throughput_docs_per_sec", calculateThroughput())
+            .put("total_index_size_mb", getTotalIndexSize() / (1024.0 * 1024.0));
+        
+        // Add stage-specific processing times
+        ObjectNode stageTimes = summaryJson.putObject("stage_processing_times");
+        stageProcessingTimes.forEach((stage, time) -> 
+            stageTimes.put(stage + "_sec", time.get()));
+        
+        // Add index sizes
+        ObjectNode indexSizesJson = summaryJson.putObject("index_sizes");
+        indexSizes.forEach((index, size) -> 
+            indexSizesJson.put(index + "_mb", size.get() / (1024.0 * 1024.0)));
         
         logger.info(summaryJson.toString());
 
@@ -88,13 +116,13 @@ public class IndexingMetrics {
                 ObjectNode detailedJson = MAPPER.createObjectNode()
                     .put("event", "indexing_metrics")
                     .put("phase", phase)
-                    .put("elapsed_ms", System.currentTimeMillis() - startTime)
-                    .put("total_processing_ms", totalProcessingTime.get())
+                    .put("elapsed_sec", (System.currentTimeMillis() - startTime) / 1000)
+                    .put("total_processing_sec", totalProcessingTime.get())
                     .put("heap_used_mb", memoryBean.getHeapMemoryUsage().getUsed() / (1024.0 * 1024.0))
                     .put("heap_max_mb", memoryBean.getHeapMemoryUsage().getMax() / (1024.0 * 1024.0))
                     .put("thread_count", threadBean.getThreadCount())
                     .put("peak_thread_count", threadBean.getPeakThreadCount())
-                    .put("avg_processing_time_per_doc_ms", documentsProcessed.get() > 0 ? 
+                    .put("avg_processing_time_per_doc_sec", documentsProcessed.get() > 0 ? 
                         totalProcessingTime.get() / (double)documentsProcessed.get() : 0.0);
 
                 logger.debug(detailedJson.toString());

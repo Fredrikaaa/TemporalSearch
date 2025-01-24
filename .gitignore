@@ -9,5 +9,5 @@ design/
 logs/
 indexes/
 dependency-reduced-pom.xml
-
+indexes_backup/**
 indexes/**/*

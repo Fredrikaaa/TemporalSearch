@@ -14,6 +14,10 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 
 public class IndexRunner {
@@ -119,10 +123,12 @@ public class IndexRunner {
                     long stepDuration = System.nanoTime() - stepStart;
                     
                     // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    metrics.recordProcessingTime(stepDuration / 1_000_000, "unigram");
                     // Record n-grams generated
                     metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
                     metrics.recordStateVerification("unigram_generation", true);
+                    // Record index size
+                    metrics.recordIndexSize("unigram", calculateDirectorySize(unigramDir));
                 }
             }
 
@@ -139,10 +145,12 @@ public class IndexRunner {
                     long stepDuration = System.nanoTime() - stepStart;
                     
                     // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    metrics.recordProcessingTime(stepDuration / 1_000_000, "bigram");
                     // Record n-grams generated
                     metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
                     metrics.recordStateVerification("bigram_generation", true);
+                    // Record index size
+                    metrics.recordIndexSize("bigram", calculateDirectorySize(bigramDir));
                 }
             }
 
@@ -159,10 +167,12 @@ public class IndexRunner {
                     long stepDuration = System.nanoTime() - stepStart;
                     
                     // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    metrics.recordProcessingTime(stepDuration / 1_000_000, "trigram");
                     // Record n-grams generated
                     metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
                     metrics.recordStateVerification("trigram_generation", true);
+                    // Record index size
+                    metrics.recordIndexSize("trigram", calculateDirectorySize(trigramDir));
                 }
             }
 
@@ -179,10 +189,12 @@ public class IndexRunner {
                     long stepDuration = System.nanoTime() - stepStart;
                     
                     // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    metrics.recordProcessingTime(stepDuration / 1_000_000, "dependency");
                     // Record n-grams generated
                     metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
                     metrics.recordStateVerification("dependency_generation", true);
+                    // Record index size
+                    metrics.recordIndexSize("dependency", calculateDirectorySize(dependencyDir));
                 }
             }
 
@@ -199,10 +211,12 @@ public class IndexRunner {
                     long stepDuration = System.nanoTime() - stepStart;
                     
                     // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    metrics.recordProcessingTime(stepDuration / 1_000_000, "ner_date");
                     // Record n-grams generated
                     metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
                     metrics.recordStateVerification("ner_date_generation", true);
+                    // Record index size
+                    metrics.recordIndexSize("ner_date", calculateDirectorySize(nerDateDir));
                 }
             }
 
@@ -219,15 +233,40 @@ public class IndexRunner {
                     long stepDuration = System.nanoTime() - stepStart;
                     
                     // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    metrics.recordProcessingTime(stepDuration / 1_000_000, "pos");
                     // Record n-grams generated
                     metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
                     metrics.recordStateVerification("pos_generation", true);
+                    // Record index size
+                    metrics.recordIndexSize("pos", calculateDirectorySize(posDir));
                 }
             }
 
             logger.info("Index generation completed");
             metrics.logMetrics("indexing_complete");
+        }
+    }
+
+    private static long calculateDirectorySize(String path) {
+        try {
+            Path dir = Paths.get(path);
+            if (!Files.exists(dir)) {
+                return 0L;
+            }
+            return Files.walk(dir)
+                .filter(p -> !Files.isDirectory(p))
+                .mapToLong(p -> {
+                    try {
+                        return Files.size(p);
+                    } catch (IOException e) {
+                        logger.warn("Failed to get size for file: {}", p);
+                        return 0L;
+                    }
+                })
+                .sum();
+        } catch (IOException e) {
+            logger.warn("Failed to calculate directory size for: {}", path);
+            return 0L;
         }
     }
 }

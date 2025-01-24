@@ -26,8 +26,8 @@ class LoggingTest {
 
         // Create and use BatchStats
         BatchStats stats = new BatchStats();
-        stats.recordDocumentProcessing(1_000_000); // 1ms
-        stats.recordDocumentProcessing(2_000_000); // 2ms
+        stats.recordDocumentProcessing(1_000_000L); // 1 second
+        stats.recordDocumentProcessing(2_000_000L); // 2 seconds
         stats.incrementNulls();
         stats.incrementErrors();
         
@@ -63,11 +63,12 @@ class LoggingTest {
 
         // Create and use IndexingMetrics
         IndexingMetrics metrics = new IndexingMetrics();
-        metrics.recordProcessingTime(100);
+        metrics.recordProcessingTime(100_000L, "test_stage"); // 100 seconds
         metrics.incrementDocumentsProcessed();
         metrics.addNgramsGenerated(5);
         metrics.recordStateVerification("ngram_generation", true);
         metrics.recordStateVerification("position_merge", false);
+        metrics.recordIndexSize("test_stage", 1024 * 1024 * 50); // 50MB
         
         // Log metrics
         metrics.logMetrics("test_phase");
@@ -81,6 +82,12 @@ class LoggingTest {
         assertEquals("test_phase", json.get("phase").asText());
         assertEquals(1, json.get("documents_processed").asInt());
         assertEquals(5, json.get("ngrams_generated").asInt());
+        assertEquals(100, json.get("total_processing_sec").asInt());
+        assertEquals(50.0, json.get("total_index_size_mb").asDouble(), 0.1);
+        assertTrue(json.has("stage_processing_times"));
+        assertEquals(100, json.get("stage_processing_times").get("test_stage_sec").asInt());
+        assertTrue(json.has("index_sizes"));
+        assertEquals(50.0, json.get("index_sizes").get("test_stage_mb").asDouble(), 0.1);
     }
 
     @Test
@@ -108,7 +115,7 @@ class LoggingTest {
         
         // Simulate intensive metrics recording
         for (int i = 0; i < 10000; i++) {
-            metrics.recordProcessingTime(1_000_000);
+            metrics.recordProcessingTime(1_000L, "test_stage"); // 1 second
             metrics.incrementDocumentsProcessed();
             metrics.addNgramsGenerated(3);
             metrics.recordStateVerification("test_state", i % 2 == 0);
