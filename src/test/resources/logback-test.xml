@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <appender name="TEST_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [TEST] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>WARN</level>
+        </filter>
+    </appender>
+
+    <!-- Disable file appenders during tests -->
+    <appender name="NULL" class="ch.qos.logback.core.helpers.NOPAppender"/>
+
+    <!-- Override the main configuration to be much quieter -->
+    <logger name="com.example.logging" level="WARN" additivity="false">
+        <appender-ref ref="TEST_CONSOLE"/>
+    </logger>
+
+    <logger name="com.example.index" level="WARN">
+        <appender-ref ref="TEST_CONSOLE"/>
+    </logger>
+
+    <root level="WARN">
+        <appender-ref ref="TEST_CONSOLE"/>
+    </root>
+</configuration> 

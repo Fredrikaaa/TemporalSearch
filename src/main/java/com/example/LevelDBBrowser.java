@@ -158,13 +158,12 @@ public class LevelDBBrowser {
 
         // Sort positions by date if showing temporal distribution
         if (showTime) {
-            positions.getPositions().sort((a, b) -> a.getTimestamp().compareTo(b.getTimestamp()));
-        }
-
-        // Group positions by timestamp if showing temporal distribution
-        if (showTime) {
+            List<Position> sortedPositions = new ArrayList<>(positions.getPositions());
+            sortedPositions.sort((a, b) -> a.getTimestamp().compareTo(b.getTimestamp()));
+            
+            // Group positions by timestamp if showing temporal distribution
             Map<String, Integer> timeDistribution = new TreeMap<>();
-            for (Position pos : positions.getPositions()) {
+            for (Position pos : sortedPositions) {
                 String yearMonth = pos.getTimestamp().toString().substring(0, 7); // YYYY-MM
                 timeDistribution.merge(yearMonth, 1, Integer::sum);
             }

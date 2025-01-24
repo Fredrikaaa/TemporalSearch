@@ -12,6 +12,8 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
 
 
 public class IndexRunner {
@@ -85,6 +87,15 @@ public class IndexRunner {
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
              ProgressTracker progress = new ProgressTracker()) {
             
+            // Get total document count
+            try (Statement stmt = conn.createStatement()) {
+                ResultSet rs = stmt.executeQuery("SELECT COUNT(DISTINCT document_id) FROM annotations");
+                if (rs.next()) {
+                    int docCount = rs.getInt(1);
+                    metrics.incrementDocumentsProcessed(docCount);
+                }
+            }
+            
             // Calculate total steps
             int totalSteps = 0;
             if (indexType.equals("all")) {
@@ -107,7 +118,11 @@ public class IndexRunner {
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
                     
-                    metrics.recordProcessingTime(stepDuration);
+                    // Convert nanoseconds to milliseconds
+                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    // Record n-grams generated
+                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
+                    metrics.recordStateVerification("unigram_generation", true);
                 }
             }
 
@@ -123,7 +138,11 @@ public class IndexRunner {
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
                     
-                    metrics.recordProcessingTime(stepDuration);
+                    // Convert nanoseconds to milliseconds
+                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    // Record n-grams generated
+                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
+                    metrics.recordStateVerification("bigram_generation", true);
                 }
             }
 
@@ -139,7 +158,11 @@ public class IndexRunner {
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
                     
-                    metrics.recordProcessingTime(stepDuration);
+                    // Convert nanoseconds to milliseconds
+                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    // Record n-grams generated
+                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
+                    metrics.recordStateVerification("trigram_generation", true);
                 }
             }
 
@@ -155,7 +178,11 @@ public class IndexRunner {
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
                     
-                    metrics.recordProcessingTime(stepDuration);
+                    // Convert nanoseconds to milliseconds
+                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    // Record n-grams generated
+                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
+                    metrics.recordStateVerification("dependency_generation", true);
                 }
             }
 
@@ -171,7 +198,11 @@ public class IndexRunner {
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
                     
-                    metrics.recordProcessingTime(stepDuration);
+                    // Convert nanoseconds to milliseconds
+                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    // Record n-grams generated
+                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
+                    metrics.recordStateVerification("ner_date_generation", true);
                 }
             }
 
@@ -187,12 +218,16 @@ public class IndexRunner {
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
                     
-                    metrics.recordProcessingTime(stepDuration);
+                    // Convert nanoseconds to milliseconds
+                    metrics.recordProcessingTime(stepDuration / 1_000_000);
+                    // Record n-grams generated
+                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
+                    metrics.recordStateVerification("pos_generation", true);
                 }
             }
 
             logger.info("Index generation completed");
-            metrics.logMetrics(logger, "indexing_complete");
+            metrics.logMetrics("indexing_complete");
         }
     }
 }

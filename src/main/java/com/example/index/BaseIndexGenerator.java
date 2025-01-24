@@ -39,6 +39,7 @@ public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCl
     protected long totalEntries = 0;
     protected final ProgressTracker progress;
     private final String levelDbPath;
+    protected long totalNGramsGenerated = 0;  // Add counter for n-grams
 
     protected BaseIndexGenerator(String levelDbPath, String stopwordsPath,
             int batchSize, Connection sqliteConn, String tableName) throws IOException {
@@ -267,81 +268,72 @@ public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCl
      * Processes entries in parallel using the thread pool.
      */
     protected void processBatch(List<T> entries) throws IOException {
+        if (entries == null || entries.isEmpty()) {
+            return;
+        }
+
+        // Check for null entries
+        if (entries.stream().anyMatch(e -> e == null)) {
+            throw new IOException("Cannot process batch containing null entries", new NullPointerException());
+        }
+
+        // Partition entries for parallel processing
+        List<List<T>> partitions = partitionEntries(entries);
+        
+        // Create tasks for parallel processing
+        List<Callable<ListMultimap<String, PositionList>>> tasks = new ArrayList<>();
+        for (List<T> partition : partitions) {
+            tasks.add(new IndexGenerationTask(partition));
+        }
+        
         try {
-            // For small batches or single thread, process directly
-            if (entries.size() < 10000 || threadCount == 1) {
-                ListMultimap<String, PositionList> result = processPartition(entries);
-                for (String key : result.keySet()) {
-                    List<PositionList> positions = result.get(key);
-                    if (!positions.isEmpty()) {
-                        // First try to read existing positions from LevelDB
-                        byte[] existingData = levelDb.get(bytes(key));
-                        PositionList merged;
-                        if (existingData != null) {
-                            merged = PositionList.deserialize(existingData);
-                        } else {
-                            merged = positions.get(0);
-                        }
-                        
-                        // Merge all positions
-                        for (int i = (existingData != null ? 0 : 1); i < positions.size(); i++) {
-                            merged.merge(positions.get(i));
-                        }
-                        writeToLevelDb(key, merged.serialize());
-                    }
-                }
-                return;
-            }
-
-            // Process in parallel
-            List<Future<ListMultimap<String, PositionList>>> futures = new ArrayList<>();
-
-            // Submit tasks
-            for (int i = 0; i < threadCount; i++) {
-                int start = i * entries.size() / threadCount;
-                int end = (i + 1) * entries.size() / threadCount;
-                List<T> partition = entries.subList(start, end);
-                futures.add(executorService.submit(new IndexGenerationTask(partition)));
-            }
-
-            // Collect all results before merging to reduce I/O overhead
-            Map<String, List<PositionList>> mergedResults = new HashMap<>();
+            // Execute tasks and collect results
+            List<Future<ListMultimap<String, PositionList>>> futures = 
+                executorService.invokeAll(tasks);
+            
+            // Process results
+            Map<String, PositionList> mergedResults = new HashMap<>();
             
             for (Future<ListMultimap<String, PositionList>> future : futures) {
-                ListMultimap<String, PositionList> partialResult = future.get(1, TimeUnit.HOURS);
+                ListMultimap<String, PositionList> partitionResults = future.get();
                 
-                // Merge results in memory
-                for (String key : partialResult.keySet()) {
-                    List<PositionList> positions = partialResult.get(key);
-                    if (!positions.isEmpty()) {
-                        mergedResults.computeIfAbsent(key, k -> new ArrayList<>()).addAll(positions);
+                // Update total n-grams count (only count unique n-grams)
+                totalNGramsGenerated += partitionResults.keySet().size();
+                
+                // Merge results from this partition
+                for (Map.Entry<String, PositionList> entry : partitionResults.entries()) {
+                    String key = entry.getKey();
+                    PositionList newPositions = entry.getValue();
+                    
+                    // First check if we have already seen this key in current batch
+                    PositionList existing = mergedResults.get(key);
+                    if (existing != null) {
+                        existing.merge(newPositions);
+                    } else {
+                        // Then check if it exists in LevelDB
+                        byte[] existingData = levelDb.get(bytes(key));
+                        if (existingData != null) {
+                            PositionList existingPositions = PositionList.deserialize(existingData);
+                            existingPositions.merge(newPositions);
+                            mergedResults.put(key, existingPositions);
+                        } else {
+                            mergedResults.put(key, newPositions);
+                        }
                     }
                 }
             }
             
-            // Write all results to LevelDB in one go
-            for (Map.Entry<String, List<PositionList>> entry : mergedResults.entrySet()) {
-                String key = entry.getKey();
-                List<PositionList> positions = entry.getValue();
-                if (!positions.isEmpty()) {
-                    // First try to read existing positions from LevelDB
-                    byte[] existingData = levelDb.get(bytes(key));
-                    PositionList merged;
-                    if (existingData != null) {
-                        merged = PositionList.deserialize(existingData);
-                    } else {
-                        merged = positions.get(0);
-                    }
-                    
-                    // Merge all positions
-                    for (int i = (existingData != null ? 0 : 1); i < positions.size(); i++) {
-                        merged.merge(positions.get(i));
-                    }
-                    writeToLevelDb(key, merged.serialize());
-                }
+            // Write all merged results to LevelDB
+            for (Map.Entry<String, PositionList> entry : mergedResults.entrySet()) {
+                writeToLevelDb(entry.getKey(), entry.getValue().serialize());
             }
-        } catch (Exception e) {
-            throw new IOException("Failed to process entries in parallel", e);
+            
+        } catch (InterruptedException | ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof NullPointerException) {
+                throw new IOException("Error processing batch: null entry encountered", cause);
+            }
+            throw new IOException("Error processing batch: " + e.getMessage(), e);
         }
     }
 
@@ -400,6 +392,14 @@ public abstract class BaseIndexGenerator<T extends IndexEntry> implements AutoCl
      */
     public String getIndexPath() {
         return levelDbPath;
+    }
+
+    /**
+     * Gets the total number of n-grams generated so far.
+     * @return The total number of n-grams generated
+     */
+    public long getTotalNGramsGenerated() {
+        return totalNGramsGenerated;
     }
 
     @Override

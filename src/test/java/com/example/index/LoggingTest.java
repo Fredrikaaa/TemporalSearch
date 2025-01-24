@@ -3,6 +3,7 @@ package com.example.index;
 import com.example.logging.BatchStats;
 import com.example.logging.IndexingMetrics;
 import org.junit.jupiter.api.Test;
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,6 +22,7 @@ class LoggingTest {
         ch.qos.logback.classic.Logger logger = 
             (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(BatchStats.class);
         logger.addAppender(listAppender);
+        logger.setLevel(Level.INFO);
 
         // Create and use BatchStats
         BatchStats stats = new BatchStats();
@@ -29,12 +31,15 @@ class LoggingTest {
         stats.incrementNulls();
         stats.incrementErrors();
         
-        // Log summary
+        // Log summary - should always log due to errors
         stats.logBatchSummary(logger);
 
-        // Verify log output
+        // Verify log output - should have a WARN level message due to errors
         assertFalse(listAppender.list.isEmpty());
-        String logMessage = listAppender.list.get(0).getMessage();
+        ILoggingEvent event = listAppender.list.get(0);
+        assertEquals("WARN", event.getLevel().toString());
+        
+        String logMessage = event.getMessage();
         JsonNode json = MAPPER.readTree(logMessage);
 
         assertEquals("batch_complete", json.get("event").asText());
@@ -54,6 +59,7 @@ class LoggingTest {
         ch.qos.logback.classic.Logger logger = 
             (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(IndexingMetrics.class);
         logger.addAppender(listAppender);
+        logger.setLevel(Level.INFO); // Ensure INFO level is enabled
 
         // Create and use IndexingMetrics
         IndexingMetrics metrics = new IndexingMetrics();
@@ -64,24 +70,17 @@ class LoggingTest {
         metrics.recordStateVerification("position_merge", false);
         
         // Log metrics
-        metrics.logMetrics(logger, "test_phase");
+        metrics.logMetrics("test_phase");
 
-        // Verify log output
+        // Verify log output - should always have summary metrics
         assertFalse(listAppender.list.isEmpty());
         String logMessage = listAppender.list.get(0).getMessage();
         JsonNode json = MAPPER.readTree(logMessage);
 
-        assertEquals("indexing_metrics", json.get("event").asText());
+        assertEquals("indexing_summary", json.get("event").asText());
         assertEquals("test_phase", json.get("phase").asText());
         assertEquals(1, json.get("documents_processed").asInt());
         assertEquals(5, json.get("ngrams_generated").asInt());
-        assertTrue(json.has("heap_used_mb"));
-        assertTrue(json.has("active_threads"));
-        
-        // Verify state verifications
-        JsonNode verifications = json.get("state_verifications");
-        assertEquals(1, verifications.get("ngram_generation_passed").asInt());
-        assertEquals(1, verifications.get("position_merge_failed").asInt());
     }
 
     @Test

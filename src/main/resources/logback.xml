@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <!-- Debug mode property with default value -->
+    <!-- Properties -->
     <property name="DEBUG_MODE" value="${DEBUG_MODE:-false}"/>
+    <property name="TEST_MODE" value="${TEST_MODE:-false}"/>
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
@@ -22,6 +23,14 @@
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
+        <!-- Don't log during tests unless explicitly enabled -->
+        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
+            <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
+                <expression>return !Boolean.parseBoolean(System.getProperty("TEST_MODE", "false"));</expression>
+            </evaluator>
+            <OnMismatch>DENY</OnMismatch>
+            <OnMatch>NEUTRAL</OnMatch>
+        </filter>
     </appender>
 
     <appender name="METRICS" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -34,16 +43,25 @@
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %msg%n</pattern>
         </encoder>
+        <!-- Don't log during tests unless explicitly enabled -->
+        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
+            <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
+                <expression>return !Boolean.parseBoolean(System.getProperty("TEST_MODE", "false"));</expression>
+            </evaluator>
+            <OnMismatch>DENY</OnMismatch>
+            <OnMatch>NEUTRAL</OnMatch>
+        </filter>
     </appender>
 
     <!-- Specific logger for metrics -->
     <logger name="com.example.logging" level="INFO" additivity="false">
         <appender-ref ref="METRICS"/>
+        <appender-ref ref="FILE"/>
         <appender-ref ref="CONSOLE"/>
     </logger>
 
-    <!-- Debug logging for index generation -->
-    <logger name="com.example.index" level="DEBUG">
+    <!-- Index generation logging - reduced to INFO by default -->
+    <logger name="com.example.index" level="INFO">
         <appender-ref ref="FILE"/>
     </logger>
 
