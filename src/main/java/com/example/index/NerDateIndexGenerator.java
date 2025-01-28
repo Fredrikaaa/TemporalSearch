@@ -19,7 +19,10 @@ import com.example.logging.ProgressTracker;
  * Generates indexes for date entities from annotated text.
  * Extracts dates from the normalized_ner column where ner type is "DATE",
  * normalizes them to YYYYMMDD format, and stores their positions.
+ * 
+ * @deprecated Use {@link StreamingNerDateIndexGenerator} instead. This implementation will be removed in a future release.
  */
+@Deprecated(since = "2.0", forRemoval = true)
 public class NerDateIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
     private static final Logger logger = LoggerFactory.getLogger(NerDateIndexGenerator.class);
     private static final DateTimeFormatter INPUT_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");

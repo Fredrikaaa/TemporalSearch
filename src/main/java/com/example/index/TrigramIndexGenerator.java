@@ -12,9 +12,12 @@ import java.util.*;
 import com.example.logging.ProgressTracker;
 
 /**
- * Generates trigram indexes from annotated text.
- * Each trigram (sequence of three consecutive words) is stored with its positions in the corpus.
+ * Generates a trigram index from annotation entries.
+ * Each entry maps a sequence of three consecutive lemmatized tokens to their positions in the corpus.
+ * 
+ * @deprecated Use {@link StreamingTrigramIndexGenerator} instead. This implementation will be removed in a future release.
  */
+@Deprecated(since = "2.0", forRemoval = true)
 public class TrigramIndexGenerator extends BaseIndexGenerator<TrigramIndexGenerator.TrigramEntry> {
     
     public static class TrigramEntry implements IndexEntry {

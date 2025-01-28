@@ -1,74 +1,74 @@
 package com.example.index;
 
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.MultimapBuilder;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.example.logging.ProgressTracker;
 
 /**
- * Generates a bigram index from annotation entries.
+ * Generates a streaming bigram index from annotation entries.
  * Each entry maps a pair of consecutive lemmatized tokens to their positions in the corpus.
- * 
- * @deprecated Use {@link StreamingBigramIndexGenerator} instead. This implementation will be removed in a future release.
+ * Uses streaming processing and external sorting for efficient memory usage.
  */
-@Deprecated(since = "2.0", forRemoval = true)
-public class BigramIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
-    
-    public BigramIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations");
-    }
+public final class StreamingBigramIndexGenerator extends StreamingIndexGenerator<AnnotationEntry> {
+    private static final Logger logger = LoggerFactory.getLogger(StreamingBigramIndexGenerator.class);
+    private static final int BATCH_SIZE = 1000;
 
-    public BigramIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn, ProgressTracker progress) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", 
-              Runtime.getRuntime().availableProcessors(), progress);
+    public StreamingBigramIndexGenerator(String levelDbPath, String stopwordsPath,
+            Connection sqliteConn, ProgressTracker progress) throws IOException {
+        super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }
 
     @Override
     protected List<AnnotationEntry> fetchBatch(int offset) throws SQLException {
-        List<AnnotationEntry> entries = new ArrayList<>();
-        String sql = "SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char, a.lemma, d.timestamp " +
-                    "FROM annotations a " +
-                    "JOIN documents d ON a.document_id = d.document_id " +
-                    "WHERE a.lemma IS NOT NULL " +
-                    "ORDER BY a.document_id, a.sentence_id, a.begin_char LIMIT ? OFFSET ?";
-                    
-        try (PreparedStatement stmt = sqliteConn.prepareStatement(sql)) {
-            stmt.setInt(1, batchSize);
+        List<AnnotationEntry> batch = new ArrayList<>();
+        String query = "SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char, a.lemma, a.pos, d.timestamp " +
+                      "FROM annotations a " +
+                      "JOIN documents d ON a.document_id = d.document_id " +
+                      "ORDER BY a.document_id, a.sentence_id, a.begin_char LIMIT ? OFFSET ?";
+        
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(query)) {
+            stmt.setInt(1, BATCH_SIZE);
             stmt.setInt(2, offset);
             
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
-                    entries.add(new AnnotationEntry(
+                    AnnotationEntry entry = new AnnotationEntry(
                         rs.getInt("document_id"),
                         rs.getInt("sentence_id"),
                         rs.getInt("begin_char"),
                         rs.getInt("end_char"),
-                        sanitizeText(rs.getString("lemma")),
-                        "", // POS tag not needed for bigrams
+                        rs.getString("lemma"),
+                        rs.getString("pos"),
                         LocalDate.parse(rs.getString("timestamp").substring(0, 10))
-                    ));
+                    );
+                    batch.add(entry);
                 }
             }
         }
-        return entries;
+        
+        return batch;
     }
 
     @Override
-    protected ListMultimap<String, PositionList> processPartition(List<AnnotationEntry> partition) throws IOException {
-        ListMultimap<String, PositionList> index = MultimapBuilder.hashKeys().arrayListValues().build();
+    protected ListMultimap<String, PositionList> processBatch(List<AnnotationEntry> batch) throws IOException {
+        ListMultimap<String, PositionList> index = ArrayListMultimap.create();
         Map<String, PositionList> positionLists = new HashMap<>();
         
-        for (int i = 0; i < partition.size() - 1; i++) {
-            AnnotationEntry entry = partition.get(i);
-            AnnotationEntry nextEntry = partition.get(i + 1);
+        for (int i = 0; i < batch.size() - 1; i++) {
+            AnnotationEntry entry = batch.get(i);
+            AnnotationEntry nextEntry = batch.get(i + 1);
             
             // Skip if either word is null
             if (entry.getLemma() == null || nextEntry.getLemma() == null) {
@@ -81,7 +81,7 @@ public class BigramIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
                 
                 String key = String.format("%s%s%s", 
                     entry.getLemma().toLowerCase(),
-                    BaseIndexGenerator.DELIMITER,
+                    DELIMITER,
                     nextEntry.getLemma().toLowerCase());
 
                 Position position = new Position(nextEntry.getDocumentId(), nextEntry.getSentenceId(),
@@ -100,4 +100,4 @@ public class BigramIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
         
         return index;
     }
-}
+} 

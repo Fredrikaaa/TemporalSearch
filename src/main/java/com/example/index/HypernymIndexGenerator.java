@@ -21,7 +21,10 @@ import java.util.ArrayList;
 /**
  * Generates an index of hypernym-hyponym (category-instance) relationships from dependency annotations.
  * Supports bidirectional lookups through key structure: category${DELIMITER}instance -> PositionList
+ * 
+ * @deprecated Use {@link StreamingHypernymIndexGenerator} instead. This implementation will be removed in a future release.
  */
+@Deprecated(since = "2.0", forRemoval = true)
 public class HypernymIndexGenerator extends ParallelIndexGenerator<DependencyEntry> {
     private static final Logger logger = LoggerFactory.getLogger(HypernymIndexGenerator.class);
     
@@ -61,7 +64,7 @@ public class HypernymIndexGenerator extends ParallelIndexGenerator<DependencyEnt
                 while (rs.next()) {
                     documentDates.put(
                         rs.getInt("document_id"),
-                        ZonedDateTime.parse(rs.getString("timestamp")).toLocalDate()
+                        LocalDate.parse(rs.getString("timestamp").substring(0, 10))
                     );
                 }
             }

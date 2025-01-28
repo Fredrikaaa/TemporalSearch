@@ -11,3 +11,5 @@ indexes/
 dependency-reduced-pom.xml
 indexes_backup/**
 indexes/**/*
+externalsortinginjava-0.6.2-javadoc/
+simplewiki*

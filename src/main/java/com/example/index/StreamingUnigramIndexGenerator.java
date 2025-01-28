@@ -12,28 +12,21 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.example.logging.ProgressTracker;
 
 /**
- * Generates a unigram index from annotation entries.
+ * Generates a streaming unigram index from annotation entries.
  * Each entry maps a single lemmatized token to its positions in the corpus.
- * 
- * @deprecated This implementation loads all data into memory and is not suitable for large datasets.
- *             Use {@link StreamingUnigramIndexGenerator} instead, which provides streaming processing
- *             with bounded memory usage.
+ * Uses streaming processing and external sorting for efficient memory usage.
  */
-@Deprecated(since = "2.0", forRemoval = true)
-public final class UnigramIndexGenerator extends BaseIndexGenerator<AnnotationEntry> {
+public final class StreamingUnigramIndexGenerator extends StreamingIndexGenerator<AnnotationEntry> {
+    private static final Logger logger = LoggerFactory.getLogger(StreamingUnigramIndexGenerator.class);
 
-    public UnigramIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations");
-    }
-
-    public UnigramIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn, ProgressTracker progress) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "annotations", 
-              Runtime.getRuntime().availableProcessors(), progress);
+    public StreamingUnigramIndexGenerator(String levelDbPath, String stopwordsPath,
+            Connection sqliteConn, ProgressTracker progress) throws IOException {
+        super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }
 
     @Override
@@ -46,7 +39,7 @@ public final class UnigramIndexGenerator extends BaseIndexGenerator<AnnotationEn
                     "ORDER BY a.document_id, a.sentence_id, a.begin_char LIMIT ? OFFSET ?";
                     
         try (PreparedStatement stmt = sqliteConn.prepareStatement(sql)) {
-            stmt.setInt(1, batchSize);
+            stmt.setInt(1, DOC_BATCH_SIZE);
             stmt.setInt(2, offset);
             
             try (ResultSet rs = stmt.executeQuery()) {
@@ -72,11 +65,11 @@ public final class UnigramIndexGenerator extends BaseIndexGenerator<AnnotationEn
     }
 
     @Override
-    protected ListMultimap<String, PositionList> processPartition(List<AnnotationEntry> partition) {
+    protected ListMultimap<String, PositionList> processBatch(List<AnnotationEntry> batch) throws IOException {
         ListMultimap<String, PositionList> index = ArrayListMultimap.create();
         Map<String, PositionList> positionLists = new HashMap<>();
         
-        for (AnnotationEntry entry : partition) {
+        for (AnnotationEntry entry : batch) {
             String key = entry.getLemma().toLowerCase();
             
             // Skip stopwords
@@ -99,4 +92,18 @@ public final class UnigramIndexGenerator extends BaseIndexGenerator<AnnotationEn
         
         return index;
     }
-}
+
+    /**
+     * Helper method to sanitize text by escaping null bytes.
+     * This prevents conflicts with our delimiter while preserving the original meaning.
+     * 
+     * @param text The text to sanitize
+     * @return The sanitized text with null bytes escaped
+     */
+    private static String sanitizeText(String text) {
+        if (text == null) {
+            return null;
+        }
+        return text.replace(DELIMITER, ESCAPE_CHAR + "0" + ESCAPE_CHAR).trim();
+    }
+} 

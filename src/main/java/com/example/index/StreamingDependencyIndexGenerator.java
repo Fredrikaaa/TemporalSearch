@@ -1,42 +1,43 @@
 package com.example.index;
 
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.MultimapBuilder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.util.*;
-import java.io.IOException;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.example.logging.ProgressTracker;
 
 /**
- * Generates a dependency index from dependency relation entries.
+ * Generates a streaming dependency index from dependency relation entries.
  * Each entry maps a head token, relation type, and dependent token to their positions in the corpus.
- * 
- * @deprecated Use {@link StreamingDependencyIndexGenerator} instead. This implementation will be removed in a future release.
+ * Uses streaming processing and external sorting for efficient memory usage.
  */
-@Deprecated(since = "2.0", forRemoval = true)
-public final class DependencyIndexGenerator extends BaseIndexGenerator<DependencyEntry> {
-    private static final Logger logger = LoggerFactory.getLogger(DependencyIndexGenerator.class);
+public final class StreamingDependencyIndexGenerator extends StreamingIndexGenerator<DependencyEntry> {
+    private static final Logger logger = LoggerFactory.getLogger(StreamingDependencyIndexGenerator.class);
+    private static final int BATCH_SIZE = 1000;
 
     private static final Set<String> BLACKLISTED_RELATIONS = Set.of(
         "punct", "det", "case", "cc"
     );
 
-    public DependencyIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "dependencies");
+    public StreamingDependencyIndexGenerator(String levelDbPath, String stopwordsPath,
+            Connection sqliteConn, ProgressTracker progress) throws IOException {
+        super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }
 
-    public DependencyIndexGenerator(String levelDbPath, String stopwordsPath,
-            int batchSize, Connection sqliteConn, ProgressTracker progress) throws IOException {
-        super(levelDbPath, stopwordsPath, batchSize, sqliteConn, "dependencies", 
-              Runtime.getRuntime().availableProcessors(), progress);
+    @Override
+    protected String getTableName() {
+        return "dependencies";
     }
 
     @Override
@@ -52,7 +53,7 @@ public final class DependencyIndexGenerator extends BaseIndexGenerator<Dependenc
         """;
 
         try (PreparedStatement stmt = sqliteConn.prepareStatement(sql)) {
-            stmt.setInt(1, batchSize);
+            stmt.setInt(1, BATCH_SIZE);
             stmt.setInt(2, offset);
 
             try (ResultSet rs = stmt.executeQuery()) {
@@ -88,10 +89,11 @@ public final class DependencyIndexGenerator extends BaseIndexGenerator<Dependenc
     }
 
     @Override
-    protected ListMultimap<String, PositionList> processPartition(List<DependencyEntry> partition) throws IOException {
-        ListMultimap<String, PositionList> results = MultimapBuilder.hashKeys().arrayListValues().build();
+    protected ListMultimap<String, PositionList> processBatch(List<DependencyEntry> batch) throws IOException {
+        ListMultimap<String, PositionList> index = ArrayListMultimap.create();
+        Map<String, PositionList> positionLists = new HashMap<>();
 
-        for (DependencyEntry entry : partition) {
+        for (DependencyEntry entry : batch) {
             // Skip stopwords and blacklisted relations
             if (isStopword(entry.getHeadToken()) || 
                 isStopword(entry.getDependentToken()) ||
@@ -102,23 +104,32 @@ public final class DependencyIndexGenerator extends BaseIndexGenerator<Dependenc
             // Create key in format: headToken\0relation\0dependentToken
             String key = generateKey(entry);
 
-            // Create position list for this entry
-            PositionList positions = new PositionList();
-            positions.add(new Position(
+            Position position = new Position(
                 entry.getDocumentId(),
                 entry.getSentenceId(),
                 entry.getBeginChar(),
                 entry.getEndChar(),
                 entry.getTimestamp()
-            ));
+            );
 
-            results.put(key, positions);
+            // Get or create position list for this dependency
+            PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
+            posList.add(position);
         }
 
-        return results;
+        // Add all position lists to result
+        for (Map.Entry<String, PositionList> entry : positionLists.entrySet()) {
+            index.put(entry.getKey(), entry.getValue());
+        }
+
+        return index;
     }
 
-    // Helper method for key generation
+    /**
+     * Creates an index key from a dependency entry
+     * @param entry The dependency entry
+     * @return A delimited key in the format headToken${DELIMITER}relation${DELIMITER}dependentToken
+     */
     protected String generateKey(DependencyEntry entry) {
         return String.format("%s%s%s%s%s", 
             entry.getHeadToken().trim().toLowerCase(),
@@ -126,5 +137,19 @@ public final class DependencyIndexGenerator extends BaseIndexGenerator<Dependenc
             entry.getRelation().trim().toLowerCase(),
             DELIMITER,
             entry.getDependentToken().trim().toLowerCase());
+    }
+
+    /**
+     * Sanitizes text by removing special characters and normalizing whitespace.
+     * @param text The text to sanitize
+     * @return The sanitized text, or null if the input is null or empty
+     */
+    private String sanitizeText(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return null;
+        }
+        return text.trim()
+                  .replaceAll("\\s+", " ")
+                  .replaceAll("[^\\p{L}\\p{N}\\s-]", "");
     }
 } 

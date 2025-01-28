@@ -47,7 +47,7 @@ public class IndexRunner {
                 .help("Batch size for processing (default: 1000)");
 
         parser.addArgument("-t", "--type")
-                .choices("all", "unigram", "bigram", "trigram", "dependency", "ner_date", "pos")
+                .choices("all", "unigram", "bigram", "trigram", "dependency", "ner_date", "pos", "hypernym")
                 .setDefault("all")
                 .help("Type of index to generate");
 
@@ -103,7 +103,7 @@ public class IndexRunner {
             // Calculate total steps
             int totalSteps = 0;
             if (indexType.equals("all")) {
-                totalSteps = 6; // unigram, bigram, trigram, dependency, ner_date, and pos
+                totalSteps = 7; // unigram, bigram, trigram, dependency, ner_date, pos, and hypernym
             } else {
                 totalSteps = 1;
             }
@@ -116,8 +116,8 @@ public class IndexRunner {
                 String unigramDir = indexDir + "/unigram";
                 System.out.printf("Stage %d/%d: Unigram%n", currentStep, totalSteps);
                 
-                try (UnigramIndexGenerator indexer = new UnigramIndexGenerator(
-                        unigramDir, stopwordsPath, batchSize, conn, progress)) {
+                try (StreamingUnigramIndexGenerator indexer = new StreamingUnigramIndexGenerator(
+                        unigramDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -138,8 +138,8 @@ public class IndexRunner {
                 String bigramDir = indexDir + "/bigram";
                 System.out.printf("Stage %d/%d: Bigram%n", currentStep, totalSteps);
                 
-                try (BigramIndexGenerator indexer = new BigramIndexGenerator(
-                        bigramDir, stopwordsPath, batchSize, conn, progress)) {
+                try (StreamingBigramIndexGenerator indexer = new StreamingBigramIndexGenerator(
+                        bigramDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -160,8 +160,8 @@ public class IndexRunner {
                 String trigramDir = indexDir + "/trigram";
                 System.out.printf("Stage %d/%d: Trigram%n", currentStep, totalSteps);
                 
-                try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                        trigramDir, stopwordsPath, batchSize, conn, progress)) {
+                try (StreamingTrigramIndexGenerator indexer = new StreamingTrigramIndexGenerator(
+                        trigramDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -182,8 +182,8 @@ public class IndexRunner {
                 String dependencyDir = indexDir + "/dependency";
                 System.out.printf("Stage %d/%d: Dependency%n", currentStep, totalSteps);
                 
-                try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
-                        dependencyDir, stopwordsPath, batchSize, conn, progress)) {
+                try (StreamingDependencyIndexGenerator indexer = new StreamingDependencyIndexGenerator(
+                        dependencyDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -204,8 +204,8 @@ public class IndexRunner {
                 String nerDateDir = indexDir + "/ner_date";
                 System.out.printf("Stage %d/%d: NER Date%n", currentStep, totalSteps);
                 
-                try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
-                        nerDateDir, stopwordsPath, batchSize, conn, progress)) {
+                try (StreamingNerDateIndexGenerator indexer = new StreamingNerDateIndexGenerator(
+                        nerDateDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -226,8 +226,8 @@ public class IndexRunner {
                 String posDir = indexDir + "/pos";
                 System.out.printf("Stage %d/%d: POS%n", currentStep, totalSteps);
                 
-                try (POSIndexGenerator indexer = new POSIndexGenerator(
-                        posDir, stopwordsPath, batchSize, conn, progress)) {
+                try (StreamingPOSIndexGenerator indexer = new StreamingPOSIndexGenerator(
+                        posDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
                     long stepDuration = System.nanoTime() - stepStart;
@@ -239,6 +239,28 @@ public class IndexRunner {
                     metrics.recordStateVerification("pos_generation", true);
                     // Record index size
                     metrics.recordIndexSize("pos", calculateDirectorySize(posDir));
+                }
+            }
+
+            if (indexType.equals("all") || indexType.equals("hypernym")) {
+                currentStep++;
+                logger.info("Step {}/{}: Starting hypernym index generation", currentStep, totalSteps);
+                String hypernymDir = indexDir + "/hypernym";
+                System.out.printf("Stage %d/%d: Hypernym%n", currentStep, totalSteps);
+                
+                try (StreamingHypernymIndexGenerator indexer = new StreamingHypernymIndexGenerator(
+                        hypernymDir, stopwordsPath, conn, progress)) {
+                    long stepStart = System.nanoTime();
+                    indexer.generateIndex();
+                    long stepDuration = System.nanoTime() - stepStart;
+                    
+                    // Convert nanoseconds to milliseconds
+                    metrics.recordProcessingTime(stepDuration / 1_000_000, "hypernym");
+                    // Record n-grams generated
+                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
+                    metrics.recordStateVerification("hypernym_generation", true);
+                    // Record index size
+                    metrics.recordIndexSize("hypernym", calculateDirectorySize(hypernymDir));
                 }
             }
 

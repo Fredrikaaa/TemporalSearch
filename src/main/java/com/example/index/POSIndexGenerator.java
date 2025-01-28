@@ -14,10 +14,12 @@ import org.slf4j.LoggerFactory;
 import com.example.logging.ProgressTracker;
 
 /**
- * Generates indexes for part-of-speech tags from annotated text.
- * Each POS tag is stored with its positions in the corpus.
- * No stopword filtering is applied as all POS tags are considered significant.
+ * Generates a POS (Part-of-Speech) index from annotation entries.
+ * Each entry maps a POS tag to its positions in the corpus.
+ * 
+ * @deprecated Use {@link StreamingPOSIndexGenerator} instead. This implementation will be removed in a future release.
  */
+@Deprecated(since = "2.0", forRemoval = true)
 public class POSIndexGenerator extends BaseIndexGenerator<POSIndexGenerator.POSEntry> {
     private static final Logger logger = LoggerFactory.getLogger(POSIndexGenerator.class);
     
