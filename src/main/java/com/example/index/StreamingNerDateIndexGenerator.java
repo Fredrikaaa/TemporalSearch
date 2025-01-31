@@ -26,7 +26,6 @@ import com.example.logging.ProgressTracker;
  */
 public final class StreamingNerDateIndexGenerator extends StreamingIndexGenerator<AnnotationEntry> {
     private static final Logger logger = LoggerFactory.getLogger(StreamingNerDateIndexGenerator.class);
-    private static final int BATCH_SIZE = 1000;
     private static final DateTimeFormatter INPUT_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter KEY_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
 
@@ -37,24 +36,16 @@ public final class StreamingNerDateIndexGenerator extends StreamingIndexGenerato
 
     @Override
     protected List<AnnotationEntry> fetchBatch(int offset) throws SQLException {
-        List<AnnotationEntry> entries = new ArrayList<>();
-        String sql = """
-            SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char, 
-                   a.normalized_ner, doc.timestamp
-            FROM annotations a
-            JOIN documents doc ON a.document_id = doc.document_id
-            WHERE a.ner = 'DATE' 
-              AND a.normalized_ner IS NOT NULL
-              AND a.normalized_ner LIKE '____-__-__'
-              AND substr(a.normalized_ner, 1, 4) BETWEEN '0000' AND '9999'
-              AND substr(a.normalized_ner, 6, 2) BETWEEN '01' AND '12'
-              AND substr(a.normalized_ner, 9, 2) BETWEEN '01' AND '31'
-            ORDER BY a.document_id, a.sentence_id, a.begin_char
-            LIMIT ? OFFSET ?
-        """;
-
-        try (PreparedStatement stmt = sqliteConn.prepareStatement(sql)) {
-            stmt.setInt(1, BATCH_SIZE);
+        List<AnnotationEntry> batch = new ArrayList<>();
+        String query = "SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char, " +
+                      "a.token, a.normalized_ner, a.ner, d.timestamp " +
+                      "FROM annotations a " +
+                      "JOIN documents d ON a.document_id = d.document_id " +
+                      "WHERE a.ner = 'DATE' " +
+                      "ORDER BY a.document_id, a.sentence_id, a.begin_char LIMIT ? OFFSET ?";
+        
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(query)) {
+            stmt.setInt(1, DOC_BATCH_SIZE);
             stmt.setInt(2, offset);
 
             try (ResultSet rs = stmt.executeQuery()) {
@@ -65,7 +56,7 @@ public final class StreamingNerDateIndexGenerator extends StreamingIndexGenerato
                         continue;
                     }
 
-                    entries.add(new AnnotationEntry(
+                    batch.add(new AnnotationEntry(
                         rs.getInt("document_id"),
                         rs.getInt("sentence_id"),
                         rs.getInt("begin_char"),
@@ -77,7 +68,7 @@ public final class StreamingNerDateIndexGenerator extends StreamingIndexGenerato
                 }
             }
         }
-        return entries;
+        return batch;
     }
 
     @Override

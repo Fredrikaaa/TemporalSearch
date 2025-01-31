@@ -155,16 +155,16 @@ public class StreamingTrigramIndexGeneratorTest extends BaseIndexTest {
         Options options = new Options();
         try (DB db = factory.open(levelDbDir, options)) {
             // Verify no trigrams cross sentence boundaries
-            assertNull(db.get(bytes("quietly" + StreamingIndexGenerator.DELIMITER + "now" + 
-                StreamingIndexGenerator.DELIMITER + "it")), "Trigram should not cross sentence boundary");
-            assertNull(db.get(bytes("now" + StreamingIndexGenerator.DELIMITER + "it" + 
-                StreamingIndexGenerator.DELIMITER + "purr")), "Trigram should not cross sentence boundary");
+            assertNull(db.get(bytes(KeyPrefixes.createPositionsKey("quietly" + StreamingIndexGenerator.DELIMITER + "now" + 
+                StreamingIndexGenerator.DELIMITER + "it"))), "Trigram should not cross sentence boundary");
+            assertNull(db.get(bytes(KeyPrefixes.createPositionsKey("now" + StreamingIndexGenerator.DELIMITER + "it" + 
+                StreamingIndexGenerator.DELIMITER + "purr"))), "Trigram should not cross sentence boundary");
         }
     }
 
     private void verifyTrigram(DB db, String trigram, int expectedDocId, int expectedSentenceId,
             int expectedBeginChar, int expectedEndChar, int expectedCount) throws IOException {
-        byte[] value = db.get(bytes(trigram));
+        byte[] value = db.get(bytes(KeyPrefixes.createPositionsKey(trigram)));
         assertNotNull(value, "Trigram '" + trigram + "' should be indexed");
         
         PositionList positions = PositionList.deserialize(value);

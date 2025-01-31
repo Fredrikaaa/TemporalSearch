@@ -76,6 +76,10 @@ public class Pipeline {
                 .setDefault("both")
                 .help("Format of the analysis report (default: both)");
 
+        parser.addArgument("-k", "--preserve-index")
+                .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
+                .help("Keep existing index data if present");
+
         try {
             // Parse arguments
             Namespace ns = parser.parseArgs(args);
@@ -127,7 +131,8 @@ public class Pipeline {
                         ns.getString("index_dir"),
                         ns.getString("stopwords"),
                         ns.getInt("batch_size"),
-                        ns.getString("index_type"));
+                        ns.getString("index_type"),
+                        ns.getBoolean("preserve_index"));
             }
 
             if (stage.equals("analyze")) {

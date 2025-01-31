@@ -24,12 +24,13 @@ import com.example.logging.ProgressTracker;
  */
 public final class StreamingHypernymIndexGenerator extends StreamingIndexGenerator<DependencyEntry> {
     private static final Logger logger = LoggerFactory.getLogger(StreamingHypernymIndexGenerator.class);
-    private static final int BATCH_SIZE = 1000;
-    
+
     private static final Set<String> HYPERNYM_RELATIONS = Set.of(
         "nmod:such_as",
         "nmod:as",
         "nmod:including",
+        "nmod:especially",
+        "nmod:particularly",
         "conj:and",
         "conj:or"
     );
@@ -46,25 +47,31 @@ public final class StreamingHypernymIndexGenerator extends StreamingIndexGenerat
 
     @Override
     protected List<DependencyEntry> fetchBatch(int offset) throws SQLException {
-        List<DependencyEntry> entries = new ArrayList<>();
-        String query = String.format("""
-            SELECT d.*, a1.lemma as head_lemma, a2.lemma as dependent_lemma, doc.timestamp
-            FROM dependencies d
-            JOIN annotations a1 ON d.document_id = a1.document_id 
-                AND d.sentence_id = a1.sentence_id
-                AND d.head_token = a1.token
-            JOIN annotations a2 ON d.document_id = a2.document_id
-                AND d.sentence_id = a2.sentence_id
-                AND d.dependent_token = a2.token
-            JOIN documents doc ON d.document_id = doc.document_id
-            WHERE d.relation IN (%s)
-            ORDER BY d.document_id, d.sentence_id, d.begin_char
-            LIMIT ? OFFSET ?
-            """, 
-            String.join(",", HYPERNYM_RELATIONS.stream().map(r -> "'" + r + "'").toList()));
+        List<DependencyEntry> batch = new ArrayList<>();
+        
+        // Build the IN clause from HYPERNYM_RELATIONS
+        String inClause = HYPERNYM_RELATIONS.stream()
+            .map(r -> "'" + r + "'")
+            .collect(java.util.stream.Collectors.joining(", "));
+            
+        String query = String.format(
+            "SELECT d.document_id, d.sentence_id, " +
+            "a1.lemma as head_lemma, a2.lemma as dependent_lemma, " +
+            "d.relation, d.begin_char, d.end_char, doc.timestamp " +
+            "FROM dependencies d " +
+            "JOIN documents doc ON d.document_id = doc.document_id " +
+            "JOIN annotations a1 ON d.document_id = a1.document_id " +
+            "  AND d.sentence_id = a1.sentence_id " +
+            "  AND d.head_token = a1.token " +
+            "JOIN annotations a2 ON d.document_id = a2.document_id " +
+            "  AND d.sentence_id = a2.sentence_id " +
+            "  AND d.dependent_token = a2.token " +
+            "WHERE d.relation IN (%s) " +
+            "ORDER BY d.document_id, d.sentence_id, d.begin_char LIMIT ? OFFSET ?",
+            inClause);
         
         try (PreparedStatement stmt = sqliteConn.prepareStatement(query)) {
-            stmt.setInt(1, BATCH_SIZE);
+            stmt.setInt(1, DOC_BATCH_SIZE);
             stmt.setInt(2, offset);
             
             try (ResultSet rs = stmt.executeQuery()) {
@@ -88,7 +95,7 @@ public final class StreamingHypernymIndexGenerator extends StreamingIndexGenerat
                         continue;
                     }
 
-                    entries.add(new DependencyEntry(
+                    batch.add(new DependencyEntry(
                         rs.getInt("document_id"),
                         rs.getInt("sentence_id"),
                         rs.getInt("begin_char"),
@@ -101,7 +108,7 @@ public final class StreamingHypernymIndexGenerator extends StreamingIndexGenerat
                 }
             }
         }
-        return entries;
+        return batch;
     }
 
     @Override
@@ -157,8 +164,14 @@ public final class StreamingHypernymIndexGenerator extends StreamingIndexGenerat
         if (text == null || text.trim().isEmpty()) {
             return null;
         }
+        
+        // Special handling for relation names to preserve colons
+        if (text.startsWith("nmod:")) {
+            return text.trim().replaceAll("\\s+", " ");
+        }
+        
         return text.trim()
                   .replaceAll("\\s+", " ")
-                  .replaceAll("[^\\p{L}\\p{N}\\s-]", "");
+                  .replaceAll("[^\\p{L}\\p{N}\\s:-]", "");
     }
 } 

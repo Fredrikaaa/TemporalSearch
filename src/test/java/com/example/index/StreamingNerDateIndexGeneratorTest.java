@@ -109,13 +109,13 @@ public class StreamingNerDateIndexGeneratorTest extends BaseIndexTest {
         try (DB db = factory.open(levelDbDir, options)) {
             // Test first date
             String key = "20240115";
-            PositionList positions = PositionList.deserialize(db.get(bytes(key)));
+            PositionList positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
             assertNotNull(positions, "Should have positions for 2024-01-15");
             assertEquals(1, positions.size(), "Should have one position for 2024-01-15");
 
             // Test second date
             key = "20240201";
-            positions = PositionList.deserialize(db.get(bytes(key)));
+            positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
             assertNotNull(positions, "Should have positions for 2024-02-01");
             assertEquals(1, positions.size(), "Should have one position for 2024-02-01");
         }
@@ -162,7 +162,7 @@ public class StreamingNerDateIndexGeneratorTest extends BaseIndexTest {
         Options options = new Options();
         try (DB db = factory.open(levelDbDir, options)) {
             String key = "20240115";
-            PositionList positions = PositionList.deserialize(db.get(bytes(key)));
+            PositionList positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
             assertNotNull(positions, "Should have positions for 2024-01-15");
             assertEquals(3, positions.size(), "Should have three positions for 2024-01-15 (1 from setup + 2 from additional dates)");
         }

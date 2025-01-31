@@ -23,7 +23,6 @@ import com.example.logging.ProgressTracker;
  */
 public final class StreamingPOSIndexGenerator extends StreamingIndexGenerator<AnnotationEntry> {
     private static final Logger logger = LoggerFactory.getLogger(StreamingPOSIndexGenerator.class);
-    private static final int BATCH_SIZE = 1000;
 
     public StreamingPOSIndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
@@ -39,7 +38,7 @@ public final class StreamingPOSIndexGenerator extends StreamingIndexGenerator<An
                       "ORDER BY a.document_id, a.sentence_id, a.begin_char LIMIT ? OFFSET ?";
         
         try (PreparedStatement stmt = sqliteConn.prepareStatement(query)) {
-            stmt.setInt(1, BATCH_SIZE);
+            stmt.setInt(1, DOC_BATCH_SIZE);
             stmt.setInt(2, offset);
             
             try (ResultSet rs = stmt.executeQuery()) {

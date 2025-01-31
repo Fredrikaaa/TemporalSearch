@@ -55,6 +55,10 @@ public class IndexRunner {
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Enable debug logging to console");
 
+        parser.addArgument("-k", "--preserve-index")
+                .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
+                .help("Keep existing index data if present");
+
         try {
             // Parse arguments
             Namespace ns = parser.parseArgs(args);
@@ -69,7 +73,8 @@ public class IndexRunner {
                 ns.getString("index_dir"),
                 ns.getString("stopwords"),
                 ns.getInt("batch_size"),
-                ns.getString("type")
+                ns.getString("type"),
+                ns.getBoolean("preserve_index")
             );
         } catch (ArgumentParserException e) {
             parser.handleError(e);
@@ -82,11 +87,16 @@ public class IndexRunner {
 
 
     public static void runIndexing(String dbPath, String indexDir, String stopwordsPath,
-            int batchSize, String indexType) throws Exception {
+            int batchSize, String indexType, boolean preserveIndex) throws Exception {
         
         IndexingMetrics metrics = new IndexingMetrics();
-        logger.info("Starting index generation with parameters: dbPath={}, indexDir={}, batchSize={}",
-            dbPath, indexDir, batchSize);
+        logger.info("Starting index generation with parameters: dbPath={}, indexDir={}, batchSize={}, preserveIndex={}",
+            dbPath, indexDir, batchSize, preserveIndex);
+
+        // Create index configuration
+        IndexConfig indexConfig = new IndexConfig.Builder()
+            .withPreserveExistingIndex(preserveIndex)
+            .build();
 
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
              ProgressTracker progress = new ProgressTracker()) {
@@ -115,6 +125,10 @@ public class IndexRunner {
                 logger.info("Step {}/{}: Starting unigram index generation", currentStep, totalSteps);
                 String unigramDir = indexDir + "/unigram";
                 System.out.printf("Stage %d/%d: Unigram%n", currentStep, totalSteps);
+                
+                // Handle index directory
+                Path unigramPath = Path.of(unigramDir);
+                IndexUtils.safeDeleteIndex(unigramPath, indexConfig);
                 
                 try (StreamingUnigramIndexGenerator indexer = new StreamingUnigramIndexGenerator(
                         unigramDir, stopwordsPath, conn, progress)) {

@@ -139,7 +139,8 @@ public class LevelDBBrowser {
                 .map(String::toLowerCase)
                 .toList());
 
-        byte[] data = db.get(bytes(key));
+        // Use key prefix for positions
+        byte[] data = db.get(bytes(KeyPrefixes.createPositionsKey(key)));
         if (data == null) {
             System.out.printf("%s not found in index%n",
                     formatSearchTerm(words, indexType));
@@ -207,11 +208,22 @@ public class LevelDBBrowser {
         Map<String, PositionList> matches = new HashMap<>();
         
         try (DBIterator iterator = db.iterator()) {
-            for (iterator.seek(bytes(searchPattern)); iterator.hasNext(); iterator.next()) {
+            // Seek to the first key with our prefix
+            String prefixedPattern = KeyPrefixes.createPositionsKey(searchPattern);
+            iterator.seek(bytes(prefixedPattern));
+            
+            while (iterator.hasNext()) {
                 String key = asString(iterator.peekNext().getKey());
                 logger.debug("Examining key: {}", key);
                 
-                String[] parts = key.split(DELIMITER);
+                // Skip keys that don't start with our prefix
+                if (!key.startsWith(KeyPrefixes.POSITIONS)) {
+                    continue;
+                }
+                
+                // Extract the actual key without prefix
+                String actualKey = KeyPrefixes.extractTerm(key);
+                String[] parts = actualKey.split(DELIMITER);
                 
                 if (parts.length != 3) continue;
                 
@@ -219,13 +231,15 @@ public class LevelDBBrowser {
                     matchesPattern(parts[1], relation) &&
                     matchesPattern(parts[2], depToken)) {
                     logger.debug("Found matching dependency: {} -{}- {}", parts[0], parts[1], parts[2]);
-                    matches.put(key, PositionList.deserialize(iterator.peekNext().getValue()));
+                    matches.put(actualKey, PositionList.deserialize(iterator.peekNext().getValue()));
                 }
                
                 // Stop if we've moved past potential matches
-                if (!key.startsWith(headToken) && !headToken.equals(WILDCARD)) {
+                if (!key.startsWith(prefixedPattern) && !headToken.equals(WILDCARD)) {
                     break;
                 }
+                
+                iterator.next();
             }
         }
 
@@ -296,31 +310,46 @@ public class LevelDBBrowser {
         int totalEntries = 0;
         
         try (DBIterator iterator = db.iterator()) {
-            for (iterator.seekToFirst(); iterator.hasNext(); iterator.next()) {
+            // Seek to first key with positions prefix
+            iterator.seek(bytes(KeyPrefixes.POSITIONS));
+            
+            while (iterator.hasNext()) {
                 String key = asString(iterator.peekNext().getKey());
+                
+                // Skip keys that don't start with positions prefix
+                if (!key.startsWith(KeyPrefixes.POSITIONS)) {
+                    iterator.next();
+                    continue;
+                }
+                
+                // Extract actual key without prefix
+                String actualKey = KeyPrefixes.extractTerm(key);
                 PositionList positions = PositionList.deserialize(iterator.peekNext().getValue());
                 
                 if (positions.size() < minOccurrences) {
+                    iterator.next();
                     continue;
                 }
 
                 totalEntries++;
                 if (indexType.equals("dependency")) {
-                    System.out.print(formatDependencyKey(key));
+                    System.out.print(formatDependencyKey(actualKey));
                 } else if (indexType.equals("ner_date")) {
                     // Format date as YYYY-MM-DD
                     System.out.printf("Date: %s-%s-%s",
-                            key.substring(0, 4),
-                            key.substring(4, 6),
-                            key.substring(6, 8));
+                            actualKey.substring(0, 4),
+                            actualKey.substring(4, 6),
+                            actualKey.substring(6, 8));
                 } else {
-                    System.out.print(key.replace(DELIMITER, " "));
+                    System.out.print(actualKey.replace(DELIMITER, " "));
                 }
 
                 if (showCounts) {
                     System.out.printf(" (%d occurrences)", positions.size());
                 }
                 System.out.println();
+                
+                iterator.next();
             }
         }
         

@@ -45,7 +45,7 @@ public abstract class StreamingIndexGenerator<T extends IndexEntry> implements A
     // Memory and processing configuration
     private static final int MAX_MEMORY_MB = 512;
     private static final int BUFFER_SIZE = 8 * 1024 * 1024; // 8MB
-    protected static final int DOC_BATCH_SIZE = 1000;
+    protected static final int DOC_BATCH_SIZE = 1000; // Smaller batch size for more frequent progress updates
 
     /**
      * Gets the name of the table to query for entries.
@@ -67,11 +67,7 @@ public abstract class StreamingIndexGenerator<T extends IndexEntry> implements A
     protected StreamingIndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
         // Initialize LevelDB with performance options
-        Options options = new Options();
-        options.createIfMissing(true);
-        options.writeBufferSize(64 * 1024 * 1024); // 64MB write buffer
-        options.cacheSize(512 * 1024 * 1024L); // 512MB cache
-        this.levelDb = factory.open(new File(levelDbPath), options);
+        this.levelDb = factory.open(new File(levelDbPath), LevelDBConfig.createOptimizedOptions());
 
         this.stopwords = loadStopwords(stopwordsPath);
         this.sqliteConn = sqliteConn;
@@ -81,17 +77,21 @@ public abstract class StreamingIndexGenerator<T extends IndexEntry> implements A
         // Register shutdown hook for cleanup
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
-                Files.walk(tempDir)
-                     .sorted((a, b) -> b.compareTo(a))
-                     .forEach(path -> {
-                         try {
-                             Files.deleteIfExists(path);
-                         } catch (IOException e) {
-                             logger.error("Failed to delete temporary file: " + path, e);
-                         }
-                     });
+                if (Files.exists(tempDir)) {
+                    Files.walk(tempDir)
+                         .sorted((a, b) -> b.compareTo(a))
+                         .forEach(path -> {
+                             try {
+                                 Files.deleteIfExists(path);
+                             } catch (IOException e) {
+                                 logger.debug("Could not delete temporary file: {} ({})", path, e.getMessage());
+                             }
+                         });
+                } else {
+                    logger.debug("Temporary directory already cleaned up: {}", tempDir);
+                }
             } catch (IOException e) {
-                logger.error("Failed to cleanup temporary directory", e);
+                logger.debug("Failed to cleanup temporary directory: {} ({})", tempDir, e.getMessage());
             }
         }));
     }
@@ -130,13 +130,19 @@ public abstract class StreamingIndexGenerator<T extends IndexEntry> implements A
      * @param positions The processed position lists to write
      * @return The temporary file containing the sorted entries
      */
-    protected File writeBatchToTempFile(Map<String, PositionList> positions) throws IOException {
+    protected File writeBatchToTempFile(ListMultimap<String, PositionList> positions) throws IOException {
         File tempFile = Files.createTempFile(tempDir, "batch-", ".tmp").toFile();
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(tempFile))) {
-            for (Map.Entry<String, PositionList> entry : positions.entrySet()) {
+            for (Map.Entry<String, Collection<PositionList>> entry : positions.asMap().entrySet()) {
+                // Merge all position lists for this term
+                PositionList mergedList = new PositionList();
+                for (PositionList list : entry.getValue()) {
+                    list.getPositions().forEach(mergedList::add);
+                }
+                
                 String line = String.format("%s\t%s\n", 
                     entry.getKey(), 
-                    Base64.getEncoder().encodeToString(entry.getValue().serialize()));
+                    Base64.getEncoder().encodeToString(mergedList.serialize()));
                 writer.write(line);
             }
         }
@@ -149,12 +155,14 @@ public abstract class StreamingIndexGenerator<T extends IndexEntry> implements A
      */
     protected void writeToLevelDB(File sortedFile) throws IOException {
         WriteBatch batch = null;
+        int batchCount = 0;
+        long startTime = System.currentTimeMillis();
+        
         try (BufferedReader reader = new BufferedReader(new FileReader(sortedFile))) {
             batch = levelDb.createWriteBatch();
             
             String currentTerm = null;
             PositionList mergedPositions = null;
-            int batchCount = 0;
             String line;
 
             while ((line = reader.readLine()) != null) {
@@ -171,44 +179,63 @@ public abstract class StreamingIndexGenerator<T extends IndexEntry> implements A
                 if (currentTerm == null) {
                     currentTerm = term;
                     mergedPositions = positions;
-                    totalNGramsGenerated++;
-                } else if (!term.equals(currentTerm)) {
-                    // Write the previous term's merged positions
-                    batch.put(bytes(currentTerm), mergedPositions.serialize());
+                } else if (!currentTerm.equals(term)) {
+                    // Write previous term
+                    writeToBatch(batch, currentTerm, mergedPositions);
                     batchCount++;
-
-                    // Reset for new term
-                    currentTerm = term;
-                    mergedPositions = positions;
-                    totalNGramsGenerated++;
-
-                    // Write batch if it's full
-                    if (batchCount >= 1000) {
+                    
+                    // Check if batch is full
+                    if (batchCount >= LevelDBConfig.BATCH_SIZE) {
                         levelDb.write(batch);
                         batch.close();
                         batch = levelDb.createWriteBatch();
                         batchCount = 0;
+                        logger.debug("Wrote batch of {} entries", LevelDBConfig.BATCH_SIZE);
+                        
+                        // Collect stats every 10 batches
+                        if (totalNGramsGenerated % (LevelDBConfig.BATCH_SIZE * 10) == 0) {
+                            LevelDBConfig.collectLevelDbStats(levelDb);
+                            long elapsed = System.currentTimeMillis() - startTime;
+                            logger.info("Write progress: {} terms, {} terms/sec", 
+                                totalNGramsGenerated,
+                                String.format("%.2f", totalNGramsGenerated * 1000.0 / elapsed));
+                        }
                     }
+                    
+                    currentTerm = term;
+                    mergedPositions = positions;
                 } else {
-                    // Merge positions for the same term
+                    // Merge positions for same term
                     positions.getPositions().forEach(mergedPositions::add);
                 }
             }
 
             // Write the last term if exists
             if (currentTerm != null) {
-                batch.put(bytes(currentTerm), mergedPositions.serialize());
+                writeToBatch(batch, currentTerm, mergedPositions);
+                batchCount++;
             }
 
             // Write final batch
             if (batchCount > 0) {
                 levelDb.write(batch);
+                logger.debug("Wrote final batch of {} entries", batchCount);
+                LevelDBConfig.collectLevelDbStats(levelDb);
             }
         } finally {
             if (batch != null) {
                 batch.close();
             }
         }
+    }
+
+    /**
+     * Writes a term and its positions to a WriteBatch using the appropriate key prefixes.
+     */
+    private void writeToBatch(WriteBatch batch, String term, PositionList positions) throws IOException {
+        // Write positions with prefix
+        batch.put(bytes(KeyPrefixes.createPositionsKey(term)), positions.serialize());
+        totalNGramsGenerated++;
     }
 
     /**
@@ -252,7 +279,7 @@ public abstract class StreamingIndexGenerator<T extends IndexEntry> implements A
                     );
                 }
 
-                File tempFile = writeBatchToTempFile(mergedPositions);
+                File tempFile = writeBatchToTempFile(batchPositions);
                 tempFiles.add(tempFile);
 
                 totalProcessed += batch.size();
@@ -305,14 +332,14 @@ public abstract class StreamingIndexGenerator<T extends IndexEntry> implements A
             levelDb.close();
         }
         // Cleanup temp directory
-        if (tempDir != null) {
+        if (tempDir != null && Files.exists(tempDir)) {
             Files.walk(tempDir)
                  .sorted((a, b) -> b.compareTo(a))
                  .forEach(path -> {
                      try {
                          Files.deleteIfExists(path);
                      } catch (IOException e) {
-                         logger.error("Failed to delete temporary file: " + path, e);
+                         logger.debug("Could not delete temporary file: {} ({})", path, e.getMessage());
                      }
                  });
         }

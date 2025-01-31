@@ -143,23 +143,23 @@ public class StreamingHypernymIndexGeneratorTest extends BaseIndexTest {
         try (DB db = factory.open(levelDbDir, options)) {
             // Test animal hypernyms
             String animalKey = "animal" + StreamingIndexGenerator.DELIMITER + "cat";
-            PositionList catPositions = PositionList.deserialize(db.get(bytes(animalKey)));
+            PositionList catPositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(animalKey))));
             assertNotNull(catPositions, "Should have positions for animal->cat");
             assertEquals(1, catPositions.size(), "Should have one position for animal->cat");
 
             animalKey = "animal" + StreamingIndexGenerator.DELIMITER + "dog";
-            PositionList dogPositions = PositionList.deserialize(db.get(bytes(animalKey)));
+            PositionList dogPositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(animalKey))));
             assertNotNull(dogPositions, "Should have positions for animal->dog");
             assertEquals(1, dogPositions.size(), "Should have one position for animal->dog");
 
             // Test fruit hypernyms
             String fruitKey = "fruit" + StreamingIndexGenerator.DELIMITER + "apple";
-            PositionList applePositions = PositionList.deserialize(db.get(bytes(fruitKey)));
+            PositionList applePositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(fruitKey))));
             assertNotNull(applePositions, "Should have positions for fruit->apple");
             assertEquals(1, applePositions.size(), "Should have one position for fruit->apple");
 
             fruitKey = "fruit" + StreamingIndexGenerator.DELIMITER + "orange";
-            PositionList orangePositions = PositionList.deserialize(db.get(bytes(fruitKey)));
+            PositionList orangePositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(fruitKey))));
             assertNotNull(orangePositions, "Should have positions for fruit->orange");
             assertEquals(1, orangePositions.size(), "Should have one position for fruit->orange");
         }
@@ -221,7 +221,7 @@ public class StreamingHypernymIndexGeneratorTest extends BaseIndexTest {
         Options options = new Options();
         try (DB db = factory.open(levelDbDir, options)) {
             String key = "animal" + StreamingIndexGenerator.DELIMITER + "cat";
-            PositionList positions = PositionList.deserialize(db.get(bytes(key)));
+            PositionList positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
             assertNotNull(positions, "Should have positions for animal->cat");
             assertEquals(2, positions.size(), "Should have two positions for animal->cat (1 from setup + 1 from mixed case)");
         }

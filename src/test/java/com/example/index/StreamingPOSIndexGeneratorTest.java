@@ -124,7 +124,7 @@ public class StreamingPOSIndexGeneratorTest extends BaseIndexTest {
             // Check that all POS tags are indexed
             String[] expectedTags = {"noun", "verb", "adj", "det", "adp", "pron", "aux"};
             for (String tag : expectedTags) {
-                byte[] value = db.get(bytes(tag));
+                byte[] value = db.get(bytes(KeyPrefixes.createPositionsKey(tag)));
                 assertNotNull(value, "POS tag " + tag + " should be indexed");
                 
                 PositionList positions = PositionList.deserialize(value);
@@ -132,11 +132,11 @@ public class StreamingPOSIndexGeneratorTest extends BaseIndexTest {
             }
             
             // Verify NOUN has multiple positions
-            PositionList nounPositions = PositionList.deserialize(db.get(bytes("noun")));
+            PositionList nounPositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey("noun"))));
             assertEquals(3, nounPositions.size(), "Should have three NOUN positions");
             
             // Verify DET is indexed despite being a stopword
-            PositionList detPositions = PositionList.deserialize(db.get(bytes("det")));
+            PositionList detPositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey("det"))));
             assertEquals(3, detPositions.size(), "Should have three DET positions");
         }
     }
@@ -184,11 +184,11 @@ public class StreamingPOSIndexGeneratorTest extends BaseIndexTest {
         Options options = new Options();
         try (DB db = factory.open(levelDbDir, options)) {
             // Check that different cases of NOUN are merged
-            PositionList nounPositions = PositionList.deserialize(db.get(bytes("noun")));
+            PositionList nounPositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey("noun"))));
             assertEquals(5, nounPositions.size(), "Should have five NOUN positions (3 from setup + 2 from mixed case)");
 
             // Check that different cases of VERB are merged
-            PositionList verbPositions = PositionList.deserialize(db.get(bytes("verb")));
+            PositionList verbPositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey("verb"))));
             assertEquals(2, verbPositions.size(), "Should have two VERB positions (1 from setup + 1 from mixed case)");
         }
     }

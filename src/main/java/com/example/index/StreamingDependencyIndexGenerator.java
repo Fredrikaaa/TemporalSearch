@@ -24,7 +24,6 @@ import com.example.logging.ProgressTracker;
  */
 public final class StreamingDependencyIndexGenerator extends StreamingIndexGenerator<DependencyEntry> {
     private static final Logger logger = LoggerFactory.getLogger(StreamingDependencyIndexGenerator.class);
-    private static final int BATCH_SIZE = 1000;
 
     private static final Set<String> BLACKLISTED_RELATIONS = Set.of(
         "punct", "det", "case", "cc"
@@ -42,18 +41,15 @@ public final class StreamingDependencyIndexGenerator extends StreamingIndexGener
 
     @Override
     protected List<DependencyEntry> fetchBatch(int offset) throws SQLException {
-        List<DependencyEntry> entries = new ArrayList<>();
-        String sql = """
-            SELECT d.document_id, d.sentence_id, d.head_token, d.dependent_token,
-                   d.relation, d.begin_char, d.end_char, doc.timestamp
-            FROM dependencies d
-            JOIN documents doc ON d.document_id = doc.document_id
-            ORDER BY d.document_id, d.sentence_id
-            LIMIT ? OFFSET ?
-        """;
-
-        try (PreparedStatement stmt = sqliteConn.prepareStatement(sql)) {
-            stmt.setInt(1, BATCH_SIZE);
+        List<DependencyEntry> batch = new ArrayList<>();
+        String query = "SELECT d.document_id, d.sentence_id, d.head_token, d.dependent_token, d.relation, " +
+                      "d.begin_char, d.end_char, doc.timestamp " +
+                      "FROM dependencies d " +
+                      "JOIN documents doc ON d.document_id = doc.document_id " +
+                      "ORDER BY d.document_id, d.sentence_id, d.begin_char LIMIT ? OFFSET ?";
+        
+        try (PreparedStatement stmt = sqliteConn.prepareStatement(query)) {
+            stmt.setInt(1, DOC_BATCH_SIZE);
             stmt.setInt(2, offset);
 
             try (ResultSet rs = stmt.executeQuery()) {
@@ -72,7 +68,7 @@ public final class StreamingDependencyIndexGenerator extends StreamingIndexGener
                         continue;
                     }
 
-                    entries.add(new DependencyEntry(
+                    batch.add(new DependencyEntry(
                         rs.getInt("document_id"),
                         rs.getInt("sentence_id"),
                         rs.getInt("begin_char"),
@@ -85,7 +81,7 @@ public final class StreamingDependencyIndexGenerator extends StreamingIndexGener
                 }
             }
         }
-        return entries;
+        return batch;
     }
 
     @Override

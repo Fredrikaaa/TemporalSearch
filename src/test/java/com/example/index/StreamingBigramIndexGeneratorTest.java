@@ -154,7 +154,7 @@ public class StreamingBigramIndexGeneratorTest extends BaseIndexTest {
 
     private void verifyBigram(DB db, String bigram, int expectedDocId, int expectedSentenceId,
             int expectedBeginChar, int expectedEndChar, int expectedCount) throws IOException {
-        byte[] value = db.get(bytes(bigram));
+        byte[] value = db.get(bytes(KeyPrefixes.createPositionsKey(bigram)));
         assertNotNull(value, "Bigram '" + bigram + "' should be indexed");
         
         PositionList positions = PositionList.deserialize(value);
