@@ -204,6 +204,12 @@
                         <configuration>
                             <finalName>nlp-pipeline</finalName>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.example.Pipeline</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
                             <filters>
                                 <filter>
                                     <artifact>*:*</artifact>
@@ -214,13 +220,6 @@
                                     </excludes>
                                 </filter>
                             </filters>
-                            <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.example.Pipeline</mainClass>
-                                </transformer>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
-                            </transformers>
-                            <minimizeJar>true</minimizeJar>
                         </configuration>
                     </execution>
                 </executions>
