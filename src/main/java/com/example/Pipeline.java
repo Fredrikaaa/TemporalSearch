@@ -30,9 +30,17 @@ public class Pipeline {
 
         // Add stage selection argument
         parser.addArgument("--stage")
-                .choices("all", "annotate", "index", "analyze")
+                .choices("all", "convert", "annotate", "index", "analyze")
                 .setDefault("all")
-                .help("Pipeline stage to run ('all' runs annotation and indexing, 'analyze' is a separate post-processing stage)");
+                .help("Pipeline stage to run ('all' runs conversion, annotation and indexing, 'analyze' is a separate post-processing stage)");
+
+        // Add conversion-specific arguments
+        parser.addArgument("-f", "--wiki-dump")
+                .help("Wikipedia dump file path (required for convert stage)");
+
+        parser.addArgument("--recreate")
+                .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
+                .help("Drop and recreate the documents table if it exists");
 
         // Add annotation-specific arguments
         parser.addArgument("-b", "--batch_size")
@@ -91,10 +99,22 @@ public class Pipeline {
 
             String stage = ns.getString("stage");
             String dbPath = ns.getString("db");
+            String wikiDumpPath = ns.getString("wiki_dump");
 
             // Validate required arguments based on stage
-            if ((stage.equals("all") || stage.equals("annotate") || stage.equals("index")) 
-                    && dbPath == null) {
+            if (stage.equals("convert") || stage.equals("all")) {
+                if (wikiDumpPath == null) {
+                    throw new ArgumentParserException("--wiki-dump is required for conversion stage", parser);
+                }
+                // If dbPath not provided, generate it from wiki dump path
+                if (dbPath == null) {
+                    dbPath = Path.of(wikiDumpPath).resolveSibling(
+                        Path.of(wikiDumpPath).getFileName().toString().replaceFirst("[.][^.]+$", ".db")
+                    ).toString();
+                }
+            }
+            
+            if ((stage.equals("annotate") || stage.equals("index")) && dbPath == null) {
                 throw new ArgumentParserException("--db is required for annotation and indexing stages", parser);
             }
 
@@ -103,6 +123,18 @@ public class Pipeline {
             }
 
             // Run selected pipeline stages
+            if (stage.equals("all") || stage.equals("convert")) {
+                System.out.println("Running conversion stage...");
+                WikiJsonToSqlite.ExtractionResult result = WikiJsonToSqlite.extractToSqlite(
+                    Path.of(wikiDumpPath),
+                    ns.getBoolean("recreate")
+                );
+                System.out.printf("Conversion complete. %d entries added to database: %s%n",
+                    result.totalEntries, result.outputDb);
+                // Update dbPath to use the output from conversion
+                dbPath = result.outputDb.toString();
+            }
+
             if (stage.equals("all") || stage.equals("annotate")) {
                 System.out.println("Running annotation stage...");
                 // Build command arguments list
