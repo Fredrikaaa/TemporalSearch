@@ -1,22 +1,17 @@
-# Java NLP Pipeline
+# Temporal Search
 
-A high-performance natural language processing pipeline that performs text annotation and n-gram indexing with advanced logging and analysis capabilities.
+A high-performance natural language processing pipeline specializing in temporal reasoning. The system performs text annotation and indexing with a focus on temporal information extraction, enabling advanced temporal-aware search capabilities.
 
 ## Features
 
-- **Text Annotation**: Uses Stanford CoreNLP for robust text analysis
-- **N-gram Indexing**: Generates unigram, bigram, and trigram indexes
-- **Parallel Processing**: Utilizes multi-threading for improved performance
-- **Flexible Storage**: Uses SQLite for document storage and LevelDB for index storage
-- **Advanced Logging**: Comprehensive logging with performance metrics and error tracking
-- **Analysis Tools**: Built-in tools for analyzing processing metrics and performance
-
-## Prerequisites
-
-- Java 17 or higher
-- Maven 3.6 or higher
-- At least 4GB of RAM (8GB recommended for large datasets)
-- Sufficient disk space for indexes (depends on data size)
+- **Text Annotation**:
+  - Uses Stanford CoreNLP for text analysis
+- **Advanced Indexing**:
+  - Multiple index types (unigram, bigram, trigram, dependency, NER date)
+  - Temporal-aware index structures
+  - Flexible storage using SQLite for documents and LevelDB for indexes
+- **Temporal Query Interface**:
+  - TBD
 
 ## Installation
 
@@ -36,11 +31,11 @@ This will create an executable JAR file in the `target` directory.
 
 ## Usage
 
-The pipeline consists of three main stages:
+The pipeline consists of three main components:
 
-1. **Annotation**: Processes text using Stanford CoreNLP
-2. **Indexing**: Generates n-gram indexes
-3. **Analysis**: Analyzes processing logs for performance metrics and error patterns
+1. **Annotation**: Processes text using Stanford CoreNLP, with special focus on temporal information
+2. **Indexing**: Generates multiple types of indexes including temporal-specific indexes
+3. **Query Interface**: ...
 
 ### Basic Usage
 
@@ -75,15 +70,6 @@ java -jar target/java-nlp-1.0-SNAPSHOT-jar-with-dependencies.jar \
     --index-type all
 ```
 
-Analyze processing logs:
-
-```bash
-java -jar target/java-nlp-1.0-SNAPSHOT-jar-with-dependencies.jar \
-    --stage analyze \
-    --log-file logs/indexer.log \
-    --report-format both
-```
-
 ### Command-Line Arguments
 
 Common Arguments:
@@ -99,46 +85,16 @@ Annotation-Specific:
 
 Indexing-Specific:
 
-- `--index-dir`: Directory for storing indexes (default: 'index')
+- `--index-dir`: Directory for storing indexes (default: 'indexes')
 - `--stopwords`: Path to stopwords file (default: stopwords.txt)
-- `--index-type`: Type of index to generate (`unigram`, `bigram`, `trigram`, or `all`)
+- `--index-type`: Type of index to generate (`unigram`, `bigram`, `trigram`, `dependency`, `ner_date`, or `all`)
 
-Analysis-Specific:
+## Project Status
 
-- `--log-file`: Path to the log file to analyze
-- `--report-dir`: Directory for storing analysis reports (default: 'reports')
-- `--report-format`: Report format (`text`, `html`, or `both`)
-
-## Log Analysis Reports
-
-The analysis stage generates detailed reports containing:
-
-- Processing summary (documents processed, n-grams generated)
-- Performance metrics (processing times, throughput)
-- Memory usage trends
-- Error patterns and frequencies
-- State verification statistics
-
-Reports can be generated in text format (for command-line viewing) and HTML format (for better visualization).
-
-## Performance Considerations
-
-1. Memory Usage:
-
-   - Adjust batch size based on available memory
-   - Monitor memory usage through log analysis
-   - Use `--limit` for testing with smaller datasets
-
-2. Processing Speed:
-
-   - Adjust number of threads based on CPU cores
-   - Use appropriate batch sizes (larger for faster processing, smaller for less memory)
-   - Monitor throughput using log analysis
-
-3. Storage:
-   - Ensure sufficient disk space for indexes
-   - Monitor index growth through log analysis
-   - Consider using SSD for better I/O performance
+- ✅ Document annotation pipeline
+- ✅ Multi-strategy indexing
+- 🚧 Temporal query interface (in design phase)
+- 🚧 Advanced temporal reasoning capabilities
 
 ## Troubleshooting
 
@@ -158,15 +114,3 @@ Reports can be generated in text format (for command-line viewing) and HTML form
    - Check log files for specific error messages
    - Run analysis stage to identify error patterns
    - Verify input data quality
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
