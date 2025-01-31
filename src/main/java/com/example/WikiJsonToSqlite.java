@@ -33,6 +33,16 @@ public class WikiJsonToSqlite {
         // Generate output database name based on input file
         Path outputDb = inputFile.resolveSibling(inputFile.getFileName().toString().replaceFirst("[.][^.]+$", ".db"));
         
+        // Count total lines first
+        long totalLines = 0;
+        try (BufferedReader countReader = new BufferedReader(
+                new InputStreamReader(new FileInputStream(inputFile.toFile()), StandardCharsets.UTF_8))) {
+            while (countReader.readLine() != null) {
+                totalLines++;
+            }
+        }
+        logger.info("Found {} lines in input file", totalLines);
+        
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + outputDb.toString())) {
             // Enable WAL mode and other optimizations for better performance
             try (Statement pragma = conn.createStatement()) {
@@ -64,7 +74,7 @@ public class WikiJsonToSqlite {
             try (PreparedStatement pstmt = conn.prepareStatement(insertSql);
                  BufferedReader reader = new BufferedReader(
                      new InputStreamReader(new FileInputStream(inputFile.toFile()), StandardCharsets.UTF_8));
-                 ProgressBar pb = new ProgressBar("Processing Wikipedia dump", 100_000_000)) { // Estimate 100M lines
+                 ProgressBar pb = new ProgressBar("Processing Wikipedia dump", totalLines)) {
 
                 String line;
                 while ((line = reader.readLine()) != null) {
@@ -84,7 +94,7 @@ public class WikiJsonToSqlite {
                             totalEntries++;
                         }
 
-                        if (++lineCount % 100_000 == 0) {
+                        if (++lineCount % 10_000 == 0) {  // Reduced batch size for more frequent updates
                             pstmt.executeBatch();
                             conn.commit();
                             logger.info("Processed {} lines, {} entries added", lineCount, totalEntries);
@@ -99,6 +109,7 @@ public class WikiJsonToSqlite {
                 // Insert any remaining batch
                 pstmt.executeBatch();
                 conn.commit();
+                logger.info("Completed processing {} lines, total {} entries added", lineCount, totalEntries);
             }
 
             return new ExtractionResult(outputDb, totalEntries);
