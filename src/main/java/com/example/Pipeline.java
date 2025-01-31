@@ -35,7 +35,7 @@ public class Pipeline {
                 .help("Pipeline stage to run ('all' runs conversion, annotation and indexing, 'analyze' is a separate post-processing stage)");
 
         // Add conversion-specific arguments
-        parser.addArgument("-f", "--wiki-dump")
+        parser.addArgument("-f", "--file")
                 .help("Wikipedia dump file path (required for convert stage)");
 
         parser.addArgument("--recreate")
@@ -99,12 +99,12 @@ public class Pipeline {
 
             String stage = ns.getString("stage");
             String dbPath = ns.getString("db");
-            String wikiDumpPath = ns.getString("wiki_dump");
+            String wikiDumpPath = ns.getString("file");
 
             // Validate required arguments based on stage
             if (stage.equals("convert") || stage.equals("all")) {
                 if (wikiDumpPath == null) {
-                    throw new ArgumentParserException("--wiki-dump is required for conversion stage", parser);
+                    throw new ArgumentParserException("--file is required for conversion stage", parser);
                 }
                 // If dbPath not provided, generate it from wiki dump path
                 if (dbPath == null) {
