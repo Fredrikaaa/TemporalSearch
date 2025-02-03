@@ -203,6 +203,10 @@ public class Annotations {
         props.setProperty("pos.model", "edu/stanford/nlp/models/pos-tagger/english-left3words-distsim.tagger");
         props.setProperty("pos.maxlen", "150");
         props.setProperty("ner.maxlen", "150");
+        props.setProperty("depparse.maxlen", "150");
+        props.setProperty("parse.maxsubsentencelength", "50");
+        props.setProperty("parse.batchSize", "10000");
+        props.setProperty("parse.concurrent", "true");
 
         // Tokenizer configurations to handle noise
         props.setProperty("tokenize.options", String.join(",",
