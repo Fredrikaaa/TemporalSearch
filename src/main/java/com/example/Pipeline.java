@@ -20,76 +20,90 @@ public class Pipeline {
         // Create argument parser
         ArgumentParser parser = ArgumentParsers.newFor("Pipeline").build()
                 .defaultHelp(true)
-                .description("Process and index text data");
+                .description("Process and index text data through multiple pipeline stages: conversion, annotation, indexing, and analysis.");
 
-        // Add common arguments
+        // Common arguments
+        parser.addArgument("-s", "--stage")
+                .choices("all", "convert", "annotate", "index", "analyze")
+                .setDefault("all")
+                .help("Pipeline stage to run:\n" +
+                      "  all      - Run all stages (conversion, annotation, indexing)\n" +
+                      "  convert  - Convert Wikipedia dump to SQLite database\n" +
+                      "  annotate - Add linguistic annotations to documents\n" +
+                      "  index    - Generate searchable indexes\n" +
+                      "  analyze  - Analyze processing logs (separate post-processing stage)");
+
         parser.addArgument("-d", "--db")
                 .required(false)
-                .help("SQLite database file path");
+                .help("Path to SQLite database file (required for annotation/indexing,\n" +
+                      "auto-generated from input file name during conversion)");
 
         parser.addArgument("--debug")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
-                .help("Enable debug logging to console");
+                .help("Enable detailed debug logging to console");
 
-        // Add stage selection argument
-        parser.addArgument("--stage")
-                .choices("all", "convert", "annotate", "index", "analyze")
-                .setDefault("all")
-                .help("Pipeline stage to run ('all' runs conversion, annotation and indexing, 'analyze' is a separate post-processing stage)");
-
-        // Add conversion-specific arguments
+        // Conversion stage arguments
         parser.addArgument("-f", "--file")
-                .help("Wikipedia dump file path (required for convert stage)");
+                .help("Path to Wikipedia dump file (required for convert stage)");
 
-        parser.addArgument("--recreate")
+        parser.addArgument("-r", "--recreate")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Drop and recreate the documents table if it exists");
 
-        // Add annotation-specific arguments
-        parser.addArgument("-b", "--batch_size")
+        // Annotation stage arguments
+        parser.addArgument("-b", "--batch-size")
                 .setDefault(1000)
                 .type(Integer.class)
-                .help("Batch size for processing (default: 1000)");
+                .help("Number of documents to process in each batch (default: 1000)");
 
         parser.addArgument("-l", "--limit")
                 .type(Integer.class)
-                .help("Limit the number of documents to process");
+                .help("Maximum number of documents to process (default: process all)");
 
         parser.addArgument("-t", "--threads")
                 .setDefault(8)
                 .type(Integer.class)
-                .help("Number of threads for CoreNLP (default: 8)");
+                .help("Number of parallel threads for CoreNLP processing (default: 8)");
 
-        // Add index-specific arguments
-        parser.addArgument("--index-dir")
+        // Index stage arguments
+        parser.addArgument("-i", "--index-dir")
                 .setDefault("indexes")
-                .help("Directory for storing indexes (default: 'indexes')");
+                .help("Directory for storing generated indexes (default: 'indexes')");
 
-        parser.addArgument("--stopwords")
+        parser.addArgument("-w", "--stopwords")
                 .setDefault("stopwords.txt")
-                .help("Path to stopwords file (default: stopwords.txt)");
+                .help("Path to file containing stopwords to exclude (default: stopwords.txt)");
 
-        parser.addArgument("--index-type")
+        parser.addArgument("-y", "--index-type")
                 .choices("unigram", "bigram", "trigram", "dependency", "ner_date", "all")
                 .setDefault("all")
-                .help("Type of index to generate (default: all)");
-
-        // Add analysis-specific arguments
-        parser.addArgument("--log-file")
-                .help("Path to the log file to analyze");
-
-        parser.addArgument("--report-dir")
-                .setDefault("reports")
-                .help("Directory for storing analysis reports (default: 'reports')");
-
-        parser.addArgument("--report-format")
-                .choices("text", "html", "both")
-                .setDefault("both")
-                .help("Format of the analysis report (default: both)");
+                .help("Type of index to generate:\n" +
+                      "  unigram    - Single word index\n" +
+                      "  bigram     - Two word phrases\n" +
+                      "  trigram    - Three word phrases\n" +
+                      "  dependency - Grammatical dependencies\n" +
+                      "  ner_date   - Named entity dates\n" +
+                      "  all        - Generate all index types (default)");
 
         parser.addArgument("-k", "--preserve-index")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
-                .help("Keep existing index data if present");
+                .help("Keep existing index data instead of regenerating");
+
+        // Analysis stage arguments
+        parser.addArgument("-g", "--log-file")
+                .help("Path to log file to analyze (required for analyze stage)");
+
+        parser.addArgument("-o", "--report-dir")
+                .setDefault("reports")
+                .help("Directory for storing analysis reports (default: 'reports')");
+
+        parser.addArgument("-m", "--report-format")
+                .choices("text", "html", "both")
+                .setDefault("both")
+                .help("Format for analysis reports:\n" +
+                      "  text - Plain text report\n" +
+                      "  html - HTML formatted report\n" +
+                      "  both - Generate both formats (default)");
 
         try {
             // Parse arguments
