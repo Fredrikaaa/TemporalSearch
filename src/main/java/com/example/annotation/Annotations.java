@@ -1,4 +1,4 @@
-package com.example;
+package com.example.annotation;
 
 import edu.stanford.nlp.pipeline.*;
 import edu.stanford.nlp.ling.*;
@@ -7,7 +7,6 @@ import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
-import com.example.nlp.CoreNLPConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.sql.*;
