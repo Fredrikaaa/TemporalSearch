@@ -1,8 +1,6 @@
 package com.example.index;
 
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.ArrayListMultimap;
-import com.google.common.base.Preconditions;
 import org.iq80.leveldb.*;
 import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import org.slf4j.Logger;
@@ -198,7 +196,11 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
                     mergedPositions = positions;
                 } else {
                     // Merge positions for same term
-                    positions.getPositions().forEach(mergedPositions::add);
+                    if (mergedPositions == null) {
+                        mergedPositions = positions;
+                    } else {
+                        positions.getPositions().forEach(mergedPositions::add);
+                    }
                 }
             }
 
@@ -237,7 +239,6 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
     public void generateIndex() throws SQLException, IOException {
         List<File> tempFiles = new ArrayList<>();
         int offset = 0;
-        long totalProcessed = 0;
 
         // Get total count of entries
         try (Statement stmt = sqliteConn.createStatement()) {
@@ -274,7 +275,6 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
                 File tempFile = writeBatchToTempFile(batchPositions);
                 tempFiles.add(tempFile);
 
-                totalProcessed += batch.size();
                 progress.updateIndex(batch.size());
                 offset += batch.size();
             }

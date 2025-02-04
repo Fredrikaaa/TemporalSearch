@@ -2,8 +2,6 @@ package com.example.logging.analysis;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -14,7 +12,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 class LogAnalysisTest {
-    private static final Logger logger = LoggerFactory.getLogger(LogAnalysisTest.class);
 
     @Test
     void testLogAnalysis(@TempDir Path tempDir) throws IOException {
