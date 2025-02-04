@@ -7,11 +7,16 @@ import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
+import com.example.nlp.CoreNLPConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.sql.*;
 import java.util.*;
 import me.tongfei.progressbar.*;
 
 public class Annotations {
+    private static final Logger logger = LoggerFactory.getLogger(Annotations.class);
+
     private static class AnnotationResult {
         final List<Map<String, Object>> annotations;
         final List<Map<String, Object>> dependencies;
@@ -68,12 +73,16 @@ public class Annotations {
         List<Map<String, Object>> dependencies = new ArrayList<>();
 
         try {
+            logger.debug("Processing document {} with length {}", documentId, text.length());
             CoreDocument document = new CoreDocument(text);
             pipeline.annotate(document);
+            logger.debug("Completed CoreNLP annotation for document {}", documentId);
 
             int sentenceId = 0;
+            int totalTokens = 0;
             for (CoreSentence sentence : document.sentences()) {
                 List<CoreLabel> tokens = sentence.tokens();
+                totalTokens += tokens.size();
 
                 // Process tokens
                 for (CoreLabel token : tokens) {
@@ -94,29 +103,34 @@ public class Annotations {
 
                 // Process dependencies
                 SemanticGraph dependencies_graph = sentence.dependencyParse();
-                for (SemanticGraphEdge edge : dependencies_graph.edgeIterable()) {
-                    IndexedWord source = edge.getSource();
-                    IndexedWord target = edge.getTarget();
+                if (dependencies_graph != null) {
+                    for (SemanticGraphEdge edge : dependencies_graph.edgeIterable()) {
+                        IndexedWord source = edge.getSource();
+                        IndexedWord target = edge.getTarget();
 
-                    int beginChar = Math.min(source.beginPosition(), target.beginPosition());
-                    int endChar = Math.max(source.endPosition(), target.endPosition());
+                        int beginChar = Math.min(source.beginPosition(), target.beginPosition());
+                        int endChar = Math.max(source.endPosition(), target.endPosition());
 
-                    Map<String, Object> dependency = new HashMap<>();
-                    dependency.put("document_id", documentId);
-                    dependency.put("sentence_id", sentenceId);
-                    dependency.put("begin_char", beginChar);
-                    dependency.put("end_char", endChar);
-                    dependency.put("head_token", source.word());
-                    dependency.put("dependent_token", target.word());
-                    dependency.put("relation", edge.getRelation().toString());
+                        Map<String, Object> dependency = new HashMap<>();
+                        dependency.put("document_id", documentId);
+                        dependency.put("sentence_id", sentenceId);
+                        dependency.put("begin_char", beginChar);
+                        dependency.put("end_char", endChar);
+                        dependency.put("head_token", source.word());
+                        dependency.put("dependent_token", target.word());
+                        dependency.put("relation", edge.getRelation().toString());
 
-                    dependencies.add(dependency);
+                        dependencies.add(dependency);
+                    }
                 }
 
                 sentenceId++;
             }
+            logger.debug("Processed document {} with {} sentences and {} tokens", 
+                      documentId, sentenceId, totalTokens);
+
         } catch (Exception e) {
-            System.err.printf("Error processing text for document %d: %s%n", documentId, e.getMessage());
+            logger.error("Error processing document {}: {}", documentId, e.getMessage(), e);
         }
 
         return new AnnotationResult(annotations, dependencies);
@@ -191,38 +205,12 @@ public class Annotations {
 
     private static void processDatabase(String dbFile, int batchSize, boolean overwrite,
             int threads, Integer limit) throws SQLException {
-        Properties props = new Properties();
-
-        // Core annotators needed for our processing
-        props.setProperty("annotators", "tokenize,ssplit,pos,lemma,ner,depparse");
-        props.setProperty("threads", String.valueOf(threads));
-
-        // Performance optimizations
-        props.setProperty("ner.useSUTime", "false");
-        props.setProperty("ner.applyNumericClassifiers", "false");
-        props.setProperty("pos.model", "edu/stanford/nlp/models/pos-tagger/english-left3words-distsim.tagger");
-        props.setProperty("pos.maxlen", "150");
-        props.setProperty("ner.maxlen", "150");
-        props.setProperty("depparse.maxlen", "150");
-        props.setProperty("parse.maxsubsentencelength", "50");
-        props.setProperty("parse.batchSize", "10000");
-        props.setProperty("parse.concurrent", "true");
-
-        // Tokenizer configurations to handle noise
-        props.setProperty("tokenize.options", String.join(",",
-                "normalizeParentheses=true", // Prevent separate parentheses tokens
-                "normalizeOtherBrackets=true", // Handle other bracket types similarly
-                "ptb3Escaping=false", // Avoid extra character escaping
-                "invertible=true" // Keep track of original text positions
-        ));
-
-        // Configure sentence splitting behavior
-        props.setProperty("ssplit.boundaryTokenRegex", "[.!?]|[.]{2,}");
-        props.setProperty("ssplit.newlineIsSentenceBreak", "two");
-        props.setProperty("tokenize.tokenizeNLs", "false");
-
-        // Create the pipeline with our configured properties
-        StanfordCoreNLP pipeline = new StanfordCoreNLP(props);
+        logger.info("Starting database processing with {} threads", threads);
+        
+        // Create optimized CoreNLP configuration
+        CoreNLPConfig config = new CoreNLPConfig(threads);
+        StanfordCoreNLP pipeline = config.createPipeline();
+        logger.info("Created CoreNLP pipeline with optimized configuration");
 
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbFile)) {
             // Enable WAL mode for better concurrent access
@@ -231,6 +219,7 @@ public class Annotations {
                 pragma.execute("PRAGMA synchronous=NORMAL");
                 pragma.execute("PRAGMA temp_store=MEMORY");
                 pragma.execute("PRAGMA cache_size=-2000"); // Use 2GB cache
+                logger.debug("Configured SQLite optimizations");
             }
 
             conn.setAutoCommit(false); // Enable transaction mode
@@ -243,6 +232,7 @@ public class Annotations {
                     ResultSet rs = stmt.executeQuery(countQuery)) {
                 totalDocuments = rs.getInt(1);
             }
+            logger.info("Found {} documents to process", totalDocuments);
 
             int processedDocuments = 0;
             int batchCount = 0;
