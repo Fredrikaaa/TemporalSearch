@@ -22,14 +22,14 @@ import com.example.logging.ProgressTracker;
  * Each entry maps a head token, relation type, and dependent token to their positions in the corpus.
  * Uses streaming processing and external sorting for efficient memory usage.
  */
-public final class StreamingDependencyIndexGenerator extends IndexGenerator<DependencyEntry> {
-    private static final Logger logger = LoggerFactory.getLogger(StreamingDependencyIndexGenerator.class);
+public final class DependencyIndexGenerator extends IndexGenerator<DependencyEntry> {
+    private static final Logger logger = LoggerFactory.getLogger(DependencyIndexGenerator.class);
 
     private static final Set<String> BLACKLISTED_RELATIONS = Set.of(
         "punct", "det", "case", "cc"
     );
 
-    public StreamingDependencyIndexGenerator(String levelDbPath, String stopwordsPath,
+    public DependencyIndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
         super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }

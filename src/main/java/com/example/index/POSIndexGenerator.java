@@ -21,10 +21,10 @@ import com.example.logging.ProgressTracker;
  * Each entry maps a POS tag to its positions in the corpus.
  * Uses streaming processing and external sorting for efficient memory usage.
  */
-public final class StreamingPOSIndexGenerator extends IndexGenerator<AnnotationEntry> {
-    private static final Logger logger = LoggerFactory.getLogger(StreamingPOSIndexGenerator.class);
+public final class POSIndexGenerator extends IndexGenerator<AnnotationEntry> {
+    private static final Logger logger = LoggerFactory.getLogger(POSIndexGenerator.class);
 
-    public StreamingPOSIndexGenerator(String levelDbPath, String stopwordsPath,
+    public POSIndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
         super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }

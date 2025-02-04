@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import java.util.*;
 import com.example.logging.ProgressTracker;
 
-public class StreamingHypernymIndexGeneratorTest extends BaseIndexTest {
+public class HypernymIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-hypernym.txt";
     private File levelDbDir;
 
@@ -133,7 +133,7 @@ public class StreamingHypernymIndexGeneratorTest extends BaseIndexTest {
     @Test
     public void testBasicHypernymIndexing() throws Exception {
         // Create and run hypernym indexer
-        try (StreamingHypernymIndexGenerator indexer = new StreamingHypernymIndexGenerator(
+        try (HypernymIndexGenerator indexer = new HypernymIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
@@ -212,7 +212,7 @@ public class StreamingHypernymIndexGeneratorTest extends BaseIndexTest {
         }
 
         // Generate index
-        try (StreamingHypernymIndexGenerator indexer = new StreamingHypernymIndexGenerator(
+        try (HypernymIndexGenerator indexer = new HypernymIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }

@@ -21,10 +21,10 @@ import com.example.logging.ProgressTracker;
  * Each entry maps a pair of consecutive lemmatized tokens to their positions in the corpus.
  * Uses streaming processing and external sorting for efficient memory usage.
  */
-public final class StreamingBigramIndexGenerator extends IndexGenerator<AnnotationEntry> {
-    private static final Logger logger = LoggerFactory.getLogger(StreamingBigramIndexGenerator.class);
+public final class BigramIndexGenerator extends IndexGenerator<AnnotationEntry> {
+    private static final Logger logger = LoggerFactory.getLogger(BigramIndexGenerator.class);
 
-    public StreamingBigramIndexGenerator(String levelDbPath, String stopwordsPath,
+    public BigramIndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
         super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }

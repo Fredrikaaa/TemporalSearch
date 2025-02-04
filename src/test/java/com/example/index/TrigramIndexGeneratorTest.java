@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import java.util.*;
 import com.example.logging.ProgressTracker;
 
-public class StreamingTrigramIndexGeneratorTest extends BaseIndexTest {
+public class TrigramIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-trigram.txt";
     private File levelDbDir;
 
@@ -116,7 +116,7 @@ public class StreamingTrigramIndexGeneratorTest extends BaseIndexTest {
     @Test
     public void testBasicTrigramIndexing() throws Exception {
         // Create and run trigram indexer
-        try (StreamingTrigramIndexGenerator indexer = new StreamingTrigramIndexGenerator(
+        try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
@@ -146,7 +146,7 @@ public class StreamingTrigramIndexGeneratorTest extends BaseIndexTest {
 
     @Test
     public void testSentenceBoundaries() throws Exception {
-        try (StreamingTrigramIndexGenerator indexer = new StreamingTrigramIndexGenerator(
+        try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }

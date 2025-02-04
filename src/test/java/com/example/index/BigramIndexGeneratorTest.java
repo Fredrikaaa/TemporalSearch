@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import java.util.*;
 import com.example.logging.ProgressTracker;
 
-public class StreamingBigramIndexGeneratorTest extends BaseIndexTest {
+public class BigramIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-bigram.txt";
     private File levelDbDir;
 
@@ -112,7 +112,7 @@ public class StreamingBigramIndexGeneratorTest extends BaseIndexTest {
     @Test
     public void testBasicIndexing() throws Exception {
         // Create and run bigram indexer
-        try (StreamingBigramIndexGenerator indexer = new StreamingBigramIndexGenerator(
+        try (BigramIndexGenerator indexer = new BigramIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
@@ -136,7 +136,7 @@ public class StreamingBigramIndexGeneratorTest extends BaseIndexTest {
 
     @Test
     public void testSentenceBoundaries() throws Exception {
-        try (StreamingBigramIndexGenerator indexer = new StreamingBigramIndexGenerator(
+        try (BigramIndexGenerator indexer = new BigramIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }

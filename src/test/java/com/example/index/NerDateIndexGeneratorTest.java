@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import java.util.*;
 import com.example.logging.ProgressTracker;
 
-public class StreamingNerDateIndexGeneratorTest extends BaseIndexTest {
+public class NerDateIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-date.txt";
     private File levelDbDir;
 
@@ -99,7 +99,7 @@ public class StreamingNerDateIndexGeneratorTest extends BaseIndexTest {
     @Test
     public void testBasicDateIndexing() throws Exception {
         // Create and run date indexer
-        try (StreamingNerDateIndexGenerator indexer = new StreamingNerDateIndexGenerator(
+        try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
@@ -153,7 +153,7 @@ public class StreamingNerDateIndexGeneratorTest extends BaseIndexTest {
         }
 
         // Generate index
-        try (StreamingNerDateIndexGenerator indexer = new StreamingNerDateIndexGenerator(
+        try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }

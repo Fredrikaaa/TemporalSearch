@@ -152,7 +152,7 @@ public class IndexRunner {
                 String bigramDir = indexDir + "/bigram";
                 System.out.printf("Stage %d/%d: Bigram%n", currentStep, totalSteps);
                 
-                try (StreamingBigramIndexGenerator indexer = new StreamingBigramIndexGenerator(
+                try (BigramIndexGenerator indexer = new BigramIndexGenerator(
                         bigramDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
@@ -174,7 +174,7 @@ public class IndexRunner {
                 String trigramDir = indexDir + "/trigram";
                 System.out.printf("Stage %d/%d: Trigram%n", currentStep, totalSteps);
                 
-                try (StreamingTrigramIndexGenerator indexer = new StreamingTrigramIndexGenerator(
+                try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
                         trigramDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
@@ -196,7 +196,7 @@ public class IndexRunner {
                 String dependencyDir = indexDir + "/dependency";
                 System.out.printf("Stage %d/%d: Dependency%n", currentStep, totalSteps);
                 
-                try (StreamingDependencyIndexGenerator indexer = new StreamingDependencyIndexGenerator(
+                try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
                         dependencyDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
@@ -218,7 +218,7 @@ public class IndexRunner {
                 String nerDateDir = indexDir + "/ner_date";
                 System.out.printf("Stage %d/%d: NER Date%n", currentStep, totalSteps);
                 
-                try (StreamingNerDateIndexGenerator indexer = new StreamingNerDateIndexGenerator(
+                try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
                         nerDateDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
@@ -240,7 +240,7 @@ public class IndexRunner {
                 String posDir = indexDir + "/pos";
                 System.out.printf("Stage %d/%d: POS%n", currentStep, totalSteps);
                 
-                try (StreamingPOSIndexGenerator indexer = new StreamingPOSIndexGenerator(
+                try (POSIndexGenerator indexer = new POSIndexGenerator(
                         posDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();
@@ -262,7 +262,7 @@ public class IndexRunner {
                 String hypernymDir = indexDir + "/hypernym";
                 System.out.printf("Stage %d/%d: Hypernym%n", currentStep, totalSteps);
                 
-                try (StreamingHypernymIndexGenerator indexer = new StreamingHypernymIndexGenerator(
+                try (HypernymIndexGenerator indexer = new HypernymIndexGenerator(
                         hypernymDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();

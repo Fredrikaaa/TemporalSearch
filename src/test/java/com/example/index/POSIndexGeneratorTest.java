@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import java.util.*;
 import com.example.logging.ProgressTracker;
 
-public class StreamingPOSIndexGeneratorTest extends BaseIndexTest {
+public class POSIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-pos.txt";
     private File levelDbDir;
 
@@ -113,7 +113,7 @@ public class StreamingPOSIndexGeneratorTest extends BaseIndexTest {
     @Test
     public void testBasicPOSIndexing() throws Exception {
         // Create and run POS indexer
-        try (StreamingPOSIndexGenerator indexer = new StreamingPOSIndexGenerator(
+        try (POSIndexGenerator indexer = new POSIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
@@ -175,7 +175,7 @@ public class StreamingPOSIndexGeneratorTest extends BaseIndexTest {
         }
 
         // Generate index
-        try (StreamingPOSIndexGenerator indexer = new StreamingPOSIndexGenerator(
+        try (POSIndexGenerator indexer = new POSIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }

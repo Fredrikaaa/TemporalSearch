@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import java.util.*;
 import com.example.logging.ProgressTracker;
 
-public class StreamingDependencyIndexGeneratorTest extends BaseIndexTest {
+public class DependencyIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-dep.txt";
     private File levelDbDir;
 
@@ -103,7 +103,7 @@ public class StreamingDependencyIndexGeneratorTest extends BaseIndexTest {
     @Test
     public void testBasicDependencyIndexing() throws Exception {
         // Create and run dependency indexer
-        try (StreamingDependencyIndexGenerator indexer = new StreamingDependencyIndexGenerator(
+        try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
@@ -168,7 +168,7 @@ public class StreamingDependencyIndexGeneratorTest extends BaseIndexTest {
         }
 
         // Generate index
-        try (StreamingDependencyIndexGenerator indexer = new StreamingDependencyIndexGenerator(
+        try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
                 levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
