@@ -13,3 +13,4 @@ indexes_backup/**
 indexes/**/*
 externalsortinginjava-0.6.2-javadoc/
 simplewiki*
+stanford-english-extra-corenlp-models-current/
