@@ -24,7 +24,7 @@ import com.example.logging.ProgressTracker;
  * normalizes them to YYYYMMDD format, and stores their positions.
  * Uses streaming processing and external sorting for efficient memory usage.
  */
-public final class StreamingNerDateIndexGenerator extends StreamingIndexGenerator<AnnotationEntry> {
+public final class StreamingNerDateIndexGenerator extends IndexGenerator<AnnotationEntry> {
     private static final Logger logger = LoggerFactory.getLogger(StreamingNerDateIndexGenerator.class);
     private static final DateTimeFormatter INPUT_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter KEY_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");

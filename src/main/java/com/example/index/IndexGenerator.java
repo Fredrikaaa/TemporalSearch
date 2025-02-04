@@ -30,8 +30,8 @@ import com.example.index.PositionList;
  *
  * @param <T> The type of index entry this generator processes
  */
-public abstract class StreamingIndexGenerator<T extends IndexEntry> implements AutoCloseable {
-    protected static final Logger logger = LoggerFactory.getLogger(StreamingIndexGenerator.class);
+public abstract class IndexGenerator<T extends IndexEntry> implements AutoCloseable {
+    protected static final Logger logger = LoggerFactory.getLogger(IndexGenerator.class);
     public static final String DELIMITER = "\0";
     public static final char ESCAPE_CHAR = '\u001F';
 
@@ -64,7 +64,7 @@ public abstract class StreamingIndexGenerator<T extends IndexEntry> implements A
         return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    protected StreamingIndexGenerator(String levelDbPath, String stopwordsPath,
+    protected IndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
         // Initialize LevelDB with performance options
         this.levelDb = factory.open(new File(levelDbPath), LevelDBConfig.createOptimizedOptions());
@@ -72,7 +72,7 @@ public abstract class StreamingIndexGenerator<T extends IndexEntry> implements A
         this.stopwords = loadStopwords(stopwordsPath);
         this.sqliteConn = sqliteConn;
         this.progress = progress;
-        this.tempDir = Files.createTempDirectory("streaming-index-");
+        this.tempDir = Files.createTempDirectory("index-");
 
         // Register shutdown hook for cleanup
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

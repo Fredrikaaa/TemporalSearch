@@ -21,7 +21,7 @@ import com.example.logging.ProgressTracker;
  * Each entry maps a sequence of three consecutive lemmatized tokens to their positions in the corpus.
  * Uses streaming processing and external sorting for efficient memory usage.
  */
-public final class StreamingTrigramIndexGenerator extends StreamingIndexGenerator<AnnotationEntry> {
+public final class StreamingTrigramIndexGenerator extends IndexGenerator<AnnotationEntry> {
     private static final Logger logger = LoggerFactory.getLogger(StreamingTrigramIndexGenerator.class);
 
     public StreamingTrigramIndexGenerator(String levelDbPath, String stopwordsPath,

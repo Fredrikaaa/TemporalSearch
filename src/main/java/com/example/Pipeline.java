@@ -20,10 +20,18 @@ public class Pipeline {
         // Create argument parser
         ArgumentParser parser = ArgumentParsers.newFor("Pipeline").build()
                 .defaultHelp(true)
-                .description("Process and index text data through multiple pipeline stages: conversion, annotation, indexing, and analysis.");
+                .description("Process and index text data through multiple pipeline stages: conversion, annotation, indexing, and analysis.")
+                .usage("${prog} [-h] <stage-specific-arguments>\n\n" +
+                       "Example usage for each stage:\n" +
+                       "  Convert:   ${prog} -s convert -f wiki.json -d output.db\n" +
+                       "  Annotate:  ${prog} -s annotate -d input.db -b 1000 -t 8\n" +
+                       "  Index:     ${prog} -s index -d input.db -i indexes -y all\n" +
+                       "  Analyze:   ${prog} -s analyze -g pipeline.log -o reports\n" +
+                       "  All:       ${prog} -s all -f wiki.json -d output.db -i indexes");
 
-        // Common arguments
-        parser.addArgument("-s", "--stage")
+        // Common arguments group
+        var commonGroup = parser.addArgumentGroup("Common arguments");
+        commonGroup.addArgument("-s", "--stage")
                 .choices("all", "convert", "annotate", "index", "analyze")
                 .setDefault("all")
                 .help("Pipeline stage to run:\n" +
@@ -31,50 +39,53 @@ public class Pipeline {
                       "  convert  - Convert Wikipedia dump to SQLite database\n" +
                       "  annotate - Add linguistic annotations to documents\n" +
                       "  index    - Generate searchable indexes\n" +
-                      "  analyze  - Analyze processing logs (separate post-processing stage)");
+                      "  analyze  - Analyze processing logs");
 
-        parser.addArgument("-d", "--db")
+        commonGroup.addArgument("-d", "--db")
                 .required(false)
                 .help("Path to SQLite database file (required for annotation/indexing,\n" +
                       "auto-generated from input file name during conversion)");
 
-        parser.addArgument("--debug")
+        commonGroup.addArgument("--debug")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Enable detailed debug logging to console");
 
-        // Conversion stage arguments
-        parser.addArgument("-f", "--file")
-                .help("Path to Wikipedia dump file (required for convert stage)");
+        // Conversion stage group
+        var convertGroup = parser.addArgumentGroup("Conversion stage arguments (required for 'convert' stage)");
+        convertGroup.addArgument("-f", "--file")
+                .help("Path to Wikipedia dump file");
 
-        parser.addArgument("-r", "--recreate")
+        convertGroup.addArgument("-r", "--recreate")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Drop and recreate the documents table if it exists");
 
-        // Annotation stage arguments
-        parser.addArgument("-b", "--batch-size")
+        // Annotation stage group
+        var annotateGroup = parser.addArgumentGroup("Annotation stage arguments (used in 'annotate' stage)");
+        annotateGroup.addArgument("-b", "--batch-size")
                 .setDefault(1000)
                 .type(Integer.class)
                 .help("Number of documents to process in each batch (default: 1000)");
 
-        parser.addArgument("-l", "--limit")
+        annotateGroup.addArgument("-l", "--limit")
                 .type(Integer.class)
                 .help("Maximum number of documents to process (default: process all)");
 
-        parser.addArgument("-t", "--threads")
+        annotateGroup.addArgument("-t", "--threads")
                 .setDefault(8)
                 .type(Integer.class)
                 .help("Number of parallel threads for CoreNLP processing (default: 8)");
 
-        // Index stage arguments
-        parser.addArgument("-i", "--index-dir")
+        // Index stage group
+        var indexGroup = parser.addArgumentGroup("Index stage arguments (used in 'index' stage)");
+        indexGroup.addArgument("-i", "--index-dir")
                 .setDefault("indexes")
                 .help("Directory for storing generated indexes (default: 'indexes')");
 
-        parser.addArgument("-w", "--stopwords")
+        indexGroup.addArgument("-w", "--stopwords")
                 .setDefault("stopwords.txt")
                 .help("Path to file containing stopwords to exclude (default: stopwords.txt)");
 
-        parser.addArgument("-y", "--index-type")
+        indexGroup.addArgument("-y", "--index-type")
                 .choices("unigram", "bigram", "trigram", "dependency", "ner_date", "all")
                 .setDefault("all")
                 .help("Type of index to generate:\n" +
@@ -85,19 +96,20 @@ public class Pipeline {
                       "  ner_date   - Named entity dates\n" +
                       "  all        - Generate all index types (default)");
 
-        parser.addArgument("-k", "--preserve-index")
+        indexGroup.addArgument("-k", "--preserve-index")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Keep existing index data instead of regenerating");
 
-        // Analysis stage arguments
-        parser.addArgument("-g", "--log-file")
-                .help("Path to log file to analyze (required for analyze stage)");
+        // Analysis stage group
+        var analysisGroup = parser.addArgumentGroup("Analysis stage arguments (required for 'analyze' stage)");
+        analysisGroup.addArgument("-g", "--log-file")
+                .help("Path to log file to analyze");
 
-        parser.addArgument("-o", "--report-dir")
+        analysisGroup.addArgument("-o", "--report-dir")
                 .setDefault("reports")
                 .help("Directory for storing analysis reports (default: 'reports')");
 
-        parser.addArgument("-m", "--report-format")
+        analysisGroup.addArgument("-m", "--report-format")
                 .choices("text", "html", "both")
                 .setDefault("both")
                 .help("Format for analysis reports:\n" +

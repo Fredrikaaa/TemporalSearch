@@ -125,22 +125,22 @@ public class StreamingTrigramIndexGeneratorTest extends BaseIndexTest {
         Options options = new Options();
         try (DB db = factory.open(levelDbDir, options)) {
             // Test trigrams with stopwords
-            verifyTrigram(db, "the" + StreamingIndexGenerator.DELIMITER + "black" + 
-                StreamingIndexGenerator.DELIMITER + "cat", 1, 0, 0, 13, 2);
+            verifyTrigram(db, "the" + IndexGenerator.DELIMITER + "black" + 
+                IndexGenerator.DELIMITER + "cat", 1, 0, 0, 13, 2);
 
             // Test regular trigrams in first document
-            verifyTrigram(db, "black" + StreamingIndexGenerator.DELIMITER + "cat" + 
-                StreamingIndexGenerator.DELIMITER + "sit", 1, 0, 4, 18, 1);
-            verifyTrigram(db, "cat" + StreamingIndexGenerator.DELIMITER + "sit" + 
-                StreamingIndexGenerator.DELIMITER + "quietly", 1, 0, 10, 26, 1);
-            verifyTrigram(db, "sit" + StreamingIndexGenerator.DELIMITER + "quietly" + 
-                StreamingIndexGenerator.DELIMITER + "now", 1, 0, 14, 30, 1);
+            verifyTrigram(db, "black" + IndexGenerator.DELIMITER + "cat" + 
+                IndexGenerator.DELIMITER + "sit", 1, 0, 4, 18, 1);
+            verifyTrigram(db, "cat" + IndexGenerator.DELIMITER + "sit" + 
+                IndexGenerator.DELIMITER + "quietly", 1, 0, 10, 26, 1);
+            verifyTrigram(db, "sit" + IndexGenerator.DELIMITER + "quietly" + 
+                IndexGenerator.DELIMITER + "now", 1, 0, 14, 30, 1);
 
             // Test trigrams in second document
-            verifyTrigram(db, "black" + StreamingIndexGenerator.DELIMITER + "cat" + 
-                StreamingIndexGenerator.DELIMITER + "run", 2, 0, 4, 18, 1);
-            verifyTrigram(db, "cat" + StreamingIndexGenerator.DELIMITER + "run" + 
-                StreamingIndexGenerator.DELIMITER + "quickly", 2, 0, 10, 26, 1);
+            verifyTrigram(db, "black" + IndexGenerator.DELIMITER + "cat" + 
+                IndexGenerator.DELIMITER + "run", 2, 0, 4, 18, 1);
+            verifyTrigram(db, "cat" + IndexGenerator.DELIMITER + "run" + 
+                IndexGenerator.DELIMITER + "quickly", 2, 0, 10, 26, 1);
         }
     }
 
@@ -155,10 +155,10 @@ public class StreamingTrigramIndexGeneratorTest extends BaseIndexTest {
         Options options = new Options();
         try (DB db = factory.open(levelDbDir, options)) {
             // Verify no trigrams cross sentence boundaries
-            assertNull(db.get(bytes(KeyPrefixes.createPositionsKey("quietly" + StreamingIndexGenerator.DELIMITER + "now" + 
-                StreamingIndexGenerator.DELIMITER + "it"))), "Trigram should not cross sentence boundary");
-            assertNull(db.get(bytes(KeyPrefixes.createPositionsKey("now" + StreamingIndexGenerator.DELIMITER + "it" + 
-                StreamingIndexGenerator.DELIMITER + "purr"))), "Trigram should not cross sentence boundary");
+            assertNull(db.get(bytes(KeyPrefixes.createPositionsKey("quietly" + IndexGenerator.DELIMITER + "now" + 
+                IndexGenerator.DELIMITER + "it"))), "Trigram should not cross sentence boundary");
+            assertNull(db.get(bytes(KeyPrefixes.createPositionsKey("now" + IndexGenerator.DELIMITER + "it" + 
+                IndexGenerator.DELIMITER + "purr"))), "Trigram should not cross sentence boundary");
         }
     }
 

@@ -21,7 +21,7 @@ import com.example.logging.ProgressTracker;
  * Each entry maps a POS tag to its positions in the corpus.
  * Uses streaming processing and external sorting for efficient memory usage.
  */
-public final class StreamingPOSIndexGenerator extends StreamingIndexGenerator<AnnotationEntry> {
+public final class StreamingPOSIndexGenerator extends IndexGenerator<AnnotationEntry> {
     private static final Logger logger = LoggerFactory.getLogger(StreamingPOSIndexGenerator.class);
 
     public StreamingPOSIndexGenerator(String levelDbPath, String stopwordsPath,

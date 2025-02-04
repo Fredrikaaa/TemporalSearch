@@ -22,7 +22,7 @@ import com.example.logging.ProgressTracker;
  * Each entry maps a head token, relation type, and dependent token to their positions in the corpus.
  * Uses streaming processing and external sorting for efficient memory usage.
  */
-public final class StreamingDependencyIndexGenerator extends StreamingIndexGenerator<DependencyEntry> {
+public final class StreamingDependencyIndexGenerator extends IndexGenerator<DependencyEntry> {
     private static final Logger logger = LoggerFactory.getLogger(StreamingDependencyIndexGenerator.class);
 
     private static final Set<String> BLACKLISTED_RELATIONS = Set.of(

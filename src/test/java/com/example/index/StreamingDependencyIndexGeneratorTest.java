@@ -112,24 +112,24 @@ public class StreamingDependencyIndexGeneratorTest extends BaseIndexTest {
         Options options = new Options();
         try (DB db = factory.open(levelDbDir, options)) {
             // Test amod relations
-            String key = "fox" + StreamingIndexGenerator.DELIMITER + "amod" + StreamingIndexGenerator.DELIMITER + "quick";
+            String key = "fox" + IndexGenerator.DELIMITER + "amod" + IndexGenerator.DELIMITER + "quick";
             PositionList positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
             assertNotNull(positions, "Should have positions for fox-amod->quick");
             assertEquals(1, positions.size(), "Should have one position for fox-amod->quick");
 
-            key = "fox" + StreamingIndexGenerator.DELIMITER + "amod" + StreamingIndexGenerator.DELIMITER + "brown";
+            key = "fox" + IndexGenerator.DELIMITER + "amod" + IndexGenerator.DELIMITER + "brown";
             positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
             assertNotNull(positions, "Should have positions for fox-amod->brown");
             assertEquals(1, positions.size(), "Should have one position for fox-amod->brown");
 
             // Test nsubj relations
-            key = "jumps" + StreamingIndexGenerator.DELIMITER + "nsubj" + StreamingIndexGenerator.DELIMITER + "fox";
+            key = "jumps" + IndexGenerator.DELIMITER + "nsubj" + IndexGenerator.DELIMITER + "fox";
             positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
             assertNotNull(positions, "Should have positions for jumps-nsubj->fox");
             assertEquals(1, positions.size(), "Should have one position for jumps-nsubj->fox");
 
             // Test advmod relations
-            key = "jumps" + StreamingIndexGenerator.DELIMITER + "advmod" + StreamingIndexGenerator.DELIMITER + "over";
+            key = "jumps" + IndexGenerator.DELIMITER + "advmod" + IndexGenerator.DELIMITER + "over";
             positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
             assertNotNull(positions, "Should have positions for jumps-advmod->over");
             assertEquals(1, positions.size(), "Should have one position for jumps-advmod->over");
@@ -176,7 +176,7 @@ public class StreamingDependencyIndexGeneratorTest extends BaseIndexTest {
         // Verify case normalization
         Options options = new Options();
         try (DB db = factory.open(levelDbDir, options)) {
-            String key = "fox" + StreamingIndexGenerator.DELIMITER + "amod" + StreamingIndexGenerator.DELIMITER + "quick";
+            String key = "fox" + IndexGenerator.DELIMITER + "amod" + IndexGenerator.DELIMITER + "quick";
             PositionList positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
             assertNotNull(positions, "Should have positions for fox-amod->quick");
             assertEquals(3, positions.size(), "Should have three positions for fox-amod->quick (1 from setup + 2 from mixed case)");

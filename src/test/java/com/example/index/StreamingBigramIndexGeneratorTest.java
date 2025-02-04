@@ -121,16 +121,16 @@ public class StreamingBigramIndexGeneratorTest extends BaseIndexTest {
         Options options = new Options();
         try (DB db = factory.open(levelDbDir, options)) {
             // Test bigrams with stopwords
-            verifyBigram(db, "the" + StreamingIndexGenerator.DELIMITER + "black", 1, 0, 0, 9, 2); // Appears in both documents
+            verifyBigram(db, "the" + IndexGenerator.DELIMITER + "black", 1, 0, 0, 9, 2); // Appears in both documents
 
             // Test regular bigrams
-            verifyBigram(db, "black" + StreamingIndexGenerator.DELIMITER + "cat", 1, 0, 4, 13, 1);
-            verifyBigram(db, "cat" + StreamingIndexGenerator.DELIMITER + "sit", 1, 0, 10, 18, 1);
-            verifyBigram(db, "sit" + StreamingIndexGenerator.DELIMITER + "quietly", 1, 0, 14, 26, 1);
+            verifyBigram(db, "black" + IndexGenerator.DELIMITER + "cat", 1, 0, 4, 13, 1);
+            verifyBigram(db, "cat" + IndexGenerator.DELIMITER + "sit", 1, 0, 10, 18, 1);
+            verifyBigram(db, "sit" + IndexGenerator.DELIMITER + "quietly", 1, 0, 14, 26, 1);
 
             // Test bigrams in second document
-            verifyBigram(db, "black" + StreamingIndexGenerator.DELIMITER + "dog", 2, 0, 4, 13, 1);
-            verifyBigram(db, "dog" + StreamingIndexGenerator.DELIMITER + "bark", 2, 0, 10, 19, 1);
+            verifyBigram(db, "black" + IndexGenerator.DELIMITER + "dog", 2, 0, 4, 13, 1);
+            verifyBigram(db, "dog" + IndexGenerator.DELIMITER + "bark", 2, 0, 10, 19, 1);
         }
     }
 
@@ -145,9 +145,9 @@ public class StreamingBigramIndexGeneratorTest extends BaseIndexTest {
         Options options = new Options();
         try (DB db = factory.open(levelDbDir, options)) {
             // Verify no bigrams cross sentence boundaries
-            assertNull(db.get(bytes("quietly" + StreamingIndexGenerator.DELIMITER + "it")),
+            assertNull(db.get(bytes("quietly" + IndexGenerator.DELIMITER + "it")),
                     "Bigram should not cross sentence boundary");
-            assertNull(db.get(bytes("softly" + StreamingIndexGenerator.DELIMITER + "the")),
+            assertNull(db.get(bytes("softly" + IndexGenerator.DELIMITER + "the")),
                     "Bigram should not cross sentence boundary");
         }
     }

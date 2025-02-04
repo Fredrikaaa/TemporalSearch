@@ -1,14 +1,10 @@
 package com.example.index;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * Configuration class for index generation settings.
  * Handles settings related to index preservation and safety checks.
  */
 public class IndexConfig {
-    private static final Logger logger = LoggerFactory.getLogger(IndexConfig.class);
     
     private final boolean preserveExistingIndex;
     private final long sizeThresholdForConfirmation;

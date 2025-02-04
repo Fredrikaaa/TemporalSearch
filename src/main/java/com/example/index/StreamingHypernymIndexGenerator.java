@@ -22,7 +22,7 @@ import com.example.logging.ProgressTracker;
  * Each entry maps a hypernym-hyponym (category-instance) pair to its positions in the corpus.
  * Uses streaming processing and external sorting for efficient memory usage.
  */
-public final class StreamingHypernymIndexGenerator extends StreamingIndexGenerator<DependencyEntry> {
+public final class StreamingHypernymIndexGenerator extends IndexGenerator<DependencyEntry> {
     private static final Logger logger = LoggerFactory.getLogger(StreamingHypernymIndexGenerator.class);
 
     private static final Set<String> HYPERNYM_RELATIONS = Set.of(
