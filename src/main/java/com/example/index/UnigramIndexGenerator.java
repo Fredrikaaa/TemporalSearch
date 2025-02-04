@@ -21,10 +21,10 @@ import com.example.logging.ProgressTracker;
  * Each entry maps a single lemmatized token to its positions in the corpus.
  * Uses streaming processing and external sorting for efficient memory usage.
  */
-public final class StreamingUnigramIndexGenerator extends IndexGenerator<AnnotationEntry> {
-    private static final Logger logger = LoggerFactory.getLogger(StreamingUnigramIndexGenerator.class);
+public final class UnigramIndexGenerator extends IndexGenerator<AnnotationEntry> {
+    private static final Logger logger = LoggerFactory.getLogger(UnigramIndexGenerator.class);
 
-    public StreamingUnigramIndexGenerator(String levelDbPath, String stopwordsPath,
+    public UnigramIndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
         super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }

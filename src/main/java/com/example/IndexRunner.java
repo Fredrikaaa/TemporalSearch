@@ -130,7 +130,7 @@ public class IndexRunner {
                 Path unigramPath = Path.of(unigramDir);
                 IndexUtils.safeDeleteIndex(unigramPath, indexConfig);
                 
-                try (StreamingUnigramIndexGenerator indexer = new StreamingUnigramIndexGenerator(
+                try (UnigramIndexGenerator indexer = new UnigramIndexGenerator(
                         unigramDir, stopwordsPath, conn, progress)) {
                     long stepStart = System.nanoTime();
                     indexer.generateIndex();

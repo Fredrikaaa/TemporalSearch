@@ -11,18 +11,12 @@ import com.example.logging.ProgressTracker;
 import com.google.code.externalsorting.ExternalSort;
 
 import java.io.*;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.ResultSet;
 import java.util.*;
-
-// Add imports for Position and PositionList
-import com.example.index.Position;
-import com.example.index.PositionList;
 
 /**
  * Abstract base class for streaming index generation that processes large datasets efficiently
@@ -43,8 +37,6 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
     private long totalNGramsGenerated = 0;
 
     // Memory and processing configuration
-    private static final int MAX_MEMORY_MB = 512;
-    private static final int BUFFER_SIZE = 8 * 1024 * 1024; // 8MB
     protected static final int DOC_BATCH_SIZE = 1000; // Smaller batch size for more frequent progress updates
 
     /**

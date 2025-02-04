@@ -26,11 +26,11 @@ import org.slf4j.LoggerFactory;
 import com.example.logging.ProgressTracker;
 
 @ExtendWith(MockitoExtension.class)
-class StreamingUnigramIndexGeneratorTest extends BaseIndexTest {
-    private static final Logger logger = LoggerFactory.getLogger(StreamingUnigramIndexGeneratorTest.class);
+class UnigramIndexGeneratorTest extends BaseIndexTest {
+    private static final Logger logger = LoggerFactory.getLogger(UnigramIndexGeneratorTest.class);
     private Path levelDbPath;
     private Path stopwordsPath;
-    private StreamingUnigramIndexGenerator generator;
+    private UnigramIndexGenerator generator;
 
     @Mock
     private ProgressTracker progress;
@@ -53,7 +53,7 @@ class StreamingUnigramIndexGeneratorTest extends BaseIndexTest {
         Files.writeString(stopwordsPath, "the\na\nan\n");
 
         // Create generator
-        generator = new StreamingUnigramIndexGenerator(
+        generator = new UnigramIndexGenerator(
             levelDbPath.toString(),
             stopwordsPath.toString(),
             sqliteConn,
