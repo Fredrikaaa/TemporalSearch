@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.*;
 import java.util.*;
 import me.tongfei.progressbar.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class Annotations {
     private static final Logger logger = LoggerFactory.getLogger(Annotations.class);
@@ -73,66 +74,101 @@ public class Annotations {
 
         try {
             logger.debug("Processing document {} with length {}", documentId, text.length());
-            CoreDocument document = new CoreDocument(text);
-            pipeline.annotate(document);
-            logger.debug("Completed CoreNLP annotation for document {}", documentId);
-
-            int sentenceId = 0;
-            int totalTokens = 0;
-            for (CoreSentence sentence : document.sentences()) {
-                List<CoreLabel> tokens = sentence.tokens();
-                totalTokens += tokens.size();
-
-                // Process tokens
-                for (CoreLabel token : tokens) {
-                    Map<String, Object> annotation = new HashMap<>();
-                    annotation.put("document_id", documentId);
-                    annotation.put("sentence_id", sentenceId);
-                    annotation.put("begin_char", token.beginPosition());
-                    annotation.put("end_char", token.endPosition());
-                    annotation.put("token", token.word());
-                    annotation.put("lemma", token.lemma());
-                    annotation.put("pos", token.tag());
-                    annotation.put("ner", token.ner());
-                    annotation.put("normalized_ner",
-                            token.get(CoreAnnotations.NormalizedNamedEntityTagAnnotation.class));
-
-                    annotations.add(annotation);
-                }
-
-                // Process dependencies
-                SemanticGraph dependencies_graph = sentence.dependencyParse();
-                if (dependencies_graph != null) {
-                    for (SemanticGraphEdge edge : dependencies_graph.edgeIterable()) {
-                        IndexedWord source = edge.getSource();
-                        IndexedWord target = edge.getTarget();
-
-                        int beginChar = Math.min(source.beginPosition(), target.beginPosition());
-                        int endChar = Math.max(source.endPosition(), target.endPosition());
-
-                        Map<String, Object> dependency = new HashMap<>();
-                        dependency.put("document_id", documentId);
-                        dependency.put("sentence_id", sentenceId);
-                        dependency.put("begin_char", beginChar);
-                        dependency.put("end_char", endChar);
-                        dependency.put("head_token", source.word());
-                        dependency.put("dependent_token", target.word());
-                        dependency.put("relation", edge.getRelation().toString());
-
-                        dependencies.add(dependency);
+            
+            // Create text segmenter for chunking
+            TextSegmenter segmenter = new TextSegmenter();
+            List<String> chunks = segmenter.chunkDocument(text);
+            logger.debug("Split document {} into {} chunks", documentId, chunks.size());
+            
+            // Track sentence IDs across chunks
+            AtomicInteger globalSentenceId = new AtomicInteger(0);
+            
+            // Process each chunk
+            for (String chunk : chunks) {
+                CoreDocument document = new CoreDocument(chunk);
+                pipeline.annotate(document);
+                
+                int sentenceId = globalSentenceId.get();
+                for (CoreSentence sentence : document.sentences()) {
+                    List<CoreLabel> tokens = sentence.tokens();
+                    
+                    // Skip sentences that are likely duplicates from overlap regions
+                    if (isOverlapSentence(chunk, sentence)) {
+                        continue;
                     }
-                }
+                    
+                    // Process tokens
+                    for (CoreLabel token : tokens) {
+                        Map<String, Object> annotation = new HashMap<>();
+                        annotation.put("document_id", documentId);
+                        annotation.put("sentence_id", sentenceId);
+                        annotation.put("begin_char", token.beginPosition());
+                        annotation.put("end_char", token.endPosition());
+                        annotation.put("token", token.word());
+                        annotation.put("lemma", token.lemma());
+                        annotation.put("pos", token.tag());
+                        annotation.put("ner", token.ner());
+                        annotation.put("normalized_ner",
+                                token.get(CoreAnnotations.NormalizedNamedEntityTagAnnotation.class));
 
-                sentenceId++;
+                        annotations.add(annotation);
+                    }
+
+                    // Process dependencies
+                    SemanticGraph dependencies_graph = sentence.dependencyParse();
+                    if (dependencies_graph != null) {
+                        for (SemanticGraphEdge edge : dependencies_graph.edgeIterable()) {
+                            IndexedWord source = edge.getSource();
+                            IndexedWord target = edge.getTarget();
+
+                            int beginChar = Math.min(source.beginPosition(), target.beginPosition());
+                            int endChar = Math.max(source.endPosition(), target.endPosition());
+
+                            Map<String, Object> dependency = new HashMap<>();
+                            dependency.put("document_id", documentId);
+                            dependency.put("sentence_id", sentenceId);
+                            dependency.put("begin_char", beginChar);
+                            dependency.put("end_char", endChar);
+                            dependency.put("head_token", source.word());
+                            dependency.put("dependent_token", target.word());
+                            dependency.put("relation", edge.getRelation().toString());
+
+                            dependencies.add(dependency);
+                        }
+                    }
+                    
+                    sentenceId++;
+                }
+                globalSentenceId.set(sentenceId);
             }
-            logger.debug("Processed document {} with {} sentences and {} tokens", 
-                      documentId, sentenceId, totalTokens);
+            
+            logger.debug("Processed document {} with {} sentences", 
+                      documentId, globalSentenceId.get());
 
         } catch (Exception e) {
             logger.error("Error processing document {}: {}", documentId, e.getMessage(), e);
         }
 
         return new AnnotationResult(annotations, dependencies);
+    }
+    
+    /**
+     * Checks if a sentence is likely from an overlap region by checking if it starts
+     * near the beginning of a non-first chunk or ends near the end of a non-last chunk.
+     */
+    private static boolean isOverlapSentence(String chunk, CoreSentence sentence) {
+        List<CoreLabel> tokens = sentence.tokens();
+        if (tokens.isEmpty()) {
+            return false;
+        }
+        
+        int sentenceStart = tokens.get(0).beginPosition();
+        int sentenceEnd = tokens.get(tokens.size() - 1).endPosition();
+        
+        // If sentence starts in first 100 chars of chunk (overlap size) and isn't at start
+        // or ends in last 100 chars and isn't at end, it's likely an overlap sentence
+        return (sentenceStart < 100 && sentenceStart > 0) || 
+               (sentenceEnd > chunk.length() - 100 && sentenceEnd < chunk.length());
     }
 
     private static void insertData(Connection conn, List<Map<String, Object>> annotations,
