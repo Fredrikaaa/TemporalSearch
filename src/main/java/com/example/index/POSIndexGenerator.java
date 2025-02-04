@@ -22,7 +22,6 @@ import com.example.logging.ProgressTracker;
  * Uses streaming processing and external sorting for efficient memory usage.
  */
 public final class POSIndexGenerator extends IndexGenerator<AnnotationEntry> {
-    private static final Logger logger = LoggerFactory.getLogger(POSIndexGenerator.class);
 
     public POSIndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {

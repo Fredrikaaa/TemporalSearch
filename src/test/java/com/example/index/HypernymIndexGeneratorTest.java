@@ -7,8 +7,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.*;
 import java.sql.*;
-import java.time.LocalDate;
-import java.util.*;
 import com.example.logging.ProgressTracker;
 
 public class HypernymIndexGeneratorTest extends BaseIndexTest {
