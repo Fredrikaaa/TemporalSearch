@@ -29,6 +29,11 @@ public final class UnigramIndexGenerator extends IndexGenerator<AnnotationEntry>
         super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }
 
+    public UnigramIndexGenerator(String levelDbPath, String stopwordsPath,
+            Connection sqliteConn, ProgressTracker progress, IndexConfig config) throws IOException {
+        super(levelDbPath, stopwordsPath, sqliteConn, progress, config);
+    }
+
     @Override
     protected List<AnnotationEntry> fetchBatch(int offset) throws SQLException {
         List<AnnotationEntry> entries = new ArrayList<>();

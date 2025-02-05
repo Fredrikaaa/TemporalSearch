@@ -29,6 +29,11 @@ public final class TrigramIndexGenerator extends IndexGenerator<AnnotationEntry>
         super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }
 
+    public TrigramIndexGenerator(String levelDbPath, String stopwordsPath,
+            Connection sqliteConn, ProgressTracker progress, IndexConfig config) throws IOException {
+        super(levelDbPath, stopwordsPath, sqliteConn, progress, config);
+    }
+
     @Override
     protected List<AnnotationEntry> fetchBatch(int offset) throws SQLException {
         List<AnnotationEntry> batch = new ArrayList<>();

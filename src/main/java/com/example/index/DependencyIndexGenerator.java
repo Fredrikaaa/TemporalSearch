@@ -34,6 +34,11 @@ public final class DependencyIndexGenerator extends IndexGenerator<DependencyEnt
         super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }
 
+    public DependencyIndexGenerator(String levelDbPath, String stopwordsPath,
+            Connection sqliteConn, ProgressTracker progress, IndexConfig config) throws IOException {
+        super(levelDbPath, stopwordsPath, sqliteConn, progress, config);
+    }
+
     @Override
     protected String getTableName() {
         return "dependencies";

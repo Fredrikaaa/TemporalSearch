@@ -40,6 +40,11 @@ public final class HypernymIndexGenerator extends IndexGenerator<DependencyEntry
         super(levelDbPath, stopwordsPath, sqliteConn, progress);
     }
 
+    public HypernymIndexGenerator(String levelDbPath, String stopwordsPath,
+            Connection sqliteConn, ProgressTracker progress, IndexConfig config) throws IOException {
+        super(levelDbPath, stopwordsPath, sqliteConn, progress, config);
+    }
+
     @Override
     protected String getTableName() {
         return "dependencies";

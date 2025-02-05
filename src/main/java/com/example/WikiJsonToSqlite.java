@@ -30,6 +30,10 @@ public class WikiJsonToSqlite {
     }
 
     public static ExtractionResult extractToSqlite(Path inputFile, boolean recreate) throws Exception {
+        return extractToSqlite(inputFile, recreate, null);
+    }
+
+    public static ExtractionResult extractToSqlite(Path inputFile, boolean recreate, Integer limit) throws Exception {
         // Generate output database name based on input file
         Path outputDb = inputFile.resolveSibling(inputFile.getFileName().toString().replaceFirst("[.][^.]+$", ".db"));
         
@@ -92,6 +96,15 @@ public class WikiJsonToSqlite {
                             pstmt.setString(3, getTextValue(item, "timestamp"));
                             pstmt.addBatch();
                             totalEntries++;
+
+                            // Check if we've hit the limit
+                            if (limit != null && totalEntries >= limit) {
+                                // Execute final batch and break
+                                pstmt.executeBatch();
+                                conn.commit();
+                                logger.info("Reached limit of {} entries", limit);
+                                break;
+                            }
                         }
 
                         if (++lineCount % 10_000 == 0) {  // Reduced batch size for more frequent updates

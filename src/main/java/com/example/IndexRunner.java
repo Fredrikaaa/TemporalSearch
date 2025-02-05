@@ -59,6 +59,10 @@ public class IndexRunner {
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Keep existing index data if present");
 
+        parser.addArgument("-l", "--limit")
+                .type(Integer.class)
+                .help("Maximum number of documents to process");
+
         try {
             // Parse arguments
             Namespace ns = parser.parseArgs(args);
@@ -74,7 +78,8 @@ public class IndexRunner {
                 ns.getString("stopwords"),
                 ns.getInt("batch_size"),
                 ns.getString("type"),
-                ns.getBoolean("preserve_index")
+                ns.getBoolean("preserve_index"),
+                ns.getInt("limit")
             );
         } catch (ArgumentParserException e) {
             parser.handleError(e);
@@ -88,16 +93,22 @@ public class IndexRunner {
 
     public static void runIndexing(String dbPath, String indexDir, String stopwordsPath,
             int batchSize, String indexType, boolean preserveIndex) throws Exception {
+        runIndexing(dbPath, indexDir, stopwordsPath, batchSize, indexType, preserveIndex, null);
+    }
+
+    public static void runIndexing(String dbPath, String indexDir, String stopwordsPath,
+            int batchSize, String indexType, boolean preserveIndex, Integer limit) throws Exception {
         
         IndexingMetrics metrics = new IndexingMetrics();
         ProgressTracker progress = new ProgressTracker();
         
-        logger.info("Starting index generation with parameters: dbPath={}, indexDir={}, batchSize={}, preserveIndex={}",
-            dbPath, indexDir, batchSize, preserveIndex);
+        logger.info("Starting index generation with parameters: dbPath={}, indexDir={}, batchSize={}, preserveIndex={}, limit={}",
+            dbPath, indexDir, batchSize, preserveIndex, limit);
 
         // Create index configuration
         IndexConfig indexConfig = new IndexConfig.Builder()
             .withPreserveExistingIndex(preserveIndex)
+            .withLimit(limit)
             .build();
 
         // Ensure index directory exists
@@ -133,7 +144,7 @@ public class IndexRunner {
                 if (indexType.equals("all") || indexType.equals("unigram")) {
                     metrics.startBatch(batchSize);
                     try (UnigramIndexGenerator gen = new UnigramIndexGenerator(
-                            indexDir + "/unigram", stopwordsPath, conn, progress)) {
+                            indexDir + "/unigram", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess();
                     } catch (Exception e) {
@@ -145,7 +156,7 @@ public class IndexRunner {
                 if (indexType.equals("all") || indexType.equals("bigram")) {
                     metrics.startBatch(batchSize);
                     try (BigramIndexGenerator gen = new BigramIndexGenerator(
-                            indexDir + "/bigram", stopwordsPath, conn, progress)) {
+                            indexDir + "/bigram", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess();
                     } catch (Exception e) {
@@ -157,7 +168,7 @@ public class IndexRunner {
                 if (indexType.equals("all") || indexType.equals("trigram")) {
                     metrics.startBatch(batchSize);
                     try (TrigramIndexGenerator gen = new TrigramIndexGenerator(
-                            indexDir + "/trigram", stopwordsPath, conn, progress)) {
+                            indexDir + "/trigram", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess();
                     } catch (Exception e) {
@@ -169,7 +180,7 @@ public class IndexRunner {
                 if (indexType.equals("all") || indexType.equals("dependency")) {
                     metrics.startBatch(batchSize);
                     try (DependencyIndexGenerator gen = new DependencyIndexGenerator(
-                            indexDir + "/dependency", stopwordsPath, conn, progress)) {
+                            indexDir + "/dependency", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess();
                     } catch (Exception e) {
@@ -181,7 +192,7 @@ public class IndexRunner {
                 if (indexType.equals("all") || indexType.equals("ner_date")) {
                     metrics.startBatch(batchSize);
                     try (NerDateIndexGenerator gen = new NerDateIndexGenerator(
-                            indexDir + "/ner_date", stopwordsPath, conn, progress)) {
+                            indexDir + "/ner_date", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess();
                     } catch (Exception e) {
@@ -193,7 +204,7 @@ public class IndexRunner {
                 if (indexType.equals("all") || indexType.equals("pos")) {
                     metrics.startBatch(batchSize);
                     try (POSIndexGenerator gen = new POSIndexGenerator(
-                            indexDir + "/pos", stopwordsPath, conn, progress)) {
+                            indexDir + "/pos", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess();
                     } catch (Exception e) {
@@ -205,7 +216,7 @@ public class IndexRunner {
                 if (indexType.equals("all") || indexType.equals("hypernym")) {
                     metrics.startBatch(batchSize);
                     try (HypernymIndexGenerator gen = new HypernymIndexGenerator(
-                            indexDir + "/hypernym", stopwordsPath, conn, progress)) {
+                            indexDir + "/hypernym", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess();
                     } catch (Exception e) {

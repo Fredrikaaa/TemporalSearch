@@ -48,6 +48,10 @@ public class Pipeline {
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Enable detailed debug logging to console");
 
+        commonGroup.addArgument("-l", "--limit")
+                .type(Integer.class)
+                .help("Maximum documents to process in ANY stage (applies globally)");
+
         // Conversion stage group
         var convertGroup = parser.addArgumentGroup("Conversion stage arguments (required for 'convert' stage)");
         convertGroup.addArgument("-f", "--file")
@@ -63,10 +67,6 @@ public class Pipeline {
                 .setDefault(1000)
                 .type(Integer.class)
                 .help("Number of documents to process in each batch (default: 1000)");
-
-        annotateGroup.addArgument("-l", "--limit")
-                .type(Integer.class)
-                .help("Maximum number of documents to process (default: process all)");
 
         annotateGroup.addArgument("-t", "--threads")
                 .setDefault(8)
@@ -154,7 +154,8 @@ public class Pipeline {
                 System.out.println("Running conversion stage...");
                 WikiJsonToSqlite.ExtractionResult result = WikiJsonToSqlite.extractToSqlite(
                     Path.of(wikiDumpPath),
-                    ns.getBoolean("recreate")
+                    ns.getBoolean("recreate"),
+                    ns.getInt("limit")
                 );
                 System.out.printf("Conversion complete. %d entries added to database: %s%n",
                     result.totalEntries, result.outputDb);
@@ -173,7 +174,7 @@ public class Pipeline {
                 annotationArgs.add("-t");
                 annotationArgs.add(ns.getInt("threads").toString());
                 
-                // Only add limit if specified
+                // Add global limit if specified
                 Integer limit = ns.getInt("limit");
                 if (limit != null) {
                     annotationArgs.add("-l");
@@ -191,7 +192,8 @@ public class Pipeline {
                         ns.getString("stopwords"),
                         ns.getInt("batch_size"),
                         ns.getString("index_type"),
-                        ns.getBoolean("preserve_index"));
+                        ns.getBoolean("preserve_index"),
+                        ns.getInt("limit"));
             }
 
             if (stage.equals("analyze")) {

@@ -34,6 +34,7 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
     private final ProgressTracker progress;
     private final Path tempDir;
     private long totalNGramsGenerated = 0;
+    private final IndexConfig config;
 
     // Memory and processing configuration
     protected static final int DOC_BATCH_SIZE = 1000; // Smaller batch size for more frequent progress updates
@@ -57,6 +58,11 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
 
     protected IndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
+        this(levelDbPath, stopwordsPath, sqliteConn, progress, new IndexConfig.Builder().build());
+    }
+
+    protected IndexGenerator(String levelDbPath, String stopwordsPath,
+            Connection sqliteConn, ProgressTracker progress, IndexConfig config) throws IOException {
         // Initialize LevelDB with performance options
         this.levelDb = factory.open(new File(levelDbPath), LevelDBConfig.createOptimizedOptions());
 
@@ -64,6 +70,7 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
         this.sqliteConn = sqliteConn;
         this.progress = progress;
         this.tempDir = Files.createTempDirectory("index-");
+        this.config = config;
 
         // Register shutdown hook for cleanup
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -244,94 +251,75 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
 
         // Get total count of entries
         try (Statement stmt = sqliteConn.createStatement()) {
-            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM " + getTableName());
+            String countQuery = "SELECT COUNT(*) FROM " + getTableName();
+            if (config.getLimit() != null) {
+                countQuery = String.format("SELECT MIN(%d, COUNT(*)) FROM %s", config.getLimit(), getTableName());
+            }
+            ResultSet rs = stmt.executeQuery(countQuery);
             if (rs.next()) {
                 long totalEntries = rs.getLong(1);
                 progress.startIndex("entries", totalEntries);
+                logger.info("Found {} entries to process{}", totalEntries,
+                    config.getLimit() != null ? String.format(" (limited to %d)", config.getLimit()) : "");
             }
         }
 
-        try {
-            // Process documents in batches
-            while (true) {
-                List<T> batch = fetchBatch(offset);
-                if (batch.isEmpty()) {
+        while (true) {
+            List<T> batch = fetchBatch(offset);
+            if (batch.isEmpty()) {
+                break;
+            }
+
+            // Apply limit if specified
+            if (config.getLimit() != null && offset + batch.size() > config.getLimit()) {
+                int remaining = config.getLimit() - offset;
+                if (remaining <= 0) {
                     break;
                 }
-
-                metrics.startBatch(batch.size());
-                ListMultimap<String, PositionList> batchPositions = null;
-                try {
-                    batchPositions = processBatch(batch);
-                    metrics.recordBatchSuccess();
-                } catch (Exception e) {
-                    metrics.recordBatchFailure();
-                    logger.error("Error processing batch at offset {}: {}", offset, e.getMessage(), e);
-                    continue;
-                }
-
-                if (batchPositions == null || batchPositions.isEmpty()) {
-                    metrics.recordNullBatch();
-                    logger.warn("Null or empty batch result at offset {}", offset);
-                    continue;
-                }
-
-                Map<String, PositionList> mergedPositions = new HashMap<>();
-                // Merge position lists for the same term within the batch
-                for (Map.Entry<String, PositionList> entry : batchPositions.entries()) {
-                    mergedPositions.merge(
-                        entry.getKey(),
-                        entry.getValue(),
-                        (existing, newList) -> {
-                            newList.getPositions().forEach(existing::add);
-                            return existing;
-                        }
-                    );
-                }
-
-                try {
-                    File tempFile = writeBatchToTempFile(batchPositions);
-                    tempFiles.add(tempFile);
-                } catch (IOException e) {
-                    metrics.recordBatchFailure();
-                    logger.error("Error writing batch to temp file: {}", e.getMessage(), e);
-                    continue;
-                }
-
-                progress.updateIndex(batch.size());
-                offset += batch.size();
-                
-                // Log metrics periodically
-                if (offset % (DOC_BATCH_SIZE * 10) == 0) {
-                    metrics.logIndexingMetrics();
-                }
+                batch = batch.subList(0, remaining);
             }
 
-            // Merge sorted files
-            if (!tempFiles.isEmpty()) {
-                File outputFile = new File(tempDir.toFile(), "sorted.tmp");
-                try {
-                    ExternalSort.mergeSortedFiles(tempFiles, outputFile, new PositionListComparator());
-                    
-                    // Write merged results to LevelDB
-                    writeToLevelDB(outputFile);
-                    outputFile.delete();
-                } catch (Exception e) {
-                    metrics.recordBatchFailure();
-                    logger.error("Error during merge phase: {}", e.getMessage(), e);
-                }
+            // Process batch and write to temp file
+            ListMultimap<String, PositionList> positions = processBatch(batch);
+            if (!positions.isEmpty()) {
+                File tempFile = writeBatchToTempFile(positions);
+                tempFiles.add(tempFile);
             }
 
-            // Log final metrics
-            metrics.logIndexingMetrics();
+            progress.updateIndex(batch.size());
+            offset += batch.size();
 
-            // Mark progress as complete
-            progress.completeIndex();
+            // Log metrics periodically
+            if (offset % (DOC_BATCH_SIZE * 10) == 0) {
+                metrics.logIndexingMetrics();
+            }
 
-        } finally {
-            // Cleanup temporary files
-            tempFiles.forEach(File::delete);
+            // Break if we've hit the limit
+            if (config.getLimit() != null && offset >= config.getLimit()) {
+                break;
+            }
         }
+
+        // Merge sorted files
+        if (!tempFiles.isEmpty()) {
+            File outputFile = new File(tempDir.toFile(), "sorted.tmp");
+            try {
+                ExternalSort.mergeSortedFiles(tempFiles, outputFile, new PositionListComparator());
+                
+                // Write merged results to LevelDB
+                writeToLevelDB(outputFile);
+                outputFile.delete();
+            } catch (Exception e) {
+                metrics.recordBatchFailure();
+                logger.error("Error during merge phase: {}", e.getMessage(), e);
+            }
+        }
+
+        // Log final metrics
+        metrics.logIndexingMetrics();
+
+        // Mark progress as complete
+        progress.completeIndex();
     }
 
     /**
