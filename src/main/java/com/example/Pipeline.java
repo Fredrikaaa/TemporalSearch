@@ -15,6 +15,19 @@ import java.util.Map;
 
 public class Pipeline {
     public static void main(String[] args) {
+        try {
+            runPipeline(args);
+        } catch (ArgumentParserException e) {
+            System.err.println(e.getMessage());
+            System.exit(1);
+        } catch (Exception e) {
+            System.err.println("Error running pipeline: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    public static void runPipeline(String[] args) throws Exception {
         // Create argument parser
         ArgumentParser parser = ArgumentParsers.newFor("Pipeline").build()
                 .defaultHelp(true)
@@ -115,105 +128,95 @@ public class Pipeline {
                       "  html - HTML formatted report\n" +
                       "  both - Generate both formats (default)");
 
-        try {
-            // Parse arguments
-            Namespace ns = parser.parseArgs(args);
-            
-            // Set debug mode
-            if (ns.getBoolean("debug")) {
-                System.setProperty("DEBUG_MODE", "true");
-            }
-
-            String stage = ns.getString("stage");
-            String dbPath = ns.getString("db");
-            String wikiDumpPath = ns.getString("file");
-
-            // Validate required arguments based on stage
-            if (stage.equals("convert") || stage.equals("all")) {
-                if (wikiDumpPath == null) {
-                    throw new ArgumentParserException("--file is required for conversion stage", parser);
-                }
-                // If dbPath not provided, generate it from wiki dump path
-                if (dbPath == null) {
-                    dbPath = Path.of(wikiDumpPath).resolveSibling(
-                        Path.of(wikiDumpPath).getFileName().toString().replaceFirst("[.][^.]+$", ".db")
-                    ).toString();
-                }
-            }
-            
-            if ((stage.equals("annotate") || stage.equals("index")) && dbPath == null) {
-                throw new ArgumentParserException("--db is required for annotation and indexing stages", parser);
-            }
-
-            if (stage.equals("analyze") && ns.getString("log_file") == null) {
-                throw new ArgumentParserException("--log-file is required for analysis stage", parser);
-            }
-
-            // Run selected pipeline stages
-            if (stage.equals("all") || stage.equals("convert")) {
-                System.out.println("Running conversion stage...");
-                WikiJsonToSqlite.ExtractionResult result = WikiJsonToSqlite.extractToSqlite(
-                    Path.of(wikiDumpPath),
-                    ns.getBoolean("recreate"),
-                    ns.getInt("limit")
-                );
-                System.out.printf("Conversion complete. %d entries added to database: %s%n",
-                    result.totalEntries, result.outputDb);
-                // Update dbPath to use the output from conversion
-                dbPath = result.outputDb.toString();
-            }
-
-            if (stage.equals("all") || stage.equals("annotate")) {
-                System.out.println("Running annotation stage...");
-                // Build command arguments list
-                List<String> annotationArgs = new ArrayList<>();
-                annotationArgs.add("-d");
-                annotationArgs.add(dbPath);
-                annotationArgs.add("-b");
-                annotationArgs.add(ns.getInt("batch_size").toString());
-                annotationArgs.add("-t");
-                annotationArgs.add(ns.getInt("threads").toString());
-                
-                // Add global limit if specified
-                Integer limit = ns.getInt("limit");
-                if (limit != null) {
-                    annotationArgs.add("-l");
-                    annotationArgs.add(limit.toString());
-                }
-                
-                Annotations.main(annotationArgs.toArray(new String[0]));
-            }
-
-            if (stage.equals("all") || stage.equals("index")) {
-                System.out.println("Running indexing stage...");
-                IndexRunner.runIndexing(
-                        dbPath,
-                        ns.getString("index_dir"),
-                        ns.getString("stopwords"),
-                        ns.getInt("batch_size"),
-                        ns.getString("index_type"),
-                        ns.getBoolean("preserve_index"),
-                        ns.getInt("limit"));
-            }
-
-            if (stage.equals("analyze")) {
-                System.out.println("Running log analysis...");
-                runAnalysis(
-                    ns.getString("log_file"),
-                    ns.getString("report_dir"),
-                    ns.getString("report_format"));
-            }
-
-            System.out.println("Pipeline completed successfully!");
-
-        } catch (ArgumentParserException e) {
-            parser.handleError(e);
-            System.exit(1);
-        } catch (Exception e) {
-            System.err.println("Error running pipeline: " + e.getMessage());
-            e.printStackTrace();
-            System.exit(1);
+        // Parse arguments
+        Namespace ns = parser.parseArgs(args);
+        
+        // Set debug mode
+        if (ns.getBoolean("debug")) {
+            System.setProperty("DEBUG_MODE", "true");
         }
+
+        String stage = ns.getString("stage");
+        String dbPath = ns.getString("db");
+        String wikiDumpPath = ns.getString("file");
+
+        // Validate required arguments based on stage
+        if (stage.equals("convert") || stage.equals("all")) {
+            if (wikiDumpPath == null) {
+                throw new ArgumentParserException("--file is required for conversion stage", parser);
+            }
+            // If dbPath not provided, generate it from wiki dump path
+            if (dbPath == null) {
+                dbPath = Path.of(wikiDumpPath).resolveSibling(
+                    Path.of(wikiDumpPath).getFileName().toString().replaceFirst("[.][^.]+$", ".db")
+                ).toString();
+            }
+        }
+        
+        if ((stage.equals("annotate") || stage.equals("index")) && dbPath == null) {
+            throw new ArgumentParserException("--db is required for annotation and indexing stages", parser);
+        }
+
+        if (stage.equals("analyze") && ns.getString("log_file") == null) {
+            throw new ArgumentParserException("--log-file is required for analysis stage", parser);
+        }
+
+        // Run selected pipeline stages
+        if (stage.equals("all") || stage.equals("convert")) {
+            System.out.println("Running conversion stage...");
+            WikiJsonToSqlite.ExtractionResult result = WikiJsonToSqlite.extractToSqlite(
+                Path.of(wikiDumpPath),
+                ns.getBoolean("recreate"),
+                ns.getInt("limit")
+            );
+            System.out.printf("Conversion complete. %d entries added to database: %s%n",
+                result.totalEntries, result.outputDb);
+            // Update dbPath to use the output from conversion
+            dbPath = result.outputDb.toString();
+        }
+
+        if (stage.equals("all") || stage.equals("annotate")) {
+            System.out.println("Running annotation stage...");
+            // Build command arguments list
+            List<String> annotationArgs = new ArrayList<>();
+            annotationArgs.add("-d");
+            annotationArgs.add(dbPath);
+            annotationArgs.add("-b");
+            annotationArgs.add(ns.getInt("batch_size").toString());
+            annotationArgs.add("-t");
+            annotationArgs.add(ns.getInt("threads").toString());
+            
+            // Add global limit if specified
+            Integer limit = ns.getInt("limit");
+            if (limit != null) {
+                annotationArgs.add("-l");
+                annotationArgs.add(limit.toString());
+            }
+            
+            Annotations.main(annotationArgs.toArray(new String[0]));
+        }
+
+        if (stage.equals("all") || stage.equals("index")) {
+            System.out.println("Running indexing stage...");
+            IndexRunner.runIndexing(
+                    dbPath,
+                    ns.getString("index_dir"),
+                    ns.getString("stopwords"),
+                    ns.getInt("batch_size"),
+                    ns.getString("index_type"),
+                    ns.getBoolean("preserve_index"),
+                    ns.getInt("limit"));
+        }
+
+        if (stage.equals("analyze")) {
+            System.out.println("Running log analysis...");
+            runAnalysis(
+                ns.getString("log_file"),
+                ns.getString("report_dir"),
+                ns.getString("report_format"));
+        }
+
+        System.out.println("Pipeline completed successfully!");
     }
 
     private static void runAnalysis(String logFile, String reportDir, String format) throws Exception {

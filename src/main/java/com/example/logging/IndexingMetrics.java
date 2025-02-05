@@ -185,13 +185,19 @@ public class IndexingMetrics {
                 .put("total_nulls", nullCount.get())
                 .put("elapsed_seconds", elapsedSeconds)
                 .put("docs_per_second", totalDocumentsProcessed.get() / elapsedSeconds)
-                .put("avg_batch_size", (double) totalDocumentsProcessed.get() / totalBatchesProcessed.get())
+                .put("avg_batch_size", totalBatchesProcessed.get() > 0 ? 
+                    (double) totalDocumentsProcessed.get() / totalBatchesProcessed.get() : 0.0)
                 .put("min_batch_time_ms", minProcessingTimeNanos.get() / 1_000_000.0)
                 .put("max_batch_time_ms", maxProcessingTimeNanos.get() / 1_000_000.0)
                 .put("heap_used_mb", MEMORY_BEAN.getHeapMemoryUsage().getUsed() / (1024.0 * 1024.0))
                 .put("heap_change_mb", (MEMORY_BEAN.getHeapMemoryUsage().getUsed() - initialHeapUsed) / (1024.0 * 1024.0));
 
-            logger.info(json.toString());
+            // Only log at INFO level when called at completion (i.e. when total_documents > 0)
+            if (totalDocumentsProcessed.get() > 0) {
+                logger.info(json.toString());
+            } else {
+                logger.debug(json.toString());
+            }
         } catch (Exception e) {
             logger.warn("Failed to log indexing metrics", e);
         }

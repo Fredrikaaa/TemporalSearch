@@ -45,7 +45,8 @@ public class WikiJsonToSqlite {
                 totalLines++;
             }
         }
-        logger.info("Found {} lines in input file", totalLines);
+        logger.info("Found {} lines in input file{}", totalLines,
+            limit != null ? String.format(" (will process up to %d entries)", limit) : "");
         
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + outputDb.toString())) {
             // Enable WAL mode and other optimizations for better performance
@@ -78,7 +79,8 @@ public class WikiJsonToSqlite {
             try (PreparedStatement pstmt = conn.prepareStatement(insertSql);
                  BufferedReader reader = new BufferedReader(
                      new InputStreamReader(new FileInputStream(inputFile.toFile()), StandardCharsets.UTF_8));
-                 ProgressBar pb = new ProgressBar("Processing Wikipedia dump", totalLines)) {
+                 ProgressBar pb = new ProgressBar("Processing Wikipedia dump", 
+                     limit != null ? limit : totalLines)) {
 
                 String line;
                 while ((line = reader.readLine()) != null) {
@@ -96,6 +98,7 @@ public class WikiJsonToSqlite {
                             pstmt.setString(3, getTextValue(item, "timestamp"));
                             pstmt.addBatch();
                             totalEntries++;
+                            pb.step();
 
                             // Check if we've hit the limit
                             if (limit != null && totalEntries >= limit) {
@@ -110,9 +113,8 @@ public class WikiJsonToSqlite {
                         if (++lineCount % 10_000 == 0) {  // Reduced batch size for more frequent updates
                             pstmt.executeBatch();
                             conn.commit();
-                            logger.info("Processed {} lines, {} entries added", lineCount, totalEntries);
+                            logger.debug("Processed {} lines, {} entries added", lineCount, totalEntries);
                         }
-                        pb.step();
 
                     } catch (Exception e) {
                         logger.error("Error processing line {}: {}", lineCount + 1, e.getMessage());

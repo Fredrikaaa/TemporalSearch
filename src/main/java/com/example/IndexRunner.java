@@ -131,7 +131,7 @@ public class IndexRunner {
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
             // Get total document count for progress tracking
             try (Statement stmt = conn.createStatement()) {
-                ResultSet rs = stmt.executeQuery("SELECT COUNT(DISTINCT doc_id) FROM annotations");
+                ResultSet rs = stmt.executeQuery("SELECT COUNT(DISTINCT document_id) FROM annotations");
                 if (rs.next()) {
                     long totalDocs = rs.getLong(1);
                     progress.startIndex("documents", totalDocs);
