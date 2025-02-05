@@ -8,147 +8,213 @@ import org.slf4j.LoggerFactory;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.ThreadMXBean;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 /**
- * Tracks detailed performance metrics and state verification during indexing.
- * Thread-safe for concurrent access during parallel processing.
+ * Unified metrics tracking for the indexing process.
+ * Handles both high-level indexing metrics and batch-level processing details.
+ * Uses sampling to reduce log volume while maintaining visibility.
  */
 public class IndexingMetrics {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Logger logger = LoggerFactory.getLogger(IndexingMetrics.class);
-    private final MemoryMXBean memoryBean;
-    private final ThreadMXBean threadBean;
-    private final AtomicLong totalProcessingTime;
-    private final AtomicLong documentsProcessed;
-    private final AtomicLong ngramsGenerated;
-    private final Map<String, AtomicLong> stateVerificationCounts;
-    private final Map<String, AtomicLong> stageProcessingTimes;
-    private final Map<String, AtomicLong> indexSizes;
-    private final long startTime;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final MemoryMXBean MEMORY_BEAN = ManagementFactory.getMemoryMXBean();
+    
+    // Sampling configuration
     private final LogSampler detailedMetricsSampler;
-    private final LogSampler stateVerificationSampler;
+    private final LogSampler batchMetricsSampler;
+    
+    // Overall metrics
+    private final long startTime;
+    private final long initialHeapUsed;
+    private final AtomicLong totalProcessingTimeNanos;
+    private final AtomicInteger totalDocumentsProcessed;
+    private final AtomicInteger totalBatchesProcessed;
+    
+    // Batch-level metrics
+    private final AtomicInteger nullCount;
+    private final AtomicInteger errorCount;
+    private final AtomicLong maxProcessingTimeNanos;
+    private final AtomicLong minProcessingTimeNanos;
+    private final List<Long> recentProcessingTimes;
+    
+    // Current batch tracking
+    private long currentBatchStartTime;
+    private int currentBatchSize;
 
     public IndexingMetrics() {
-        this.memoryBean = ManagementFactory.getMemoryMXBean();
-        this.threadBean = ManagementFactory.getThreadMXBean();
-        this.totalProcessingTime = new AtomicLong(0);
-        this.documentsProcessed = new AtomicLong(0);
-        this.ngramsGenerated = new AtomicLong(0);
-        this.stateVerificationCounts = new ConcurrentHashMap<>();
-        this.stageProcessingTimes = new ConcurrentHashMap<>();
-        this.indexSizes = new ConcurrentHashMap<>();
-        this.startTime = System.currentTimeMillis();
-        // Sample 100% of detailed metrics and 10% of state verifications
-        this.detailedMetricsSampler = new LogSampler(1.0);
-        this.stateVerificationSampler = new LogSampler(0.1);
-    }
-
-    public void recordProcessingTime(long timeMs, String stage) {
-        // Convert milliseconds to seconds before storing
-        long timeSeconds = timeMs / 1000;
-        totalProcessingTime.addAndGet(timeSeconds);
-        stageProcessingTimes.computeIfAbsent(stage, k -> new AtomicLong()).addAndGet(timeSeconds);
-    }
-
-    public void incrementDocumentsProcessed() {
-        documentsProcessed.incrementAndGet();
-    }
-
-    public void incrementDocumentsProcessed(int count) {
-        documentsProcessed.addAndGet(count);
-    }
-
-    public void addNgramsGenerated(long count) {
-        ngramsGenerated.addAndGet(count);
-    }
-
-    public void recordStateVerification(String state, boolean passed) {
-        // Only log a sample of state verifications to reduce volume
-        if (stateVerificationSampler.shouldLog()) {
-            stateVerificationCounts.computeIfAbsent(state + "_" + (passed ? "passed" : "failed"),
-                k -> new AtomicLong()).incrementAndGet();
-        }
-    }
-
-    public void recordIndexSize(String indexName, long sizeBytes) {
-        indexSizes.computeIfAbsent(indexName, k -> new AtomicLong()).set(sizeBytes);
-    }
-
-    private long getTotalIndexSize() {
-        return indexSizes.values().stream()
-            .mapToLong(AtomicLong::get)
-            .sum();
+        this.startTime = System.nanoTime();
+        this.initialHeapUsed = MEMORY_BEAN.getHeapMemoryUsage().getUsed();
+        
+        // Initialize samplers
+        this.detailedMetricsSampler = new LogSampler(0.1);  // 10% sampling for detailed metrics
+        this.batchMetricsSampler = new LogSampler(0.05);    // 5% sampling for batch metrics
+        
+        // Initialize counters
+        this.totalProcessingTimeNanos = new AtomicLong(0);
+        this.totalDocumentsProcessed = new AtomicInteger(0);
+        this.totalBatchesProcessed = new AtomicInteger(0);
+        this.nullCount = new AtomicInteger(0);
+        this.errorCount = new AtomicInteger(0);
+        this.maxProcessingTimeNanos = new AtomicLong(0);
+        this.minProcessingTimeNanos = new AtomicLong(Long.MAX_VALUE);
+        this.recentProcessingTimes = new ArrayList<>();
     }
 
     /**
-     * Logs current metrics in JSON format.
-     * Uses sampling for detailed metrics to reduce log volume.
+     * Start tracking a new batch of documents.
+     * @param batchSize The number of documents in this batch
      */
-    public void logMetrics(String phase) {
-        // Always log summary metrics with processing time
-        ObjectNode summaryJson = MAPPER.createObjectNode()
-            .put("event", "indexing_summary")
-            .put("phase", phase)
-            .put("documents_processed", documentsProcessed.get())
-            .put("ngrams_generated", ngramsGenerated.get())
-            .put("total_processing_sec", totalProcessingTime.get())
-            .put("throughput_docs_per_sec", calculateThroughput())
-            .put("total_index_size_mb", getTotalIndexSize() / (1024.0 * 1024.0));
-        
-        // Add stage-specific processing times
-        ObjectNode stageTimes = summaryJson.putObject("stage_processing_times");
-        stageProcessingTimes.forEach((stage, time) -> 
-            stageTimes.put(stage + "_sec", time.get()));
-        
-        // Add index sizes
-        ObjectNode indexSizesJson = summaryJson.putObject("index_sizes");
-        indexSizes.forEach((index, size) -> 
-            indexSizesJson.put(index + "_mb", size.get() / (1024.0 * 1024.0)));
-        
-        logger.info(summaryJson.toString());
+    public void startBatch(int batchSize) {
+        this.currentBatchStartTime = System.nanoTime();
+        this.currentBatchSize = batchSize;
+    }
 
-        // Sample detailed metrics
-        if (detailedMetricsSampler.shouldLog()) {
-            try {
-                ObjectNode detailedJson = MAPPER.createObjectNode()
-                    .put("event", "indexing_metrics")
-                    .put("phase", phase)
-                    .put("elapsed_sec", (System.currentTimeMillis() - startTime) / 1000)
-                    .put("total_processing_sec", totalProcessingTime.get())
-                    .put("heap_used_mb", memoryBean.getHeapMemoryUsage().getUsed() / (1024.0 * 1024.0))
-                    .put("heap_max_mb", memoryBean.getHeapMemoryUsage().getMax() / (1024.0 * 1024.0))
-                    .put("thread_count", threadBean.getThreadCount())
-                    .put("peak_thread_count", threadBean.getPeakThreadCount())
-                    .put("avg_processing_time_per_doc_sec", documentsProcessed.get() > 0 ? 
-                        totalProcessingTime.get() / (double)documentsProcessed.get() : 0.0);
+    /**
+     * Record successful processing of the current batch.
+     */
+    public void recordBatchSuccess() {
+        long duration = System.nanoTime() - currentBatchStartTime;
+        recordBatchCompletion(duration, true);
+    }
 
-                logger.debug(detailedJson.toString());
-            } catch (Exception e) {
-                logger.warn("Failed to log detailed metrics", e);
+    /**
+     * Record a failed batch processing attempt.
+     */
+    public void recordBatchFailure() {
+        long duration = System.nanoTime() - currentBatchStartTime;
+        recordBatchCompletion(duration, false);
+        errorCount.incrementAndGet();
+    }
+
+    /**
+     * Record a null or empty batch result.
+     */
+    public void recordNullBatch() {
+        nullCount.incrementAndGet();
+    }
+
+    private synchronized void recordBatchCompletion(long durationNanos, boolean success) {
+        // Update timing statistics
+        totalProcessingTimeNanos.addAndGet(durationNanos);
+        updateProcessingTimeStats(durationNanos);
+        
+        // Update document counts
+        if (success) {
+            totalDocumentsProcessed.addAndGet(currentBatchSize);
+        }
+        totalBatchesProcessed.incrementAndGet();
+        
+        // Keep recent processing times for averaging
+        recentProcessingTimes.add(durationNanos);
+        if (recentProcessingTimes.size() > 100) { // Keep last 100 batches
+            recentProcessingTimes.remove(0);
+        }
+        
+        // Log batch metrics if sampled
+        if (batchMetricsSampler.shouldLog() || !success) {
+            logBatchMetrics(durationNanos, success);
+        }
+    }
+
+    private void updateProcessingTimeStats(long timeNanos) {
+        while (true) {
+            long currentMax = maxProcessingTimeNanos.get();
+            if (timeNanos <= currentMax || 
+                maxProcessingTimeNanos.compareAndSet(currentMax, timeNanos)) {
+                break;
+            }
+        }
+        
+        while (true) {
+            long currentMin = minProcessingTimeNanos.get();
+            if (timeNanos >= currentMin || 
+                minProcessingTimeNanos.compareAndSet(currentMin, timeNanos)) {
+                break;
             }
         }
     }
 
-    private double calculateThroughput() {
-        long elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000;
-        if (elapsedSeconds == 0) return 0.0;
-        return documentsProcessed.get() / (double) elapsedSeconds;
+    private void logBatchMetrics(long durationNanos, boolean success) {
+        try {
+            double avgProcessingTime = recentProcessingTimes.stream()
+                .mapToLong(Long::valueOf)
+                .average()
+                .orElse(0.0);
+
+            ObjectNode json = MAPPER.createObjectNode()
+                .put("event", "batch_complete")
+                .put("success", success)
+                .put("batch_size", currentBatchSize)
+                .put("processing_time_ms", durationNanos / 1_000_000.0)
+                .put("avg_processing_time_ms", avgProcessingTime / 1_000_000.0)
+                .put("total_documents", totalDocumentsProcessed.get())
+                .put("total_batches", totalBatchesProcessed.get())
+                .put("errors", errorCount.get())
+                .put("nulls", nullCount.get())
+                .put("heap_used_mb", MEMORY_BEAN.getHeapMemoryUsage().getUsed() / (1024.0 * 1024.0));
+
+            if (success) {
+                logger.info(json.toString());
+            } else {
+                logger.warn(json.toString());
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to log batch metrics", e);
+        }
     }
 
-    public long getDocumentsProcessed() {
-        return documentsProcessed.get();
+    /**
+     * Log overall indexing metrics. Called periodically or at completion.
+     */
+    public void logIndexingMetrics() {
+        try {
+            long elapsedNanos = System.nanoTime() - startTime;
+            double elapsedSeconds = elapsedNanos / 1_000_000_000.0;
+            
+            ObjectNode json = MAPPER.createObjectNode()
+                .put("event", "indexing_metrics")
+                .put("total_documents", totalDocumentsProcessed.get())
+                .put("total_batches", totalBatchesProcessed.get())
+                .put("total_errors", errorCount.get())
+                .put("total_nulls", nullCount.get())
+                .put("elapsed_seconds", elapsedSeconds)
+                .put("docs_per_second", totalDocumentsProcessed.get() / elapsedSeconds)
+                .put("avg_batch_size", (double) totalDocumentsProcessed.get() / totalBatchesProcessed.get())
+                .put("min_batch_time_ms", minProcessingTimeNanos.get() / 1_000_000.0)
+                .put("max_batch_time_ms", maxProcessingTimeNanos.get() / 1_000_000.0)
+                .put("heap_used_mb", MEMORY_BEAN.getHeapMemoryUsage().getUsed() / (1024.0 * 1024.0))
+                .put("heap_change_mb", (MEMORY_BEAN.getHeapMemoryUsage().getUsed() - initialHeapUsed) / (1024.0 * 1024.0));
+
+            logger.info(json.toString());
+        } catch (Exception e) {
+            logger.warn("Failed to log indexing metrics", e);
+        }
     }
 
-    public long getNgramsGenerated() {
-        return ngramsGenerated.get();
+    // Getters for testing and verification
+    public int getTotalDocuments() {
+        return totalDocumentsProcessed.get();
     }
-
-    public Map<String, Long> getStateVerificationCounts() {
-        Map<String, Long> counts = new ConcurrentHashMap<>();
-        stateVerificationCounts.forEach((state, count) -> counts.put(state, count.get()));
-        return counts;
+    
+    public int getTotalBatches() {
+        return totalBatchesProcessed.get();
+    }
+    
+    public int getErrorCount() {
+        return errorCount.get();
+    }
+    
+    public int getNullCount() {
+        return nullCount.get();
+    }
+    
+    public long getTotalProcessingTimeNanos() {
+        return totalProcessingTimeNanos.get();
     }
 } 

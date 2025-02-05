@@ -1,6 +1,5 @@
-package com.example.index;
+package com.example.logging;
 
-import com.example.logging.IndexingMetrics;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import static org.junit.jupiter.api.Assertions.*;
@@ -11,7 +10,7 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-class LoggingTest {
+class IndexingMetricsTest {
     private IndexingMetrics metrics;
     private ListAppender<ILoggingEvent> listAppender;
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -22,9 +21,45 @@ class LoggingTest {
         
         // Setup logger capture
         Logger logger = (Logger) LoggerFactory.getLogger(IndexingMetrics.class);
+        logger.setLevel(ch.qos.logback.classic.Level.INFO);  // Set level to INFO
         listAppender = new ListAppender<>();
         listAppender.start();
         logger.addAppender(listAppender);
+    }
+
+    @Test
+    void testSuccessfulBatchProcessing() throws Exception {
+        // Process a successful batch
+        metrics.startBatch(100);
+        Thread.sleep(10); // Simulate some work
+        metrics.recordBatchSuccess();
+
+        assertEquals(100, metrics.getTotalDocuments());
+        assertEquals(1, metrics.getTotalBatches());
+        assertEquals(0, metrics.getErrorCount());
+        assertEquals(0, metrics.getNullCount());
+        assertTrue(metrics.getTotalProcessingTimeNanos() > 0);
+    }
+
+    @Test
+    void testFailedBatchProcessing() {
+        metrics.startBatch(100);
+        metrics.recordBatchFailure();
+
+        assertEquals(0, metrics.getTotalDocuments());
+        assertEquals(1, metrics.getTotalBatches());
+        assertEquals(1, metrics.getErrorCount());
+    }
+
+    @Test
+    void testNullBatchProcessing() {
+        metrics.startBatch(100);
+        metrics.recordNullBatch();
+
+        assertEquals(0, metrics.getTotalDocuments());
+        assertEquals(0, metrics.getTotalBatches());
+        assertEquals(0, metrics.getErrorCount());
+        assertEquals(1, metrics.getNullCount());
     }
 
     @Test
@@ -80,4 +115,4 @@ class LoggingTest {
         assertTrue(duration / 1_000_000.0 < 1000.0,
             "Metrics overhead too high: " + (duration / 1_000_000.0) + "ms for 1000 batches");
     }
-}
+} 

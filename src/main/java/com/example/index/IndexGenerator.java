@@ -6,6 +6,7 @@ import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.example.logging.ProgressTracker;
+import com.example.logging.IndexingMetrics;
 import com.google.code.externalsorting.ExternalSort;
 
 import java.io.*;
@@ -239,6 +240,7 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
     public void generateIndex() throws SQLException, IOException {
         List<File> tempFiles = new ArrayList<>();
         int offset = 0;
+        IndexingMetrics metrics = new IndexingMetrics();
 
         // Get total count of entries
         try (Statement stmt = sqliteConn.createStatement()) {
@@ -257,9 +259,24 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
                     break;
                 }
 
-                ListMultimap<String, PositionList> batchPositions = processBatch(batch);
-                Map<String, PositionList> mergedPositions = new HashMap<>();
+                metrics.startBatch(batch.size());
+                ListMultimap<String, PositionList> batchPositions = null;
+                try {
+                    batchPositions = processBatch(batch);
+                    metrics.recordBatchSuccess();
+                } catch (Exception e) {
+                    metrics.recordBatchFailure();
+                    logger.error("Error processing batch at offset {}: {}", offset, e.getMessage(), e);
+                    continue;
+                }
 
+                if (batchPositions == null || batchPositions.isEmpty()) {
+                    metrics.recordNullBatch();
+                    logger.warn("Null or empty batch result at offset {}", offset);
+                    continue;
+                }
+
+                Map<String, PositionList> mergedPositions = new HashMap<>();
                 // Merge position lists for the same term within the batch
                 for (Map.Entry<String, PositionList> entry : batchPositions.entries()) {
                     mergedPositions.merge(
@@ -272,22 +289,41 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
                     );
                 }
 
-                File tempFile = writeBatchToTempFile(batchPositions);
-                tempFiles.add(tempFile);
+                try {
+                    File tempFile = writeBatchToTempFile(batchPositions);
+                    tempFiles.add(tempFile);
+                } catch (IOException e) {
+                    metrics.recordBatchFailure();
+                    logger.error("Error writing batch to temp file: {}", e.getMessage(), e);
+                    continue;
+                }
 
                 progress.updateIndex(batch.size());
                 offset += batch.size();
+                
+                // Log metrics periodically
+                if (offset % (DOC_BATCH_SIZE * 10) == 0) {
+                    metrics.logIndexingMetrics();
+                }
             }
 
             // Merge sorted files
             if (!tempFiles.isEmpty()) {
                 File outputFile = new File(tempDir.toFile(), "sorted.tmp");
-                ExternalSort.mergeSortedFiles(tempFiles, outputFile, new PositionListComparator());
-
-                // Write merged results to LevelDB
-                writeToLevelDB(outputFile);
-                outputFile.delete();
+                try {
+                    ExternalSort.mergeSortedFiles(tempFiles, outputFile, new PositionListComparator());
+                    
+                    // Write merged results to LevelDB
+                    writeToLevelDB(outputFile);
+                    outputFile.delete();
+                } catch (Exception e) {
+                    metrics.recordBatchFailure();
+                    logger.error("Error during merge phase: {}", e.getMessage(), e);
+                }
             }
+
+            // Log final metrics
+            metrics.logIndexingMetrics();
 
             // Mark progress as complete
             progress.completeIndex();

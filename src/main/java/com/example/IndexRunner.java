@@ -90,6 +90,8 @@ public class IndexRunner {
             int batchSize, String indexType, boolean preserveIndex) throws Exception {
         
         IndexingMetrics metrics = new IndexingMetrics();
+        ProgressTracker progress = new ProgressTracker();
+        
         logger.info("Starting index generation with parameters: dbPath={}, indexDir={}, batchSize={}, preserveIndex={}",
             dbPath, indexDir, batchSize, preserveIndex);
 
@@ -98,189 +100,128 @@ public class IndexRunner {
             .withPreserveExistingIndex(preserveIndex)
             .build();
 
-        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
-             ProgressTracker progress = new ProgressTracker()) {
-            
-            // Get total document count
-            try (Statement stmt = conn.createStatement()) {
-                ResultSet rs = stmt.executeQuery("SELECT COUNT(DISTINCT document_id) FROM annotations");
-                if (rs.next()) {
-                    int docCount = rs.getInt(1);
-                    metrics.incrementDocumentsProcessed(docCount);
-                }
-            }
-            
-            // Calculate total steps
-            int totalSteps = 0;
-            if (indexType.equals("all")) {
-                totalSteps = 7; // unigram, bigram, trigram, dependency, ner_date, pos, and hypernym
-            } else {
-                totalSteps = 1;
-            }
-            
-            int currentStep = 0;
-
-            if (indexType.equals("all") || indexType.equals("unigram")) {
-                currentStep++;
-                logger.info("Step {}/{}: Starting unigram index generation", currentStep, totalSteps);
-                String unigramDir = indexDir + "/unigram";
-                System.out.printf("Stage %d/%d: Unigram%n", currentStep, totalSteps);
-                
-                // Handle index directory
-                Path unigramPath = Path.of(unigramDir);
-                IndexUtils.safeDeleteIndex(unigramPath, indexConfig);
-                
-                try (UnigramIndexGenerator indexer = new UnigramIndexGenerator(
-                        unigramDir, stopwordsPath, conn, progress)) {
-                    long stepStart = System.nanoTime();
-                    indexer.generateIndex();
-                    long stepDuration = System.nanoTime() - stepStart;
-                    
-                    // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000, "unigram");
-                    // Record n-grams generated
-                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
-                    metrics.recordStateVerification("unigram_generation", true);
-                    // Record index size
-                    metrics.recordIndexSize("unigram", calculateDirectorySize(unigramDir));
-                }
-            }
-
-            if (indexType.equals("all") || indexType.equals("bigram")) {
-                currentStep++;
-                logger.info("Step {}/{}: Starting bigram index generation", currentStep, totalSteps);
-                String bigramDir = indexDir + "/bigram";
-                System.out.printf("Stage %d/%d: Bigram%n", currentStep, totalSteps);
-                
-                try (BigramIndexGenerator indexer = new BigramIndexGenerator(
-                        bigramDir, stopwordsPath, conn, progress)) {
-                    long stepStart = System.nanoTime();
-                    indexer.generateIndex();
-                    long stepDuration = System.nanoTime() - stepStart;
-                    
-                    // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000, "bigram");
-                    // Record n-grams generated
-                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
-                    metrics.recordStateVerification("bigram_generation", true);
-                    // Record index size
-                    metrics.recordIndexSize("bigram", calculateDirectorySize(bigramDir));
-                }
-            }
-
-            if (indexType.equals("all") || indexType.equals("trigram")) {
-                currentStep++;
-                logger.info("Step {}/{}: Starting trigram index generation", currentStep, totalSteps);
-                String trigramDir = indexDir + "/trigram";
-                System.out.printf("Stage %d/%d: Trigram%n", currentStep, totalSteps);
-                
-                try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                        trigramDir, stopwordsPath, conn, progress)) {
-                    long stepStart = System.nanoTime();
-                    indexer.generateIndex();
-                    long stepDuration = System.nanoTime() - stepStart;
-                    
-                    // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000, "trigram");
-                    // Record n-grams generated
-                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
-                    metrics.recordStateVerification("trigram_generation", true);
-                    // Record index size
-                    metrics.recordIndexSize("trigram", calculateDirectorySize(trigramDir));
-                }
-            }
-
-            if (indexType.equals("all") || indexType.equals("dependency")) {
-                currentStep++;
-                logger.info("Step {}/{}: Starting dependency index generation", currentStep, totalSteps);
-                String dependencyDir = indexDir + "/dependency";
-                System.out.printf("Stage %d/%d: Dependency%n", currentStep, totalSteps);
-                
-                try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
-                        dependencyDir, stopwordsPath, conn, progress)) {
-                    long stepStart = System.nanoTime();
-                    indexer.generateIndex();
-                    long stepDuration = System.nanoTime() - stepStart;
-                    
-                    // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000, "dependency");
-                    // Record n-grams generated
-                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
-                    metrics.recordStateVerification("dependency_generation", true);
-                    // Record index size
-                    metrics.recordIndexSize("dependency", calculateDirectorySize(dependencyDir));
-                }
-            }
-
-            if (indexType.equals("all") || indexType.equals("ner_date")) {
-                currentStep++;
-                logger.info("Step {}/{}: Starting NER date index generation", currentStep, totalSteps);
-                String nerDateDir = indexDir + "/ner_date";
-                System.out.printf("Stage %d/%d: NER Date%n", currentStep, totalSteps);
-                
-                try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
-                        nerDateDir, stopwordsPath, conn, progress)) {
-                    long stepStart = System.nanoTime();
-                    indexer.generateIndex();
-                    long stepDuration = System.nanoTime() - stepStart;
-                    
-                    // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000, "ner_date");
-                    // Record n-grams generated
-                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
-                    metrics.recordStateVerification("ner_date_generation", true);
-                    // Record index size
-                    metrics.recordIndexSize("ner_date", calculateDirectorySize(nerDateDir));
-                }
-            }
-
-            if (indexType.equals("all") || indexType.equals("pos")) {
-                currentStep++;
-                logger.info("Step {}/{}: Starting POS index generation", currentStep, totalSteps);
-                String posDir = indexDir + "/pos";
-                System.out.printf("Stage %d/%d: POS%n", currentStep, totalSteps);
-                
-                try (POSIndexGenerator indexer = new POSIndexGenerator(
-                        posDir, stopwordsPath, conn, progress)) {
-                    long stepStart = System.nanoTime();
-                    indexer.generateIndex();
-                    long stepDuration = System.nanoTime() - stepStart;
-                    
-                    // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000, "pos");
-                    // Record n-grams generated
-                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
-                    metrics.recordStateVerification("pos_generation", true);
-                    // Record index size
-                    metrics.recordIndexSize("pos", calculateDirectorySize(posDir));
-                }
-            }
-
-            if (indexType.equals("all") || indexType.equals("hypernym")) {
-                currentStep++;
-                logger.info("Step {}/{}: Starting hypernym index generation", currentStep, totalSteps);
-                String hypernymDir = indexDir + "/hypernym";
-                System.out.printf("Stage %d/%d: Hypernym%n", currentStep, totalSteps);
-                
-                try (HypernymIndexGenerator indexer = new HypernymIndexGenerator(
-                        hypernymDir, stopwordsPath, conn, progress)) {
-                    long stepStart = System.nanoTime();
-                    indexer.generateIndex();
-                    long stepDuration = System.nanoTime() - stepStart;
-                    
-                    // Convert nanoseconds to milliseconds
-                    metrics.recordProcessingTime(stepDuration / 1_000_000, "hypernym");
-                    // Record n-grams generated
-                    metrics.addNgramsGenerated(indexer.getTotalNGramsGenerated());
-                    metrics.recordStateVerification("hypernym_generation", true);
-                    // Record index size
-                    metrics.recordIndexSize("hypernym", calculateDirectorySize(hypernymDir));
-                }
-            }
-
-            logger.info("Index generation completed");
-            metrics.logMetrics("indexing_complete");
+        // Ensure index directory exists
+        Path indexPath = Paths.get(indexDir);
+        if (!preserveIndex && Files.exists(indexPath)) {
+            logger.info("Cleaning existing index directory: {}", indexPath);
+            Files.walk(indexPath)
+                 .sorted((a, b) -> b.compareTo(a))
+                 .forEach(path -> {
+                     try {
+                         Files.deleteIfExists(path);
+                     } catch (IOException e) {
+                         logger.warn("Could not delete: {} ({})", path, e.getMessage());
+                     }
+                 });
         }
+        Files.createDirectories(indexPath);
+
+        // Connect to database
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
+            // Get total document count for progress tracking
+            try (Statement stmt = conn.createStatement()) {
+                ResultSet rs = stmt.executeQuery("SELECT COUNT(DISTINCT doc_id) FROM annotations");
+                if (rs.next()) {
+                    long totalDocs = rs.getLong(1);
+                    progress.startIndex("documents", totalDocs);
+                    logger.info("Found {} documents to process", totalDocs);
+                }
+            }
+
+            // Create and run generators based on type
+            try {
+                if (indexType.equals("all") || indexType.equals("unigram")) {
+                    metrics.startBatch(batchSize);
+                    try (UnigramIndexGenerator gen = new UnigramIndexGenerator(
+                            indexDir + "/unigram", stopwordsPath, conn, progress)) {
+                        gen.generateIndex();
+                        metrics.recordBatchSuccess();
+                    } catch (Exception e) {
+                        metrics.recordBatchFailure();
+                        logger.error("Error generating unigram index: {}", e.getMessage(), e);
+                    }
+                }
+
+                if (indexType.equals("all") || indexType.equals("bigram")) {
+                    metrics.startBatch(batchSize);
+                    try (BigramIndexGenerator gen = new BigramIndexGenerator(
+                            indexDir + "/bigram", stopwordsPath, conn, progress)) {
+                        gen.generateIndex();
+                        metrics.recordBatchSuccess();
+                    } catch (Exception e) {
+                        metrics.recordBatchFailure();
+                        logger.error("Error generating bigram index: {}", e.getMessage(), e);
+                    }
+                }
+
+                if (indexType.equals("all") || indexType.equals("trigram")) {
+                    metrics.startBatch(batchSize);
+                    try (TrigramIndexGenerator gen = new TrigramIndexGenerator(
+                            indexDir + "/trigram", stopwordsPath, conn, progress)) {
+                        gen.generateIndex();
+                        metrics.recordBatchSuccess();
+                    } catch (Exception e) {
+                        metrics.recordBatchFailure();
+                        logger.error("Error generating trigram index: {}", e.getMessage(), e);
+                    }
+                }
+
+                if (indexType.equals("all") || indexType.equals("dependency")) {
+                    metrics.startBatch(batchSize);
+                    try (DependencyIndexGenerator gen = new DependencyIndexGenerator(
+                            indexDir + "/dependency", stopwordsPath, conn, progress)) {
+                        gen.generateIndex();
+                        metrics.recordBatchSuccess();
+                    } catch (Exception e) {
+                        metrics.recordBatchFailure();
+                        logger.error("Error generating dependency index: {}", e.getMessage(), e);
+                    }
+                }
+
+                if (indexType.equals("all") || indexType.equals("ner_date")) {
+                    metrics.startBatch(batchSize);
+                    try (NerDateIndexGenerator gen = new NerDateIndexGenerator(
+                            indexDir + "/ner_date", stopwordsPath, conn, progress)) {
+                        gen.generateIndex();
+                        metrics.recordBatchSuccess();
+                    } catch (Exception e) {
+                        metrics.recordBatchFailure();
+                        logger.error("Error generating NER date index: {}", e.getMessage(), e);
+                    }
+                }
+
+                if (indexType.equals("all") || indexType.equals("pos")) {
+                    metrics.startBatch(batchSize);
+                    try (POSIndexGenerator gen = new POSIndexGenerator(
+                            indexDir + "/pos", stopwordsPath, conn, progress)) {
+                        gen.generateIndex();
+                        metrics.recordBatchSuccess();
+                    } catch (Exception e) {
+                        metrics.recordBatchFailure();
+                        logger.error("Error generating POS index: {}", e.getMessage(), e);
+                    }
+                }
+
+                if (indexType.equals("all") || indexType.equals("hypernym")) {
+                    metrics.startBatch(batchSize);
+                    try (HypernymIndexGenerator gen = new HypernymIndexGenerator(
+                            indexDir + "/hypernym", stopwordsPath, conn, progress)) {
+                        gen.generateIndex();
+                        metrics.recordBatchSuccess();
+                    } catch (Exception e) {
+                        metrics.recordBatchFailure();
+                        logger.error("Error generating hypernym index: {}", e.getMessage(), e);
+                    }
+                }
+
+            } finally {
+                // Log final metrics
+                metrics.logIndexingMetrics();
+                progress.completeIndex();
+            }
+        }
+
+        logger.info("Index generation completed successfully");
     }
 
     private static long calculateDirectorySize(String path) {
