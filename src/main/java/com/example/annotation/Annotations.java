@@ -13,9 +13,46 @@ import java.sql.*;
 import java.util.*;
 import me.tongfei.progressbar.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.nio.file.Path;
 
 public class Annotations {
     private static final Logger logger = LoggerFactory.getLogger(Annotations.class);
+    private final Path dbFile;
+    private final int batchSize;
+    private final int threads;
+    private final boolean overwrite;
+    private final StanfordCoreNLP pipeline;
+
+    public Annotations(Path dbFile, int batchSize, int threads, boolean overwrite) {
+        this.dbFile = dbFile;
+        this.batchSize = batchSize;
+        this.threads = threads;
+        this.overwrite = overwrite;
+        
+        // Create optimized CoreNLP configuration
+        CoreNLPConfig config = new CoreNLPConfig(threads);
+        this.pipeline = config.createPipeline();
+        logger.info("Created CoreNLP pipeline with optimized configuration");
+    }
+
+    public void processDocuments() throws Exception {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbFile)) {
+            createTables(conn, overwrite);
+            String query = buildQuery(overwrite, null);
+            
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(query)) {
+                
+                while (rs.next()) {
+                    int documentId = rs.getInt("document_id");
+                    String text = rs.getString("text");
+                    
+                    AnnotationResult result = processTextWithCoreNLP(pipeline, text, documentId);
+                    insertData(conn, result.annotations, result.dependencies);
+                }
+            }
+        }
+    }
 
     private static class AnnotationResult {
         final List<Map<String, Object>> annotations;

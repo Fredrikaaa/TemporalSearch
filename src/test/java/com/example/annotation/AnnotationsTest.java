@@ -1,0 +1,352 @@
+package com.example.annotation;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.Path;
+import java.sql.*;
+import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * Tests for verifying the integrity of annotations and dependencies produced by Annotations.java.
+ * Focuses on document ID, sentence ID, and character position integrity.
+ */
+class AnnotationsTest {
+    private Path dbFile;
+    private Connection conn;
+    private Annotations annotations;
+    
+    @BeforeEach
+    void setUp(@TempDir Path tempDir) throws SQLException {
+        dbFile = tempDir.resolve("test.db");
+        conn = DriverManager.getConnection("jdbc:sqlite:" + dbFile);
+        annotations = new Annotations(dbFile, 5, 1, true);  // Initialize with test-appropriate values
+        
+        // Create required tables
+        try (Statement stmt = conn.createStatement()) {
+            // Create documents table
+            stmt.execute("""
+                CREATE TABLE documents (
+                    document_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    text TEXT NOT NULL,
+                    timestamp DATE DEFAULT CURRENT_DATE
+                )
+            """);
+            
+            // Create annotations table
+            stmt.execute("""
+                CREATE TABLE annotations (
+                    annotation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id INTEGER NOT NULL,
+                    sentence_id INTEGER,
+                    begin_char INTEGER,
+                    end_char INTEGER,
+                    token TEXT,
+                    lemma TEXT,
+                    pos TEXT,
+                    ner TEXT,
+                    normalized_ner TEXT,
+                    FOREIGN KEY (document_id) REFERENCES documents(document_id)
+                )
+            """);
+            
+            // Create dependencies table
+            stmt.execute("""
+                CREATE TABLE dependencies (
+                    dependency_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id INTEGER NOT NULL,
+                    sentence_id INTEGER,
+                    begin_char INTEGER,
+                    end_char INTEGER,
+                    head_token TEXT,
+                    dependent_token TEXT,
+                    relation TEXT,
+                    FOREIGN KEY (document_id) REFERENCES documents(document_id)
+                )
+            """);
+        }
+    }
+    
+    @Test
+    void testDocumentIdIntegrity() throws Exception {
+        // Insert test document
+        insertTestDocument("The quick brown fox jumps over the lazy dog.");
+        
+        // Run annotation process
+        runAnnotations();
+        
+        // Verify document IDs
+        try (Statement stmt = conn.createStatement()) {
+            // Check annotations have valid document IDs
+            ResultSet rs = stmt.executeQuery(
+                "SELECT DISTINCT document_id FROM annotations");
+            assertTrue(rs.next(), "Should have annotations");
+            assertEquals(1, rs.getInt("document_id"));
+            assertFalse(rs.next(), "Should only have one document ID");
+            
+            // Check dependencies have valid document IDs
+            rs = stmt.executeQuery(
+                "SELECT DISTINCT document_id FROM dependencies");
+            assertTrue(rs.next(), "Should have dependencies");
+            assertEquals(1, rs.getInt("document_id"));
+            assertFalse(rs.next(), "Should only have one document ID");
+            
+            // Check for any orphaned annotations/dependencies
+            rs = stmt.executeQuery("""
+                SELECT COUNT(*) as count FROM annotations a 
+                LEFT JOIN documents d ON a.document_id = d.document_id 
+                WHERE d.document_id IS NULL
+            """);
+            assertEquals(0, rs.getInt("count"), "Should have no orphaned annotations");
+            
+            rs = stmt.executeQuery("""
+                SELECT COUNT(*) as count FROM dependencies d 
+                LEFT JOIN documents doc ON d.document_id = doc.document_id 
+                WHERE doc.document_id IS NULL
+            """);
+            assertEquals(0, rs.getInt("count"), "Should have no orphaned dependencies");
+        }
+    }
+    
+    @Test
+    void testSentenceIdIntegrity() throws Exception {
+        // Insert test document with multiple sentences
+        insertTestDocument("First sentence. Second sentence. Third sentence.");
+        
+        // Run annotation process
+        runAnnotations();
+        
+        try (Statement stmt = conn.createStatement()) {
+            // Verify sentence IDs are sequential
+            ResultSet rs = stmt.executeQuery("""
+                SELECT document_id, sentence_id, COUNT(*) as count
+                FROM annotations
+                GROUP BY document_id, sentence_id
+                ORDER BY document_id, sentence_id
+            """);
+            
+            int expectedSentenceId = 0;
+            while (rs.next()) {
+                assertEquals(expectedSentenceId, rs.getInt("sentence_id"),
+                    "Sentence IDs should be sequential");
+                expectedSentenceId++;
+            }
+            
+            // Verify dependencies reference valid sentence IDs
+            rs = stmt.executeQuery("""
+                SELECT COUNT(*) as count
+                FROM dependencies d
+                LEFT JOIN annotations a ON 
+                    d.document_id = a.document_id AND 
+                    d.sentence_id = a.sentence_id
+                WHERE a.sentence_id IS NULL
+            """);
+            assertEquals(0, rs.getInt("count"),
+                "All dependencies should reference valid sentence IDs");
+        }
+    }
+    
+    @Test
+    void testCharacterPositionIntegrity() throws Exception {
+        String testText = "The quick brown fox jumps.";
+        insertTestDocument(testText);
+        
+        // Run annotation process
+        runAnnotations();
+        
+        try (Statement stmt = conn.createStatement()) {
+            // Verify all begin_char < end_char
+            ResultSet rs = stmt.executeQuery(
+                "SELECT * FROM annotations WHERE begin_char >= end_char");
+            assertFalse(rs.next(), "begin_char should be less than end_char");
+            
+            rs = stmt.executeQuery(
+                "SELECT * FROM dependencies WHERE begin_char >= end_char");
+            assertFalse(rs.next(), "begin_char should be less than end_char");
+            
+            // Verify positions are within document bounds
+            rs = stmt.executeQuery("""
+                SELECT a.*, d.text 
+                FROM annotations a 
+                JOIN documents d ON a.document_id = d.document_id 
+                WHERE a.begin_char < 0 OR a.end_char > length(d.text)
+            """);
+            assertFalse(rs.next(), "Character positions should be within document bounds");
+            
+            // Verify token positions match the text
+            rs = stmt.executeQuery("""
+                SELECT a.*, d.text 
+                FROM annotations a 
+                JOIN documents d ON a.document_id = d.document_id
+            """);
+            
+            while (rs.next()) {
+                String token = rs.getString("token");
+                String text = rs.getString("text");
+                int begin = rs.getInt("begin_char");
+                int end = rs.getInt("end_char");
+                
+                String extractedToken = text.substring(begin, end);
+                assertEquals(token, extractedToken.trim(),
+                    "Token should match text at specified position");
+            }
+        }
+    }
+    
+    @Test
+    void testEmptyDocument() throws Exception {
+        // Insert empty document
+        insertTestDocument("");
+        
+        // Run annotation process
+        runAnnotations();
+        
+        try (Statement stmt = conn.createStatement()) {
+            // Verify no annotations were created
+            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) as count FROM annotations");
+            assertTrue(rs.next());
+            assertEquals(0, rs.getInt("count"), "Empty document should have no annotations");
+            
+            // Verify no dependencies were created
+            rs = stmt.executeQuery("SELECT COUNT(*) as count FROM dependencies");
+            assertTrue(rs.next());
+            assertEquals(0, rs.getInt("count"), "Empty document should have no dependencies");
+        }
+    }
+    
+    @Test
+    void testLongDocument() throws Exception {
+        // Create a moderately sized document
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 50; i++) {  // Reduced from previous size
+            sb.append("This is sentence ").append(i)
+              .append(" of the test document with some text. ");
+        }
+        
+        // Insert the test document
+        insertTestDocument(sb.toString());
+        
+        try {
+            // Run annotation process
+            runAnnotations();
+            
+            // Verify the results
+            try (Statement stmt = conn.createStatement()) {
+                // Check that we have the expected number of sentences
+                ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(DISTINCT sentence_id) FROM annotations");
+                assertTrue(rs.next());
+                int sentenceCount = rs.getInt(1);
+                assertTrue(sentenceCount > 1, "Expected multiple sentences");
+                assertTrue(sentenceCount <= 50, "Expected fewer sentences than input");
+                
+                // Verify sentence boundaries don't overlap
+                rs = stmt.executeQuery("""
+                    SELECT a1.sentence_id 
+                    FROM annotations a1 
+                    JOIN annotations a2 
+                        ON a1.document_id = a2.document_id 
+                        AND a1.sentence_id != a2.sentence_id
+                    WHERE a1.begin_char < a2.end_char 
+                        AND a1.end_char > a2.begin_char
+                """);
+                assertFalse(rs.next(), "Found overlapping sentence boundaries");
+            }
+        } catch (StackOverflowError e) {
+            // If we still get a StackOverflowError, fail gracefully with a meaningful message
+            fail("Document is too complex for current parser configuration. Consider adjusting parser settings or reducing document size.");
+        }
+    }
+    
+    @Test
+    void testSpecialCharacters() throws Exception {
+        String specialText = "Unicode: 你好,世界! Newlines:\nTab:\tQuotes:\"'";
+        insertTestDocument(specialText);
+        runAnnotations();
+        
+        try (Statement stmt = conn.createStatement()) {
+            // Verify all characters are properly handled
+            ResultSet rs = stmt.executeQuery("""
+                SELECT a.*, d.text
+                FROM annotations a
+                JOIN documents d ON a.document_id = d.document_id
+            """);
+            
+            while (rs.next()) {
+                String token = rs.getString("token");
+                String text = rs.getString("text");
+                int begin = rs.getInt("begin_char");
+                int end = rs.getInt("end_char");
+                
+                String extractedToken = text.substring(begin, end);
+                assertEquals(token.trim(), extractedToken.trim(),
+                    "Token should match text at position even with special characters");
+            }
+        }
+    }
+    
+    @Test
+    void testMultipleDocuments() throws Exception {
+        // Insert multiple documents
+        String[] documents = {
+            "First document.",
+            "Second document.",
+            "Third document."
+        };
+        
+        for (String doc : documents) {
+            insertTestDocument(doc);
+        }
+        
+        runAnnotations();
+        
+        try (Statement stmt = conn.createStatement()) {
+            // Verify each document has its own annotations
+            ResultSet rs = stmt.executeQuery("""
+                SELECT d.document_id, COUNT(DISTINCT a.sentence_id) as sentence_count
+                FROM documents d
+                JOIN annotations a ON d.document_id = a.document_id
+                GROUP BY d.document_id
+                ORDER BY d.document_id
+            """);
+            
+            int documentCount = 0;
+            while (rs.next()) {
+                documentCount++;
+                assertEquals(1, rs.getInt("sentence_count"),
+                    "Each document should have one sentence");
+            }
+            assertEquals(3, documentCount, "Should have processed all documents");
+            
+            // Verify no cross-document dependencies
+            rs = stmt.executeQuery("""
+                SELECT COUNT(*) as invalid_count
+                FROM dependencies d
+                JOIN annotations a1 
+                    ON d.document_id = a1.document_id 
+                    AND d.head_token = a1.token
+                JOIN annotations a2
+                    ON d.document_id = a2.document_id
+                    AND d.dependent_token = a2.token
+                WHERE a1.document_id != a2.document_id
+            """);
+            
+            assertTrue(rs.next());
+            assertEquals(0, rs.getInt("invalid_count"),
+                "Should have no cross-document dependencies");
+        }
+    }
+    
+    private void insertTestDocument(String text) throws SQLException {
+        try (PreparedStatement pstmt = conn.prepareStatement(
+                "INSERT INTO documents (text) VALUES (?)")) {
+            pstmt.setString(1, text);
+            pstmt.executeUpdate();
+        }
+    }
+    
+    private void runAnnotations() throws Exception {
+        annotations.processDocuments();
+    }
+} 

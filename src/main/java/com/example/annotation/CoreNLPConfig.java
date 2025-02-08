@@ -109,10 +109,9 @@ public class CoreNLPConfig {
         ));
         
         // Simple sentence splitting for speed
-        props.setProperty("ssplit.boundaryTokenRegex", "[.!?]|\\n\\n+");
+        props.setProperty("ssplit.boundaryTokenRegex", "[.!?]+");  // Default boundary regex
         props.setProperty("ssplit.newlineIsSentenceBreak", "two");
-        props.setProperty("ssplit.eolonly", "true");              // Faster sentence splitting
-        props.setProperty("tokenize.tokenizeNLs", "false");       // Faster processing
+        props.setProperty("tokenize.tokenizeNLs", "true");       // Handle newlines properly
         
         // Thread allocation - optimized for parallel processing
         props.setProperty("parse.nthreads", String.valueOf(threads));
