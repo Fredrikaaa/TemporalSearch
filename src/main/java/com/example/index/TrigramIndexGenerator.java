@@ -12,8 +12,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import com.example.logging.ProgressTracker;
 
 /**
@@ -22,8 +20,6 @@ import com.example.logging.ProgressTracker;
  * Uses streaming processing and external sorting for efficient memory usage.
  */
 public final class TrigramIndexGenerator extends IndexGenerator<AnnotationEntry> {
-    private static final Logger logger = LoggerFactory.getLogger(TrigramIndexGenerator.class);
-
     public TrigramIndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
         super(levelDbPath, stopwordsPath, sqliteConn, progress);

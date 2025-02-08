@@ -30,11 +30,12 @@ class IndexingMetricsTest {
     @Test
     void testSuccessfulBatchProcessing() throws Exception {
         // Process a successful batch
-        metrics.startBatch(100);
+        metrics.startBatch(100, "unigram");
         Thread.sleep(10); // Simulate some work
-        metrics.recordBatchSuccess();
+        metrics.recordBatchSuccess(50); // 50 unique documents
 
-        assertEquals(100, metrics.getTotalDocuments());
+        assertEquals(100, metrics.getTotalEntries());
+        assertEquals(50, metrics.getUniqueDocuments());
         assertEquals(1, metrics.getTotalBatches());
         assertEquals(0, metrics.getErrorCount());
         assertEquals(0, metrics.getNullCount());
@@ -43,31 +44,53 @@ class IndexingMetricsTest {
 
     @Test
     void testFailedBatchProcessing() {
-        metrics.startBatch(100);
+        metrics.startBatch(100, "unigram");
         metrics.recordBatchFailure();
 
-        assertEquals(0, metrics.getTotalDocuments());
+        assertEquals(0, metrics.getTotalEntries());
+        assertEquals(0, metrics.getUniqueDocuments());
         assertEquals(1, metrics.getTotalBatches());
         assertEquals(1, metrics.getErrorCount());
     }
 
     @Test
     void testNullBatchProcessing() {
-        metrics.startBatch(100);
+        metrics.startBatch(100, "unigram");
         metrics.recordNullBatch();
 
-        assertEquals(0, metrics.getTotalDocuments());
+        assertEquals(0, metrics.getTotalEntries());
+        assertEquals(0, metrics.getUniqueDocuments());
         assertEquals(0, metrics.getTotalBatches());
         assertEquals(0, metrics.getErrorCount());
         assertEquals(1, metrics.getNullCount());
     }
 
     @Test
+    void testMultipleIndexTypes() throws Exception {
+        // Process multiple batches with different index types
+        metrics.startBatch(100, "unigram");
+        metrics.recordBatchSuccess(50); // First index type counts unique docs
+
+        metrics.startBatch(100, "bigram");
+        metrics.recordBatchSuccess(); // Subsequent types don't add to unique count
+
+        metrics.startBatch(100, "trigram");
+        metrics.recordBatchSuccess();
+
+        assertEquals(300, metrics.getTotalEntries());
+        assertEquals(50, metrics.getUniqueDocuments());
+        assertEquals(3, metrics.getTotalBatches());
+        assertEquals(0, metrics.getErrorCount());
+    }
+
+    @Test
     void testMetricsLogging() throws Exception {
         // Process multiple batches to test logging
         for (int i = 0; i < 5; i++) {
-            metrics.startBatch(100);
-            if (i % 2 == 0) {
+            metrics.startBatch(100, "test-" + i);
+            if (i == 0) {
+                metrics.recordBatchSuccess(50); // First batch records unique docs
+            } else if (i % 2 == 0) {
                 metrics.recordBatchSuccess();
             } else {
                 metrics.recordBatchFailure();
@@ -91,11 +114,12 @@ class IndexingMetricsTest {
         }
         
         assertNotNull(indexingMetrics, "No indexing_metrics event found");
-        assertEquals(300, indexingMetrics.get("total_documents").asInt()); // 3 successful batches * 100
+        assertEquals(300, indexingMetrics.get("total_entries").asInt()); // 3 successful batches * 100
+        assertEquals(50, indexingMetrics.get("unique_documents").asInt()); // Only first batch counts unique docs
         assertEquals(5, indexingMetrics.get("total_batches").asInt());
         assertEquals(2, indexingMetrics.get("total_errors").asInt());
         assertTrue(indexingMetrics.has("elapsed_seconds"));
-        assertTrue(indexingMetrics.has("docs_per_second"));
+        assertTrue(indexingMetrics.has("entries_per_second"));
         assertTrue(indexingMetrics.has("heap_used_mb"));
     }
 
@@ -105,8 +129,12 @@ class IndexingMetricsTest {
         
         // Process 1000 batches quickly
         for (int i = 0; i < 1000; i++) {
-            metrics.startBatch(100);
-            metrics.recordBatchSuccess();
+            metrics.startBatch(100, "test");
+            if (i == 0) {
+                metrics.recordBatchSuccess(50);
+            } else {
+                metrics.recordBatchSuccess();
+            }
         }
         
         long duration = System.nanoTime() - startTime;

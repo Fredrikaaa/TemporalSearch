@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.sql.SQLException;
 
 
 public class IndexRunner {
@@ -142,11 +143,11 @@ public class IndexRunner {
             // Create and run generators based on type
             try {
                 if (indexType.equals("all") || indexType.equals("unigram")) {
-                    metrics.startBatch(batchSize);
+                    metrics.startBatch(batchSize, "unigram");
                     try (UnigramIndexGenerator gen = new UnigramIndexGenerator(
                             indexDir + "/unigram", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
-                        metrics.recordBatchSuccess();
+                        metrics.recordBatchSuccess(limit != null ? limit : getTotalDocuments(conn));
                     } catch (Exception e) {
                         metrics.recordBatchFailure();
                         logger.error("Error generating unigram index: {}", e.getMessage(), e);
@@ -154,10 +155,11 @@ public class IndexRunner {
                 }
 
                 if (indexType.equals("all") || indexType.equals("bigram")) {
-                    metrics.startBatch(batchSize);
+                    metrics.startBatch(batchSize, "bigram");
                     try (BigramIndexGenerator gen = new BigramIndexGenerator(
                             indexDir + "/bigram", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
+                        // Don't count unique documents again for subsequent indexes
                         metrics.recordBatchSuccess();
                     } catch (Exception e) {
                         metrics.recordBatchFailure();
@@ -166,7 +168,7 @@ public class IndexRunner {
                 }
 
                 if (indexType.equals("all") || indexType.equals("trigram")) {
-                    metrics.startBatch(batchSize);
+                    metrics.startBatch(batchSize, "trigram");
                     try (TrigramIndexGenerator gen = new TrigramIndexGenerator(
                             indexDir + "/trigram", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
@@ -178,7 +180,7 @@ public class IndexRunner {
                 }
 
                 if (indexType.equals("all") || indexType.equals("dependency")) {
-                    metrics.startBatch(batchSize);
+                    metrics.startBatch(batchSize, "dependency");
                     try (DependencyIndexGenerator gen = new DependencyIndexGenerator(
                             indexDir + "/dependency", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
@@ -190,7 +192,7 @@ public class IndexRunner {
                 }
 
                 if (indexType.equals("all") || indexType.equals("ner_date")) {
-                    metrics.startBatch(batchSize);
+                    metrics.startBatch(batchSize, "ner_date");
                     try (NerDateIndexGenerator gen = new NerDateIndexGenerator(
                             indexDir + "/ner_date", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
@@ -202,7 +204,7 @@ public class IndexRunner {
                 }
 
                 if (indexType.equals("all") || indexType.equals("pos")) {
-                    metrics.startBatch(batchSize);
+                    metrics.startBatch(batchSize, "pos");
                     try (POSIndexGenerator gen = new POSIndexGenerator(
                             indexDir + "/pos", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
@@ -214,7 +216,7 @@ public class IndexRunner {
                 }
 
                 if (indexType.equals("all") || indexType.equals("hypernym")) {
-                    metrics.startBatch(batchSize);
+                    metrics.startBatch(batchSize, "hypernym");
                     try (HypernymIndexGenerator gen = new HypernymIndexGenerator(
                             indexDir + "/hypernym", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
@@ -235,26 +237,13 @@ public class IndexRunner {
         logger.info("Index generation completed successfully");
     }
 
-    private static long calculateDirectorySize(String path) {
-        try {
-            Path dir = Paths.get(path);
-            if (!Files.exists(dir)) {
-                return 0L;
+    private static int getTotalDocuments(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("SELECT COUNT(DISTINCT document_id) FROM annotations");
+            if (rs.next()) {
+                return rs.getInt(1);
             }
-            return Files.walk(dir)
-                .filter(p -> !Files.isDirectory(p))
-                .mapToLong(p -> {
-                    try {
-                        return Files.size(p);
-                    } catch (IOException e) {
-                        logger.warn("Failed to get size for file: {}", p);
-                        return 0L;
-                    }
-                })
-                .sum();
-        } catch (IOException e) {
-            logger.warn("Failed to calculate directory size for: {}", path);
-            return 0L;
+            return 0;
         }
     }
 }

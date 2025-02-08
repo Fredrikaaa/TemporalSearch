@@ -18,9 +18,12 @@ import org.apache.commons.io.FileUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @DisplayName("Pipeline Integration Tests")
 public class PipelineTest {
+    private static final Logger logger = LoggerFactory.getLogger(PipelineTest.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int TOTAL_DOCS = 20;
     
@@ -33,6 +36,7 @@ public class PipelineTest {
 
     @BeforeEach
     void setUp() throws Exception {
+        logger.info("Setting up test environment");
         // Create temporary directory
         tempDir = Files.createTempDirectory("pipeline-test-");
         
@@ -44,10 +48,12 @@ public class PipelineTest {
         
         // Create database connection
         sqliteConn = createTestDatabase();
+        logger.info("Test environment ready with database at: {}", dbFile);
     }
 
     @AfterEach
     void tearDown() throws Exception {
+        logger.info("Cleaning up test environment");
         if (sqliteConn != null) {
             sqliteConn.close();
         }
@@ -81,16 +87,19 @@ public class PipelineTest {
         @Test
         @DisplayName("Full pipeline processes all stages successfully")
         void testFullPipeline() throws Exception {
+            logger.info("Testing full pipeline execution");
             Pipeline.runPipeline(createPipelineArgs("all", true));
             verifyConversionStage(TOTAL_DOCS);
             verifyAnnotationStage(TOTAL_DOCS);
             verifyIndexingStage();
+            logger.info("Full pipeline test completed successfully");
         }
 
         @Test
         @DisplayName("Pipeline with limit processes correct number of documents")
         void testPipelineWithLimit() throws Exception {
             int limit = 5;
+            logger.info("Testing pipeline with document limit: {}", limit);
             String[] args = {
                 "-s", "all",
                 "-f", jsonFile.toString(),
@@ -105,6 +114,7 @@ public class PipelineTest {
             verifyConversionStage(limit);
             verifyAnnotationStage(limit);
             verifyIndexingStage();
+            logger.info("Limited pipeline test completed successfully");
         }
     }
 
@@ -270,6 +280,7 @@ public class PipelineTest {
     }
 
     private void verifyConversionStage(int expectedCount) throws SQLException {
+        logger.debug("Verifying conversion stage with expected count: {}", expectedCount);
         // Check total documents
         try (Statement stmt = sqliteConn.createStatement()) {
             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM documents");
@@ -283,6 +294,7 @@ public class PipelineTest {
             assertNotNull(rs.getString("title"), "Document title should not be null");
             assertNotNull(rs.getString("text"), "Document text should not be null");
         }
+        logger.debug("Conversion stage verification completed");
     }
 
     private void verifyAnnotationStage(int expectedCount) throws SQLException {

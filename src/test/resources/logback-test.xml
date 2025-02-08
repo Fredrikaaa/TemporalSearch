@@ -12,6 +12,16 @@
     <!-- Disable file appenders during tests -->
     <appender name="NULL" class="ch.qos.logback.core.helpers.NOPAppender"/>
 
+    <!-- Pipeline specific logging -->
+    <logger name="com.example.Pipeline" level="INFO" additivity="false">
+        <appender-ref ref="TEST_CONSOLE"/>
+    </logger>
+
+    <!-- Progress tracking -->
+    <logger name="com.example.logging.ProgressTracker" level="WARN" additivity="false">
+        <appender-ref ref="TEST_CONSOLE"/>
+    </logger>
+
     <!-- Override the main configuration to be much quieter -->
     <logger name="com.example.logging" level="WARN" additivity="false">
         <appender-ref ref="TEST_CONSOLE"/>

@@ -48,6 +48,15 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
     }
 
     /**
+     * Gets the name of this index for progress tracking and logging.
+     * Subclasses should override this to provide a specific name.
+     * @return The name of the index
+     */
+    protected String getIndexName() {
+        return getClass().getSimpleName().toLowerCase().replace("indexgenerator", "");
+    }
+
+    /**
      * Converts a string to UTF-8 bytes for LevelDB operations.
      * @param str The string to convert
      * @return The UTF-8 encoded bytes
@@ -258,7 +267,7 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
             ResultSet rs = stmt.executeQuery(countQuery);
             if (rs.next()) {
                 long totalEntries = rs.getLong(1);
-                progress.startIndex("entries", totalEntries);
+                progress.startIndex(getIndexName(), totalEntries);
                 logger.info("Found {} entries to process{}", totalEntries,
                     config.getLimit() != null ? String.format(" (limited to %d)", config.getLimit()) : "");
             }
@@ -277,6 +286,7 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
                     break;
                 }
                 batch = batch.subList(0, remaining);
+                metrics.updateCurrentBatchSize(remaining);
             }
 
             // Process batch and write to temp file

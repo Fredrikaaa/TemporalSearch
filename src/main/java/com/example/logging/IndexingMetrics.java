@@ -7,13 +7,11 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
-import java.lang.management.ThreadMXBean;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.Map;
+
 
 /**
  * Unified metrics tracking for the indexing process.
@@ -26,14 +24,14 @@ public class IndexingMetrics {
     private static final MemoryMXBean MEMORY_BEAN = ManagementFactory.getMemoryMXBean();
     
     // Sampling configuration
-    private final LogSampler detailedMetricsSampler;
     private final LogSampler batchMetricsSampler;
     
     // Overall metrics
     private final long startTime;
     private final long initialHeapUsed;
     private final AtomicLong totalProcessingTimeNanos;
-    private final AtomicInteger totalDocumentsProcessed;
+    private final AtomicInteger totalEntriesProcessed;
+    private final AtomicInteger uniqueDocumentsProcessed;
     private final AtomicInteger totalBatchesProcessed;
     
     // Batch-level metrics
@@ -46,18 +44,19 @@ public class IndexingMetrics {
     // Current batch tracking
     private long currentBatchStartTime;
     private int currentBatchSize;
+    private String currentIndexType;
 
     public IndexingMetrics() {
         this.startTime = System.nanoTime();
         this.initialHeapUsed = MEMORY_BEAN.getHeapMemoryUsage().getUsed();
         
         // Initialize samplers
-        this.detailedMetricsSampler = new LogSampler(0.1);  // 10% sampling for detailed metrics
         this.batchMetricsSampler = new LogSampler(0.05);    // 5% sampling for batch metrics
         
         // Initialize counters
         this.totalProcessingTimeNanos = new AtomicLong(0);
-        this.totalDocumentsProcessed = new AtomicInteger(0);
+        this.totalEntriesProcessed = new AtomicInteger(0);
+        this.uniqueDocumentsProcessed = new AtomicInteger(0);
         this.totalBatchesProcessed = new AtomicInteger(0);
         this.nullCount = new AtomicInteger(0);
         this.errorCount = new AtomicInteger(0);
@@ -69,10 +68,20 @@ public class IndexingMetrics {
     /**
      * Start tracking a new batch of documents.
      * @param batchSize The number of documents in this batch
+     * @param indexType The type of index being processed (e.g., "unigram", "bigram")
      */
-    public void startBatch(int batchSize) {
+    public void startBatch(int batchSize, String indexType) {
         this.currentBatchStartTime = System.nanoTime();
         this.currentBatchSize = batchSize;
+        this.currentIndexType = indexType;
+    }
+
+    /**
+     * Update the current batch size, used when a batch is truncated due to limits.
+     * @param newBatchSize The new size of the current batch
+     */
+    public void updateCurrentBatchSize(int newBatchSize) {
+        this.currentBatchSize = newBatchSize;
     }
 
     /**
@@ -80,6 +89,16 @@ public class IndexingMetrics {
      */
     public void recordBatchSuccess() {
         long duration = System.nanoTime() - currentBatchStartTime;
+        recordBatchCompletion(duration, true);
+    }
+
+    /**
+     * Record successful processing of the current batch with unique document count.
+     * @param uniqueDocsInBatch The number of unique documents in this batch
+     */
+    public void recordBatchSuccess(int uniqueDocsInBatch) {
+        long duration = System.nanoTime() - currentBatchStartTime;
+        uniqueDocumentsProcessed.addAndGet(uniqueDocsInBatch);
         recordBatchCompletion(duration, true);
     }
 
@@ -106,7 +125,7 @@ public class IndexingMetrics {
         
         // Update document counts
         if (success) {
-            totalDocumentsProcessed.addAndGet(currentBatchSize);
+            totalEntriesProcessed.addAndGet(currentBatchSize);
         }
         totalBatchesProcessed.incrementAndGet();
         
@@ -149,11 +168,13 @@ public class IndexingMetrics {
 
             ObjectNode json = MAPPER.createObjectNode()
                 .put("event", "batch_complete")
+                .put("index_type", currentIndexType)
                 .put("success", success)
                 .put("batch_size", currentBatchSize)
                 .put("processing_time_ms", durationNanos / 1_000_000.0)
                 .put("avg_processing_time_ms", avgProcessingTime / 1_000_000.0)
-                .put("total_documents", totalDocumentsProcessed.get())
+                .put("total_entries", totalEntriesProcessed.get())
+                .put("unique_documents", uniqueDocumentsProcessed.get())
                 .put("total_batches", totalBatchesProcessed.get())
                 .put("errors", errorCount.get())
                 .put("nulls", nullCount.get())
@@ -179,21 +200,22 @@ public class IndexingMetrics {
             
             ObjectNode json = MAPPER.createObjectNode()
                 .put("event", "indexing_metrics")
-                .put("total_documents", totalDocumentsProcessed.get())
+                .put("total_entries", totalEntriesProcessed.get())
+                .put("unique_documents", uniqueDocumentsProcessed.get())
                 .put("total_batches", totalBatchesProcessed.get())
                 .put("total_errors", errorCount.get())
                 .put("total_nulls", nullCount.get())
                 .put("elapsed_seconds", elapsedSeconds)
-                .put("docs_per_second", totalDocumentsProcessed.get() / elapsedSeconds)
+                .put("entries_per_second", totalEntriesProcessed.get() / elapsedSeconds)
                 .put("avg_batch_size", totalBatchesProcessed.get() > 0 ? 
-                    (double) totalDocumentsProcessed.get() / totalBatchesProcessed.get() : 0.0)
+                    (double) totalEntriesProcessed.get() / totalBatchesProcessed.get() : 0.0)
                 .put("min_batch_time_ms", minProcessingTimeNanos.get() / 1_000_000.0)
                 .put("max_batch_time_ms", maxProcessingTimeNanos.get() / 1_000_000.0)
                 .put("heap_used_mb", MEMORY_BEAN.getHeapMemoryUsage().getUsed() / (1024.0 * 1024.0))
                 .put("heap_change_mb", (MEMORY_BEAN.getHeapMemoryUsage().getUsed() - initialHeapUsed) / (1024.0 * 1024.0));
 
-            // Only log at INFO level when called at completion (i.e. when total_documents > 0)
-            if (totalDocumentsProcessed.get() > 0) {
+            // Only log at INFO level when called at completion (i.e. when total_entries > 0)
+            if (totalEntriesProcessed.get() > 0) {
                 logger.info(json.toString());
             } else {
                 logger.debug(json.toString());
@@ -204,8 +226,12 @@ public class IndexingMetrics {
     }
 
     // Getters for testing and verification
-    public int getTotalDocuments() {
-        return totalDocumentsProcessed.get();
+    public int getTotalEntries() {
+        return totalEntriesProcessed.get();
+    }
+    
+    public int getUniqueDocuments() {
+        return uniqueDocumentsProcessed.get();
     }
     
     public int getTotalBatches() {
