@@ -13,6 +13,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import com.example.logging.ProgressTracker;
+import com.example.core.Position;
+import com.example.core.PositionList;
 
 /**
  * Generates a streaming trigram index from annotation entries.

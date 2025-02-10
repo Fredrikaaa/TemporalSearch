@@ -1,26 +1,31 @@
 package com.example.core;
 
+import java.util.Objects;
 import java.time.LocalDate;
 
 /**
- * Represents a position in the corpus, including document location and temporal information.
- * This class is used by both index generation and query components.
+ * Represents the exact location of a word, phrase, or entity within the document collection. 
+ * Each Position instance stores a document ID, sentence ID, character-level begin and end positions, 
+ * and a timestamp. This immutable class serves as the fundamental building block for all index 
+ * operations, enabling precise text location tracking and temporal analysis. It includes proper 
+ * equality checking and comparison methods to support set operations and sorting.
  */
-public class Position implements Comparable<Position> {
+public class Position {
     private final int documentId;
     private final int sentenceId;
-    private final int beginChar;
-    private final int endChar;
+    private final int beginPosition;
+    private final int endPosition;
     private final LocalDate timestamp;
 
-    public Position(int documentId, int sentenceId, int beginChar, int endChar, LocalDate timestamp) {
+    public Position(int documentId, int sentenceId, int beginPosition, int endPosition, LocalDate timestamp) {
         this.documentId = documentId;
         this.sentenceId = sentenceId;
-        this.beginChar = beginChar;
-        this.endChar = endChar;
+        this.beginPosition = beginPosition;
+        this.endPosition = endPosition;
         this.timestamp = timestamp;
     }
 
+    // Getters
     public int getDocumentId() {
         return documentId;
     }
@@ -29,12 +34,12 @@ public class Position implements Comparable<Position> {
         return sentenceId;
     }
 
-    public int getBeginChar() {
-        return beginChar;
+    public int getBeginPosition() {
+        return beginPosition;
     }
 
-    public int getEndChar() {
-        return endChar;
+    public int getEndPosition() {
+        return endPosition;
     }
 
     public LocalDate getTimestamp() {
@@ -42,42 +47,26 @@ public class Position implements Comparable<Position> {
     }
 
     @Override
-    public int compareTo(Position other) {
-        int docCompare = Integer.compare(this.documentId, other.documentId);
-        if (docCompare != 0) return docCompare;
-        
-        int sentCompare = Integer.compare(this.sentenceId, other.sentenceId);
-        if (sentCompare != 0) return sentCompare;
-        
-        return Integer.compare(this.beginChar, other.beginChar);
+    public String toString() {
+        return String.format("Position(doc=%d, sent=%d, begin=%d, end=%d, time=%s)",
+                documentId, sentenceId, beginPosition, endPosition, timestamp);
     }
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Position other = (Position) o;
-        return documentId == other.documentId &&
-               sentenceId == other.sentenceId &&
-               beginChar == other.beginChar &&
-               endChar == other.endChar &&
-               timestamp.equals(other.timestamp);
+        if (this == o)
+            return true;
+        if (o == null || getClass() != o.getClass())
+            return false;
+        Position position = (Position) o;
+        return documentId == position.documentId &&
+                sentenceId == position.sentenceId &&
+                beginPosition == position.beginPosition &&
+                endPosition == position.endPosition;
     }
 
     @Override
     public int hashCode() {
-        int result = 17;
-        result = 31 * result + documentId;
-        result = 31 * result + sentenceId;
-        result = 31 * result + beginChar;
-        result = 31 * result + endChar;
-        result = 31 * result + timestamp.hashCode();
-        return result;
+        return Objects.hash(documentId, sentenceId, beginPosition, endPosition);
     }
-
-    @Override
-    public String toString() {
-        return String.format("Position(doc=%d, sent=%d, span=[%d,%d], time=%s)",
-            documentId, sentenceId, beginChar, endChar, timestamp);
-    }
-} 
+}

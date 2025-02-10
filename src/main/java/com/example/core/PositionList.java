@@ -1,4 +1,4 @@
-package com.example.index;
+package com.example.core;
 
 import me.lemire.integercompression.*;
 import java.nio.ByteBuffer;
