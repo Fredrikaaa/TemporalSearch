@@ -82,6 +82,7 @@ public class CoreNLPConfig {
         // Parser specific settings
         props.setProperty("parse.maxlen", String.valueOf(MAX_SENTENCE_LENGTH));
         props.setProperty("parse.binaryTrees", "true");  // Required for SR parser
+        props.setProperty("parse.buildgraphs", "true");  // Ensure dependency graphs are built
         
         // Rich feature set for NER - focused on speed
         props.setProperty("ner.useSUTime", "true");                // Required for normalized_ner
@@ -97,7 +98,6 @@ public class CoreNLPConfig {
         // Length constraints - balanced for speed
         props.setProperty("pos.maxlen", String.valueOf(MAX_SENTENCE_LENGTH));
         props.setProperty("ner.maxlen", String.valueOf(MAX_SENTENCE_LENGTH));
-        props.setProperty("depparse.maxlen", String.valueOf(MAX_SENTENCE_LENGTH));
         
         // Enhanced tokenizer settings - optimized for speed
         props.setProperty("tokenize.options", String.join(",",
@@ -107,6 +107,9 @@ public class CoreNLPConfig {
             "invertible=true",             // Required for char offsets
             "untokenizable=noneKeep"       // Skip problematic tokens
         ));
+        
+        // Disable graph building for better performance
+        props.setProperty("buildGraphs", "false");
         
         // Simple sentence splitting for speed
         props.setProperty("ssplit.boundaryTokenRegex", "[.!?]+");  // Default boundary regex
