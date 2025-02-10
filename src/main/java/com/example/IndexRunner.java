@@ -103,9 +103,6 @@ public class IndexRunner {
         IndexingMetrics metrics = new IndexingMetrics();
         ProgressTracker progress = new ProgressTracker();
         
-        logger.info("Starting index generation with parameters: dbPath={}, indexDir={}, batchSize={}, preserveIndex={}, limit={}",
-            dbPath, indexDir, batchSize, preserveIndex, limit);
-
         // Create index configuration
         IndexConfig indexConfig = new IndexConfig.Builder()
             .withPreserveExistingIndex(preserveIndex)
@@ -115,7 +112,7 @@ public class IndexRunner {
         // Ensure index directory exists
         Path indexPath = Paths.get(indexDir);
         if (!preserveIndex && Files.exists(indexPath)) {
-            logger.info("Cleaning existing index directory: {}", indexPath);
+            logger.debug("Cleaning existing index directory: {}", indexPath);
             Files.walk(indexPath)
                  .sorted((a, b) -> b.compareTo(a))
                  .forEach(path -> {
@@ -127,121 +124,180 @@ public class IndexRunner {
                  });
         }
         Files.createDirectories(indexPath);
-
-        // Connect to database
+        
+        // Connect to database and process indexes
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
-            // Get total document count for progress tracking
-            try (Statement stmt = conn.createStatement()) {
-                ResultSet rs = stmt.executeQuery("SELECT COUNT(DISTINCT document_id) FROM annotations");
-                if (rs.next()) {
-                    long totalDocs = rs.getLong(1);
-                    progress.startIndex("documents", totalDocs);
-                    logger.info("Found {} documents to process", totalDocs);
-                }
-            }
+            // Determine total number of indexes to generate
+            int totalIndexes = indexType.equals("all") ? 7 : 1;
+            int currentIndex = 0;
 
             // Create and run generators based on type
             try {
                 if (indexType.equals("all") || indexType.equals("unigram")) {
+                    currentIndex++;
+                    System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
                     metrics.startBatch(batchSize, "unigram");
+                    long count = getAnnotationCount(conn, limit);
+                    progress.startIndex("Unigram Index", count);
                     try (UnigramIndexGenerator gen = new UnigramIndexGenerator(
                             indexDir + "/unigram", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
-                        metrics.recordBatchSuccess(limit != null ? limit : getTotalDocuments(conn));
+                        metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
                         metrics.recordBatchFailure();
                         logger.error("Error generating unigram index: {}", e.getMessage(), e);
                     }
+                    progress.completeIndex();
                 }
 
                 if (indexType.equals("all") || indexType.equals("bigram")) {
+                    currentIndex++;
+                    System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
                     metrics.startBatch(batchSize, "bigram");
+                    long count = getAnnotationCount(conn, limit);
+                    progress.startIndex("Bigram Index", count);
                     try (BigramIndexGenerator gen = new BigramIndexGenerator(
                             indexDir + "/bigram", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
-                        // Don't count unique documents again for subsequent indexes
-                        metrics.recordBatchSuccess();
+                        metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
                         metrics.recordBatchFailure();
                         logger.error("Error generating bigram index: {}", e.getMessage(), e);
                     }
+                    progress.completeIndex();
                 }
 
                 if (indexType.equals("all") || indexType.equals("trigram")) {
+                    currentIndex++;
+                    System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
                     metrics.startBatch(batchSize, "trigram");
+                    long count = getAnnotationCount(conn, limit);
+                    progress.startIndex("Trigram Index", count);
                     try (TrigramIndexGenerator gen = new TrigramIndexGenerator(
                             indexDir + "/trigram", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
-                        metrics.recordBatchSuccess();
+                        metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
                         metrics.recordBatchFailure();
                         logger.error("Error generating trigram index: {}", e.getMessage(), e);
                     }
+                    progress.completeIndex();
                 }
 
                 if (indexType.equals("all") || indexType.equals("dependency")) {
+                    currentIndex++;
+                    System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
                     metrics.startBatch(batchSize, "dependency");
+                    long count = getDependencyCount(conn, limit);
+                    progress.startIndex("Dependency Index", count);
                     try (DependencyIndexGenerator gen = new DependencyIndexGenerator(
                             indexDir + "/dependency", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
-                        metrics.recordBatchSuccess();
+                        metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
                         metrics.recordBatchFailure();
                         logger.error("Error generating dependency index: {}", e.getMessage(), e);
                     }
+                    progress.completeIndex();
                 }
 
                 if (indexType.equals("all") || indexType.equals("ner_date")) {
+                    currentIndex++;
+                    System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
                     metrics.startBatch(batchSize, "ner_date");
+                    long count = getNerDateCount(conn, limit);
+                    progress.startIndex("NER Date Index", count);
                     try (NerDateIndexGenerator gen = new NerDateIndexGenerator(
                             indexDir + "/ner_date", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
-                        metrics.recordBatchSuccess();
+                        metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
                         metrics.recordBatchFailure();
                         logger.error("Error generating NER date index: {}", e.getMessage(), e);
                     }
+                    progress.completeIndex();
                 }
 
                 if (indexType.equals("all") || indexType.equals("pos")) {
+                    currentIndex++;
+                    System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
                     metrics.startBatch(batchSize, "pos");
+                    long count = getAnnotationCount(conn, limit);
+                    progress.startIndex("POS Index", count);
                     try (POSIndexGenerator gen = new POSIndexGenerator(
                             indexDir + "/pos", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
-                        metrics.recordBatchSuccess();
+                        metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
                         metrics.recordBatchFailure();
                         logger.error("Error generating POS index: {}", e.getMessage(), e);
                     }
+                    progress.completeIndex();
                 }
 
                 if (indexType.equals("all") || indexType.equals("hypernym")) {
+                    currentIndex++;
+                    System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
                     metrics.startBatch(batchSize, "hypernym");
+                    long count = getDependencyCount(conn, limit);
+                    progress.startIndex("Hypernym Index", count);
                     try (HypernymIndexGenerator gen = new HypernymIndexGenerator(
                             indexDir + "/hypernym", stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
-                        metrics.recordBatchSuccess();
+                        metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
                         metrics.recordBatchFailure();
                         logger.error("Error generating hypernym index: {}", e.getMessage(), e);
                     }
+                    progress.completeIndex();
                 }
 
             } finally {
-                // Log final metrics
                 metrics.logIndexingMetrics();
-                progress.completeIndex();
+                progress.close();
             }
         }
 
         logger.info("Index generation completed successfully");
     }
 
-    private static int getTotalDocuments(Connection conn) throws SQLException {
-        try (Statement stmt = conn.createStatement()) {
-            ResultSet rs = stmt.executeQuery("SELECT COUNT(DISTINCT document_id) FROM annotations");
+    private static long getAnnotationCount(Connection conn, Integer limit) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM annotations";
+        if (limit != null) {
+            sql += " LIMIT " + limit;
+        }
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
             if (rs.next()) {
-                return rs.getInt(1);
+                return rs.getLong(1);
+            }
+            return 0;
+        }
+    }
+
+    private static long getDependencyCount(Connection conn, Integer limit) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM dependencies";
+        if (limit != null) {
+            sql += " LIMIT " + limit;
+        }
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) {
+                return rs.getLong(1);
+            }
+            return 0;
+        }
+    }
+
+    private static long getNerDateCount(Connection conn, Integer limit) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM annotations WHERE ner = 'DATE'";
+        if (limit != null) {
+            sql += " LIMIT " + limit;
+        }
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) {
+                return rs.getLong(1);
             }
             return 0;
         }

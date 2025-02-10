@@ -38,7 +38,7 @@ public class ProgressTracker implements AutoCloseable {
         overallProgress = new ProgressBarBuilder()
             .setTaskName(task)
             .setInitialMax(total)
-            .setStyle(ProgressBarStyle.ASCII)
+            .setStyle(ProgressBarStyle.COLORFUL_UNICODE_BLOCK)
             .setUpdateIntervalMillis(100)
             .showSpeed()
             .build();
@@ -61,7 +61,7 @@ public class ProgressTracker implements AutoCloseable {
             overallProgress = new ProgressBarBuilder()
                 .setTaskName(message)
                 .setInitialMax(max)
-                .setStyle(ProgressBarStyle.ASCII)
+                .setStyle(ProgressBarStyle.COLORFUL_UNICODE_BLOCK)
                 .setUpdateIntervalMillis(100)
                 .showSpeed()
                 .build();
@@ -76,9 +76,9 @@ public class ProgressTracker implements AutoCloseable {
         }
         indexCount.set(0);
         currentIndexProgress = new ProgressBarBuilder()
-            .setTaskName("Indexing " + indexType)
+            .setTaskName(indexType)
             .setInitialMax(total)
-            .setStyle(ProgressBarStyle.ASCII)
+            .setStyle(ProgressBarStyle.COLORFUL_UNICODE_BLOCK)
             .setUpdateIntervalMillis(100)
             .showSpeed()
             .build();
@@ -94,7 +94,7 @@ public class ProgressTracker implements AutoCloseable {
         // batchProgress = new ProgressBarBuilder()
         //     .setTaskName("Processing batch")
         //     .setInitialMax(total)
-        //     .setStyle(ProgressBarStyle.ASCII)
+        //     .setStyle(ProgressBarStyle.COLORFUL_UNICODE_BLOCK)
         //     .setUpdateIntervalMillis(100)
         //     .showSpeed()
         //     .build();
