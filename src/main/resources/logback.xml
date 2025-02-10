@@ -11,6 +11,14 @@
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
+        <!-- Filter out IndexingMetrics logs from console -->
+        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
+            <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
+                <expression>return !logger.equals("com.example.logging.IndexingMetrics") || message.contains("\"event\":\"indexing_metrics\"");</expression>
+            </evaluator>
+            <OnMismatch>DENY</OnMismatch>
+            <OnMatch>NEUTRAL</OnMatch>
+        </filter>
     </appender>
 
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -54,15 +62,18 @@
     </appender>
 
     <!-- Specific logger for metrics -->
-    <logger name="com.example.logging" level="INFO" additivity="false">
+    <logger name="com.example.logging.IndexingMetrics" level="INFO" additivity="false">
         <appender-ref ref="METRICS"/>
         <appender-ref ref="FILE"/>
-        <appender-ref ref="CONSOLE"/>
     </logger>
+
+    <!-- Suppress LevelDB configuration messages -->
+    <logger name="com.example.index.LevelDBConfig" level="WARN"/>
 
     <!-- Index generation logging - reduced to INFO by default -->
     <logger name="com.example.index" level="INFO">
         <appender-ref ref="FILE"/>
+        <appender-ref ref="CONSOLE"/>
     </logger>
 
     <!-- Root logger -->
