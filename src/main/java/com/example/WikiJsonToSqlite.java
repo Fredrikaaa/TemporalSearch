@@ -41,8 +41,20 @@ public class WikiJsonToSqlite {
         long totalLines = 0;
         try (BufferedReader countReader = new BufferedReader(
                 new InputStreamReader(new FileInputStream(inputFile.toFile()), StandardCharsets.UTF_8))) {
-            while (countReader.readLine() != null) {
-                totalLines++;
+            String line;
+            while ((line = countReader.readLine()) != null) {
+                try {
+                    JsonNode item = objectMapper.readTree(line);
+                    // Skip the index information object
+                    if (item.has("_type") && item.get("_type").asText().equals("_doc")) {
+                        continue;
+                    }
+                    if (item.has("text")) {
+                        totalLines++;
+                    }
+                } catch (Exception e) {
+                    logger.error("Error counting line: {}", e.getMessage());
+                }
             }
         }
         logger.info("Found {} lines in input file{}", totalLines,
