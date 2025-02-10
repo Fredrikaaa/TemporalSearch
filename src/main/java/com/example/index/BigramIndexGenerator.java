@@ -100,4 +100,14 @@ public final class BigramIndexGenerator extends IndexGenerator<AnnotationEntry> 
         
         return index;
     }
+
+    @Override
+    protected String getTableName() {
+        return "annotations";
+    }
+
+    @Override
+    protected String getIndexName() {
+        return "bigram";
+    }
 } 

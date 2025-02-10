@@ -45,6 +45,11 @@ public final class DependencyIndexGenerator extends IndexGenerator<DependencyEnt
     }
 
     @Override
+    protected String getIndexName() {
+        return "dependency";
+    }
+
+    @Override
     protected List<DependencyEntry> fetchBatch(int offset) throws SQLException {
         List<DependencyEntry> batch = new ArrayList<>();
         String query = "SELECT d.document_id, d.sentence_id, d.head_token, d.dependent_token, d.relation, " +

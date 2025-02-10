@@ -124,4 +124,14 @@ public final class NerDateIndexGenerator extends IndexGenerator<AnnotationEntry>
             return null;
         }
     }
+
+    @Override
+    protected String getTableName() {
+        return "annotations";
+    }
+
+    @Override
+    protected String getIndexName() {
+        return "ner_date";
+    }
 } 

@@ -105,4 +105,14 @@ public final class TrigramIndexGenerator extends IndexGenerator<AnnotationEntry>
         
         return index;
     }
+
+    @Override
+    protected String getTableName() {
+        return "annotations";
+    }
+
+    @Override
+    protected String getIndexName() {
+        return "trigram";
+    }
 } 

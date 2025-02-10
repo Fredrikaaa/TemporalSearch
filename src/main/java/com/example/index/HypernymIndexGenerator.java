@@ -51,6 +51,11 @@ public final class HypernymIndexGenerator extends IndexGenerator<DependencyEntry
     }
 
     @Override
+    protected String getIndexName() {
+        return "hypernym";
+    }
+
+    @Override
     protected List<DependencyEntry> fetchBatch(int offset) throws SQLException {
         List<DependencyEntry> batch = new ArrayList<>();
         

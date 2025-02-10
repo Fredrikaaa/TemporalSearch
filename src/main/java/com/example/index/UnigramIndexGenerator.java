@@ -21,6 +21,16 @@ import com.example.logging.ProgressTracker;
  */
 public final class UnigramIndexGenerator extends IndexGenerator<AnnotationEntry> {
 
+    @Override
+    protected String getTableName() {
+        return "annotations";
+    }
+
+    @Override
+    protected String getIndexName() {
+        return "unigram";
+    }
+
     public UnigramIndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
         super(levelDbPath, stopwordsPath, sqliteConn, progress);
@@ -72,10 +82,10 @@ public final class UnigramIndexGenerator extends IndexGenerator<AnnotationEntry>
         Map<String, PositionList> positionLists = new HashMap<>();
         
         for (AnnotationEntry entry : batch) {
-            String key = entry.getLemma().toLowerCase();
+            String lemma = entry.getLemma().toLowerCase();
             
             // Skip stopwords
-            if (isStopword(key)) {
+            if (isStopword(lemma)) {
                 continue;
             }
             
@@ -83,11 +93,11 @@ public final class UnigramIndexGenerator extends IndexGenerator<AnnotationEntry>
                 entry.getBeginChar(), entry.getEndChar(), entry.getTimestamp());
             
             // Get or create position list for this lemma
-            PositionList posList = positionLists.computeIfAbsent(key, k -> new PositionList());
+            PositionList posList = positionLists.computeIfAbsent(lemma, k -> new PositionList());
             posList.add(position);
         }
         
-        // Add all position lists to result
+        // Add all position lists to result with prefix
         for (Map.Entry<String, PositionList> entry : positionLists.entrySet()) {
             index.put(entry.getKey(), entry.getValue());
         }

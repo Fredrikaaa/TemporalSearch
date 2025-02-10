@@ -21,6 +21,16 @@ import com.example.logging.ProgressTracker;
  */
 public final class POSIndexGenerator extends IndexGenerator<AnnotationEntry> {
 
+    @Override
+    protected String getTableName() {
+        return "annotations";
+    }
+
+    @Override
+    protected String getIndexName() {
+        return "pos";
+    }
+
     public POSIndexGenerator(String levelDbPath, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
         super(levelDbPath, stopwordsPath, sqliteConn, progress);
