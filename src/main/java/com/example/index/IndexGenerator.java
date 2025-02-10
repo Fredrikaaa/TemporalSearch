@@ -16,6 +16,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.ResultSet;
 import java.util.*;
+import java.nio.charset.Charset;
 
 /**
  * Abstract base class for streaming index generation that processes large datasets efficiently
@@ -31,10 +32,10 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
     private final DB levelDb;
     private final Set<String> stopwords;
     protected final Connection sqliteConn;
-    private final ProgressTracker progress;
+    protected final ProgressTracker progress;
     private final Path tempDir;
     private long totalNGramsGenerated = 0;
-    private final IndexConfig config;
+    protected final IndexConfig config;
 
     // Memory and processing configuration
     protected static final int DOC_BATCH_SIZE = 1000; // Smaller batch size for more frequent progress updates
@@ -43,18 +44,13 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
      * Gets the name of the table to query for entries.
      * @return The table name
      */
-    protected String getTableName() {
-        return "annotations"; // Default to annotations table, subclasses can override
-    }
+    protected abstract String getTableName();
 
     /**
      * Gets the name of this index for progress tracking and logging.
-     * Subclasses should override this to provide a specific name.
      * @return The name of the index
      */
-    protected String getIndexName() {
-        return getClass().getSimpleName().toLowerCase().replace("indexgenerator", "");
-    }
+    protected abstract String getIndexName();
 
     /**
      * Converts a string to UTF-8 bytes for LevelDB operations.
@@ -183,15 +179,20 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
                 byte[] positionData = Base64.getDecoder().decode(parts[1]);
                 PositionList positions = PositionList.deserialize(positionData);
 
+                // First term initialization
                 if (currentTerm == null) {
                     currentTerm = term;
                     mergedPositions = positions;
-                } else if (!currentTerm.equals(term)) {
-                    // Write previous term
+                    continue;
+                }
+
+                // If we have a new term, write the current one
+                if (!currentTerm.equals(term)) {
+                    // Write current term
                     writeToBatch(batch, currentTerm, mergedPositions);
                     batchCount++;
                     
-                    // Check if batch is full
+                    // Write batch if full
                     if (batchCount >= LevelDBConfig.BATCH_SIZE) {
                         levelDb.write(batch);
                         batch.close();
@@ -199,7 +200,7 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
                         batchCount = 0;
                         logger.debug("Wrote batch of {} entries", LevelDBConfig.BATCH_SIZE);
                         
-                        // Collect stats every 10 batches
+                        // Collect stats periodically
                         if (totalNGramsGenerated % (LevelDBConfig.BATCH_SIZE * 10) == 0) {
                             LevelDBConfig.collectLevelDbStats(levelDb);
                             long elapsed = System.currentTimeMillis() - startTime;
@@ -209,25 +210,22 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
                         }
                     }
                     
+                    // Start new term
                     currentTerm = term;
                     mergedPositions = positions;
                 } else {
                     // Merge positions for same term
-                    if (mergedPositions == null) {
-                        mergedPositions = positions;
-                    } else {
-                        positions.getPositions().forEach(mergedPositions::add);
-                    }
+                    positions.getPositions().forEach(mergedPositions::add);
                 }
             }
 
-            // Write the last term if exists
-            if (currentTerm != null) {
+            // Write the last term if we have one
+            if (currentTerm != null && mergedPositions != null) {
                 writeToBatch(batch, currentTerm, mergedPositions);
                 batchCount++;
             }
 
-            // Write final batch
+            // Write final batch if not empty
             if (batchCount > 0) {
                 levelDb.write(batch);
                 logger.debug("Wrote final batch of {} entries", batchCount);
@@ -235,17 +233,20 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
             }
         } finally {
             if (batch != null) {
-                batch.close();
+                try {
+                    batch.close();
+                } catch (Exception e) {
+                    logger.warn("Error closing batch: {}", e.getMessage());
+                }
             }
         }
     }
 
     /**
-     * Writes a term and its positions to a WriteBatch using the appropriate key prefixes.
+     * Writes a term and its positions to a WriteBatch.
      */
     private void writeToBatch(WriteBatch batch, String term, PositionList positions) throws IOException {
-        // Write positions with prefix
-        batch.put(bytes(KeyPrefixes.createPositionsKey(term)), positions.serialize());
+        batch.put(bytes(term), positions.serialize());
         totalNGramsGenerated++;
     }
 
@@ -257,79 +258,55 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
         List<File> tempFiles = new ArrayList<>();
         int offset = 0;
         IndexingMetrics metrics = new IndexingMetrics();
+        metrics.startBatch(DOC_BATCH_SIZE, getIndexName());
 
-        // Get total count of entries
-        try (Statement stmt = sqliteConn.createStatement()) {
-            String countQuery = "SELECT COUNT(*) FROM " + getTableName();
-            if (config.getLimit() != null) {
-                countQuery = String.format("SELECT MIN(%d, COUNT(*)) FROM %s", config.getLimit(), getTableName());
-            }
-            ResultSet rs = stmt.executeQuery(countQuery);
-            if (rs.next()) {
-                long totalEntries = rs.getLong(1);
-                progress.startIndex(getIndexName(), totalEntries);
-                logger.info("Found {} entries to process{}", totalEntries,
-                    config.getLimit() != null ? String.format(" (limited to %d)", config.getLimit()) : "");
-            }
-        }
-
-        while (true) {
-            List<T> batch = fetchBatch(offset);
-            if (batch.isEmpty()) {
-                break;
-            }
-
-            // Apply limit if specified
-            if (config.getLimit() != null && offset + batch.size() > config.getLimit()) {
-                int remaining = config.getLimit() - offset;
-                if (remaining <= 0) {
+        try {
+            // Process batches and write to temp files
+            while (true) {
+                List<T> batch = fetchBatch(offset);
+                if (batch.isEmpty()) {
                     break;
                 }
-                batch = batch.subList(0, remaining);
-                metrics.updateCurrentBatchSize(remaining);
-            }
 
-            // Process batch and write to temp file
-            ListMultimap<String, PositionList> positions = processBatch(batch);
-            if (!positions.isEmpty()) {
+                // Process batch and write to temp file
+                ListMultimap<String, PositionList> positions = processBatch(batch);
                 File tempFile = writeBatchToTempFile(positions);
                 tempFiles.add(tempFile);
+
+                // Update progress and metrics
+                offset += batch.size();
+                metrics.recordBatchSuccess(batch.size());
+                progress.updateIndex(batch.size());
             }
 
-            progress.updateIndex(batch.size());
-            offset += batch.size();
-
-            // Log metrics periodically
-            if (offset % (DOC_BATCH_SIZE * 10) == 0) {
-                metrics.logIndexingMetrics();
-            }
-
-            // Break if we've hit the limit
-            if (config.getLimit() != null && offset >= config.getLimit()) {
-                break;
-            }
-        }
-
-        // Merge sorted files
-        if (!tempFiles.isEmpty()) {
+            // Sort and merge temp files
             File outputFile = new File(tempDir.toFile(), "sorted.tmp");
+            ExternalSort.mergeSortedFiles(tempFiles, outputFile, new PositionListComparator());
+
+            // Write sorted entries to LevelDB
+            writeToLevelDB(outputFile);
+            
+            // Close LevelDB after writing
             try {
-                ExternalSort.mergeSortedFiles(tempFiles, outputFile, new PositionListComparator());
-                
-                // Write merged results to LevelDB
-                writeToLevelDB(outputFile);
-                outputFile.delete();
-            } catch (Exception e) {
-                metrics.recordBatchFailure();
-                logger.error("Error during merge phase: {}", e.getMessage(), e);
+                levelDb.close();
+            } catch (IOException e) {
+                logger.warn("Error closing LevelDB after writing: {}", e.getMessage());
+            }
+
+            // Final metrics
+            metrics.logIndexingMetrics();
+            logger.info("Index generation complete. Total entries: {}", totalNGramsGenerated);
+
+        } finally {
+            // Cleanup temp files
+            for (File file : tempFiles) {
+                try {
+                    Files.deleteIfExists(file.toPath());
+                } catch (IOException e) {
+                    logger.debug("Could not delete temp file: {} ({})", file, e.getMessage());
+                }
             }
         }
-
-        // Log final metrics
-        metrics.logIndexingMetrics();
-
-        // Mark progress as complete
-        progress.completeIndex();
     }
 
     /**
@@ -357,8 +334,7 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
         if (levelDb != null) {
             levelDb.close();
         }
-        // Cleanup temp directory
-        if (tempDir != null && Files.exists(tempDir)) {
+        if (Files.exists(tempDir)) {
             Files.walk(tempDir)
                  .sorted((a, b) -> b.compareTo(a))
                  .forEach(path -> {

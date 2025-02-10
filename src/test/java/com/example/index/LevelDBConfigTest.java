@@ -68,31 +68,4 @@ public class LevelDBConfigTest {
             assertEquals("value-" + keyNum, new String(value));
         }
     }
-    
-    @Test
-    void testKeyPrefixes() throws IOException {
-        Options options = LevelDBConfig.createOptimizedOptions();
-        db = factory.open(tempDir.resolve("prefixes").toFile(), options);
-        
-        // Test metadata key
-        String metaKey = KeyPrefixes.createMetaKey("test-term");
-        db.put(bytes(metaKey), bytes("meta-value"));
-        
-        // Test positions key
-        String posKey = KeyPrefixes.createPositionsKey("test-term");
-        db.put(bytes(posKey), bytes("positions-value"));
-        
-        // Verify key separation
-        byte[] metaValue = db.get(bytes(metaKey));
-        byte[] posValue = db.get(bytes(posKey));
-        
-        assertNotNull(metaValue, "Metadata value should exist");
-        assertNotNull(posValue, "Positions value should exist");
-        assertEquals("meta-value", new String(metaValue));
-        assertEquals("positions-value", new String(posValue));
-        
-        // Verify term extraction
-        assertEquals("test-term", KeyPrefixes.extractTerm(metaKey));
-        assertEquals("test-term", KeyPrefixes.extractTerm(posKey));
-    }
 } 

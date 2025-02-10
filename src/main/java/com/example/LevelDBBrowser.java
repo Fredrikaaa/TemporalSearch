@@ -120,27 +120,20 @@ public class LevelDBBrowser {
     }
 
     private static void lookupWords(DB db, List<String> words, String indexType, boolean showTime, int minOccurrences) throws IOException {
-        if (indexType.equals("dependency")) {
-            lookupDependency(db, words, showTime, minOccurrences);
-            return;
-        }
-        
-        // Special handling for NER date index
-        if (indexType.equals("ner_date")) {
-            String dateStr = words.get(0);
-            if (!dateStr.matches("\\d{8}")) {
-                System.err.println("Error: Date must be in YYYYMMDD format");
-                return;
-            }
-        }
+        // Create key based on index type
+        String key = switch (indexType) {
+            case "unigram" -> words.get(0).toLowerCase();
+            case "bigram" -> String.join(DELIMITER, words.stream().map(String::toLowerCase)
+                    .toList());
+            case "trigram" -> String.join(DELIMITER, words.stream().map(String::toLowerCase)
+                    .toList());
+            case "ner_date" -> words.get(0);
+            case "pos" -> words.get(0).toLowerCase();
+            default -> throw new IllegalArgumentException("Invalid index type: " + indexType);
+        };
 
-        // Create lookup key based on index type
-        String key = String.join(DELIMITER, words.stream()
-                .map(String::toLowerCase)
-                .toList());
-
-        // Use key prefix for positions
-        byte[] data = db.get(bytes(KeyPrefixes.createPositionsKey(key)));
+        // Get positions for key
+        byte[] data = db.get(bytes(key));
         if (data == null) {
             System.out.printf("%s not found in index%n",
                     formatSearchTerm(words, indexType));
@@ -208,22 +201,14 @@ public class LevelDBBrowser {
         Map<String, PositionList> matches = new HashMap<>();
         
         try (DBIterator iterator = db.iterator()) {
-            // Seek to the first key with our prefix
-            String prefixedPattern = KeyPrefixes.createPositionsKey(searchPattern);
-            iterator.seek(bytes(prefixedPattern));
+            // Seek to the first key with our pattern
+            iterator.seek(bytes(searchPattern));
             
             while (iterator.hasNext()) {
                 String key = asString(iterator.peekNext().getKey());
                 logger.debug("Examining key: {}", key);
                 
-                // Skip keys that don't start with our prefix
-                if (!key.startsWith(KeyPrefixes.POSITIONS)) {
-                    continue;
-                }
-                
-                // Extract the actual key without prefix
-                String actualKey = KeyPrefixes.extractTerm(key);
-                String[] parts = actualKey.split(DELIMITER);
+                String[] parts = key.split(DELIMITER);
                 
                 if (parts.length != 3) continue;
                 
@@ -231,11 +216,11 @@ public class LevelDBBrowser {
                     matchesPattern(parts[1], relation) &&
                     matchesPattern(parts[2], depToken)) {
                     logger.debug("Found matching dependency: {} -{}- {}", parts[0], parts[1], parts[2]);
-                    matches.put(actualKey, PositionList.deserialize(iterator.peekNext().getValue()));
+                    matches.put(key, PositionList.deserialize(iterator.peekNext().getValue()));
                 }
                
                 // Stop if we've moved past potential matches
-                if (!key.startsWith(prefixedPattern) && !headToken.equals(WILDCARD)) {
+                if (!key.startsWith(searchPattern) && !headToken.equals(WILDCARD)) {
                     break;
                 }
                 
@@ -310,45 +295,32 @@ public class LevelDBBrowser {
         int totalEntries = 0;
         
         try (DBIterator iterator = db.iterator()) {
-            // Seek to first key with positions prefix
-            iterator.seek(bytes(KeyPrefixes.POSITIONS));
+            iterator.seekToFirst();
             
             while (iterator.hasNext()) {
                 String key = asString(iterator.peekNext().getKey());
-                
-                // Skip keys that don't start with positions prefix
-                if (!key.startsWith(KeyPrefixes.POSITIONS)) {
-                    iterator.next();
-                    continue;
-                }
-                
-                // Extract actual key without prefix
-                String actualKey = KeyPrefixes.extractTerm(key);
                 PositionList positions = PositionList.deserialize(iterator.peekNext().getValue());
                 
                 if (positions.size() < minOccurrences) {
                     iterator.next();
                     continue;
                 }
-
-                totalEntries++;
-                if (indexType.equals("dependency")) {
-                    System.out.print(formatDependencyKey(actualKey));
-                } else if (indexType.equals("ner_date")) {
-                    // Format date as YYYY-MM-DD
-                    System.out.printf("Date: %s-%s-%s",
-                            actualKey.substring(0, 4),
-                            actualKey.substring(4, 6),
-                            actualKey.substring(6, 8));
-                } else {
-                    System.out.print(actualKey.replace(DELIMITER, " "));
-                }
-
-                if (showCounts) {
-                    System.out.printf(" (%d occurrences)", positions.size());
-                }
-                System.out.println();
                 
+                if (showCounts) {
+                    if (indexType.equals("dependency")) {
+                        System.out.printf("  %s (%d occurrences)%n", formatDependencyKey(key), positions.size());
+                    } else {
+                        System.out.printf("  %s (%d occurrences)%n", key, positions.size());
+                    }
+                } else {
+                    if (indexType.equals("dependency")) {
+                        System.out.printf("  %s%n", formatDependencyKey(key));
+                    } else {
+                        System.out.printf("  %s%n", key);
+                    }
+                }
+                
+                totalEntries++;
                 iterator.next();
             }
         }
