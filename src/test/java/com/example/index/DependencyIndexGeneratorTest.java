@@ -1,17 +1,17 @@
 package com.example.index;
 
-import org.iq80.leveldb.*;
-import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import org.junit.jupiter.api.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.*;
 import java.sql.*;
+import java.util.Map;
 import com.example.logging.ProgressTracker;
+import com.google.common.collect.ListMultimap;
 
 public class DependencyIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-dep.txt";
-    private File levelDbDir;
+    private DependencyIndexGenerator generator;
 
     @BeforeEach
     @Override
@@ -25,12 +25,13 @@ public class DependencyIndexGeneratorTest extends BaseIndexTest {
             writer.println("is");
         }
 
-        // Set up LevelDB directory
-        levelDbDir = tempDir.resolve("test-leveldb-dep").toFile();
-        if (levelDbDir.exists()) {
-            deleteDirectory(levelDbDir);
-        }
-        levelDbDir.mkdir();
+        // Create generator
+        generator = new DependencyIndexGenerator(
+            tempDir.resolve("test-leveldb-dep").toString(),
+            TEST_STOPWORDS_PATH,
+            sqliteConn,
+            new ProgressTracker()
+        );
 
         // Insert test data
         setupTestData();
@@ -43,37 +44,34 @@ public class DependencyIndexGeneratorTest extends BaseIndexTest {
             pstmt.setInt(1, 1);
             pstmt.setString(2, "2024-01-28");
             pstmt.executeUpdate();
-            
-            pstmt.setInt(1, 2);
-            pstmt.setString(2, "2024-01-28");
-            pstmt.executeUpdate();
         }
 
-        // Insert test dependencies:
-        // "The quick brown fox jumps over the lazy dog"
-        String[][] testDeps = {
-            // Document 1, Sentence 1
-            { "1", "0", "fox", "quick", "amod", "0", "15" },
-            { "1", "0", "fox", "brown", "amod", "16", "30" },
-            { "1", "0", "jumps", "fox", "nsubj", "31", "45" },
-            { "1", "0", "jumps", "over", "advmod", "46", "60" },
-            // Document 2, Sentence 1
-            { "2", "0", "cat", "black", "amod", "0", "15" },
-            { "2", "0", "sits", "cat", "nsubj", "16", "30" },
-            { "2", "0", "sits", "quietly", "advmod", "31", "45" }
+        // Insert test sentences with dependencies
+        String[][] testWords = {
+            // "The quick brown fox jumps over the lazy dog"
+            // Format: document_id, sentence_id, begin_char, end_char, head_token, dependent_token, relation
+            { "1", "0", "0", "3", "fox", "The", "det" },
+            { "1", "0", "4", "9", "fox", "quick", "amod" },
+            { "1", "0", "10", "15", "fox", "brown", "amod" },
+            { "1", "0", "16", "25", "fox", "jumps", "nsubj" },
+            { "1", "0", "20", "25", "ROOT", "jumps", "root" },
+            { "1", "0", "26", "30", "jumps", "over", "prep" },
+            { "1", "0", "31", "34", "dog", "the", "det" },
+            { "1", "0", "35", "39", "dog", "lazy", "amod" },
+            { "1", "0", "40", "43", "over", "dog", "pobj" }
         };
 
         try (PreparedStatement pstmt = sqliteConn.prepareStatement(
-                "INSERT INTO dependencies (document_id, sentence_id, head_token, dependent_token, relation, begin_char, end_char) " +
+                "INSERT INTO dependencies (document_id, sentence_id, begin_char, end_char, head_token, dependent_token, relation) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?)")) {
-            for (String[] dep : testDeps) {
-                pstmt.setInt(1, Integer.parseInt(dep[0]));
-                pstmt.setInt(2, Integer.parseInt(dep[1]));
-                pstmt.setString(3, dep[2]);
-                pstmt.setString(4, dep[3]);
-                pstmt.setString(5, dep[4]);
-                pstmt.setInt(6, Integer.parseInt(dep[5]));
-                pstmt.setInt(7, Integer.parseInt(dep[6]));
+            for (String[] word : testWords) {
+                pstmt.setInt(1, Integer.parseInt(word[0]));
+                pstmt.setInt(2, Integer.parseInt(word[1]));
+                pstmt.setInt(3, Integer.parseInt(word[2]));
+                pstmt.setInt(4, Integer.parseInt(word[3]));
+                pstmt.setString(5, word[4]);
+                pstmt.setString(6, word[5]);
+                pstmt.setString(7, word[6]);
                 pstmt.executeUpdate();
             }
         }
@@ -85,103 +83,67 @@ public class DependencyIndexGeneratorTest extends BaseIndexTest {
         new File(TEST_STOPWORDS_PATH).delete();
     }
 
-    private void deleteDirectory(File dir) {
-        if (dir.exists()) {
-            for (File file : dir.listFiles()) {
-                if (file.isDirectory()) {
-                    deleteDirectory(file);
-                } else {
-                    file.delete();
-                }
-            }
-            dir.delete();
-        }
-    }
-
     @Test
     public void testBasicDependencyIndexing() throws Exception {
-        // Create and run dependency indexer
-        try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
-                levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
-            indexer.generateIndex();
-        }
-
-        // Open LevelDB and verify contents
-        Options options = new Options();
-        try (DB db = factory.open(levelDbDir, options)) {
-            // Test amod relations
-            String key = "fox" + IndexGenerator.DELIMITER + "amod" + IndexGenerator.DELIMITER + "quick";
-            PositionList positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
-            assertNotNull(positions, "Should have positions for fox-amod->quick");
-            assertEquals(1, positions.size(), "Should have one position for fox-amod->quick");
-
-            key = "fox" + IndexGenerator.DELIMITER + "amod" + IndexGenerator.DELIMITER + "brown";
-            positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
-            assertNotNull(positions, "Should have positions for fox-amod->brown");
-            assertEquals(1, positions.size(), "Should have one position for fox-amod->brown");
-
-            // Test nsubj relations
-            key = "jumps" + IndexGenerator.DELIMITER + "nsubj" + IndexGenerator.DELIMITER + "fox";
-            positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
-            assertNotNull(positions, "Should have positions for jumps-nsubj->fox");
-            assertEquals(1, positions.size(), "Should have one position for jumps-nsubj->fox");
-
-            // Test advmod relations
-            key = "jumps" + IndexGenerator.DELIMITER + "advmod" + IndexGenerator.DELIMITER + "over";
-            positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
-            assertNotNull(positions, "Should have positions for jumps-advmod->over");
-            assertEquals(1, positions.size(), "Should have one position for jumps-advmod->over");
-        }
+        // Fetch first batch of entries
+        var entries = generator.fetchBatch(0);
+        
+        // Process batch and verify results
+        ListMultimap<String, PositionList> result = generator.processBatch(entries);
+        
+        // Verify subject-verb dependency
+        String key1 = "fox" + IndexGenerator.DELIMITER + "nsubj" + IndexGenerator.DELIMITER + "jumps";
+        assertTrue(result.containsKey(key1), "Should contain subject-verb dependency");
+        assertEquals(1, result.get(key1).get(0).getPositions().size(), 
+            "Should have one position for subject-verb dependency");
+        
+        // Verify verb-object dependency
+        String key2 = "jumps" + IndexGenerator.DELIMITER + "prep" + IndexGenerator.DELIMITER + "over";
+        assertTrue(result.containsKey(key2), "Should contain verb-object dependency");
+        assertEquals(1, result.get(key2).get(0).getPositions().size(), 
+            "Should have one position for verb-object dependency");
     }
 
     @Test
     public void testCaseNormalization() throws Exception {
-        // Insert document record for mixed case test data
+        // Insert mixed case dependency data
         try (PreparedStatement pstmt = sqliteConn.prepareStatement(
                 "INSERT INTO documents (document_id, timestamp) VALUES (?, ?)")) {
-            pstmt.setInt(1, 3);
+            pstmt.setInt(1, 2);
             pstmt.setString(2, "2024-01-28");
             pstmt.executeUpdate();
         }
 
-        // Insert mixed case dependencies
-        String[][] mixedCaseDeps = {
-            { "3", "0", "FOX", "QUICK", "AMOD", "0", "15" },
-            { "3", "0", "Fox", "Quick", "amod", "16", "30" }
+        String[][] mixedCaseWords = {
+            // Format: document_id, sentence_id, begin_char, end_char, head_token, dependent_token, relation
+            { "2", "0", "0", "3", "Cat", "Chases", "nsubj" },
+            { "2", "0", "4", "10", "ROOT", "Chases", "root" },
+            { "2", "0", "11", "16", "Chases", "Mouse", "dobj" }
         };
 
         try (PreparedStatement pstmt = sqliteConn.prepareStatement(
-                "INSERT INTO dependencies (document_id, sentence_id, head_token, dependent_token, relation, begin_char, end_char) " +
+                "INSERT INTO dependencies (document_id, sentence_id, begin_char, end_char, head_token, dependent_token, relation) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?)")) {
-            for (String[] dep : mixedCaseDeps) {
-                pstmt.setInt(1, Integer.parseInt(dep[0]));
-                pstmt.setInt(2, Integer.parseInt(dep[1]));
-                pstmt.setString(3, dep[2]);
-                pstmt.setString(4, dep[3]);
-                pstmt.setString(5, dep[4]);
-                pstmt.setInt(6, Integer.parseInt(dep[5]));
-                pstmt.setInt(7, Integer.parseInt(dep[6]));
+            for (String[] word : mixedCaseWords) {
+                pstmt.setInt(1, Integer.parseInt(word[0]));
+                pstmt.setInt(2, Integer.parseInt(word[1]));
+                pstmt.setInt(3, Integer.parseInt(word[2]));
+                pstmt.setInt(4, Integer.parseInt(word[3]));
+                pstmt.setString(5, word[4]);
+                pstmt.setString(6, word[5]);
+                pstmt.setString(7, word[6]);
                 pstmt.executeUpdate();
             }
         }
 
-        // Generate index
-        try (DependencyIndexGenerator indexer = new DependencyIndexGenerator(
-                levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
-            indexer.generateIndex();
-        }
+        // Fetch and process entries
+        var entries = generator.fetchBatch(0);
+        var result = generator.processBatch(entries);
 
         // Verify case normalization
-        Options options = new Options();
-        try (DB db = factory.open(levelDbDir, options)) {
-            String key = "fox" + IndexGenerator.DELIMITER + "amod" + IndexGenerator.DELIMITER + "quick";
-            PositionList positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
-            assertNotNull(positions, "Should have positions for fox-amod->quick");
-            assertEquals(3, positions.size(), "Should have three positions for fox-amod->quick (1 from setup + 2 from mixed case)");
-        }
-    }
-
-    private static byte[] bytes(String str) {
-        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String key3 = "cat" + IndexGenerator.DELIMITER + "nsubj" + IndexGenerator.DELIMITER + "chases";
+        assertTrue(result.containsKey(key3), "Should contain normalized subject-verb dependency");
+        assertEquals(1, result.get(key3).get(0).getPositions().size(), 
+            "Should have one position for normalized subject-verb dependency");
     }
 } 

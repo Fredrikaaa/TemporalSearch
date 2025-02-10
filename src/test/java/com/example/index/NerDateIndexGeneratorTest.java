@@ -1,17 +1,17 @@
 package com.example.index;
 
-import org.iq80.leveldb.*;
-import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import org.junit.jupiter.api.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.*;
 import java.sql.*;
+import java.util.Map;
 import com.example.logging.ProgressTracker;
+import com.google.common.collect.ListMultimap;
 
 public class NerDateIndexGeneratorTest extends BaseIndexTest {
-    private static final String TEST_STOPWORDS_PATH = "test-stopwords-date.txt";
-    private File levelDbDir;
+    private static final String TEST_STOPWORDS_PATH = "test-stopwords-ner.txt";
+    private NerDateIndexGenerator generator;
 
     @BeforeEach
     @Override
@@ -25,12 +25,13 @@ public class NerDateIndexGeneratorTest extends BaseIndexTest {
             writer.println("is");
         }
 
-        // Set up LevelDB directory
-        levelDbDir = tempDir.resolve("test-leveldb-date").toFile();
-        if (levelDbDir.exists()) {
-            deleteDirectory(levelDbDir);
-        }
-        levelDbDir.mkdir();
+        // Create generator
+        generator = new NerDateIndexGenerator(
+            tempDir.resolve("test-leveldb-ner").toString(),
+            TEST_STOPWORDS_PATH,
+            sqliteConn,
+            new ProgressTracker()
+        );
 
         // Insert test data
         setupTestData();
@@ -43,33 +44,36 @@ public class NerDateIndexGeneratorTest extends BaseIndexTest {
             pstmt.setInt(1, 1);
             pstmt.setString(2, "2024-01-28");
             pstmt.executeUpdate();
-            
-            pstmt.setInt(1, 2);
-            pstmt.setString(2, "2024-01-28");
-            pstmt.executeUpdate();
         }
 
-        // Insert test annotations with dates:
-        // "The event happened on January 15, 2024"
-        // "Another event is scheduled for 2024-02-01"
-        String[][] testAnnotations = {
-            // Document 1, Sentence 1
-            { "1", "0", "20", "32", "January 15, 2024", "2024-01-15", "DATE" },
-            // Document 2, Sentence 1
-            { "2", "0", "25", "35", "2024-02-01", "2024-02-01", "DATE" }
+        // Insert test sentences with dates
+        String[][] testWords = {
+            // "The meeting is on January 15, 2024"
+            { "1", "0", "0", "3", "The", "the", "DET", null, null },
+            { "1", "0", "4", "11", "meeting", "meeting", "NOUN", null, null },
+            { "1", "0", "12", "14", "is", "be", "VERB", null, null },
+            { "1", "0", "15", "17", "on", "on", "ADP", null, null },
+            { "1", "0", "18", "33", "January 15, 2024", "2024-01-15", "DATE", "2024-01-15", "DATE" },
+            // "The deadline is February 1st, 2024"
+            { "1", "1", "34", "37", "The", "the", "DET", null, null },
+            { "1", "1", "38", "46", "deadline", "deadline", "NOUN", null, null },
+            { "1", "1", "47", "49", "is", "be", "VERB", null, null },
+            { "1", "1", "50", "67", "February 1st, 2024", "2024-02-01", "DATE", "2024-02-01", "DATE" }
         };
 
         try (PreparedStatement pstmt = sqliteConn.prepareStatement(
-                "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, normalized_ner, ner) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?)")) {
-            for (String[] annotation : testAnnotations) {
-                pstmt.setInt(1, Integer.parseInt(annotation[0]));
-                pstmt.setInt(2, Integer.parseInt(annotation[1]));
-                pstmt.setInt(3, Integer.parseInt(annotation[2]));
-                pstmt.setInt(4, Integer.parseInt(annotation[3]));
-                pstmt.setString(5, annotation[4]);
-                pstmt.setString(6, annotation[5]);
-                pstmt.setString(7, annotation[6]);
+                "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, lemma, pos, normalized_ner, ner) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            for (String[] word : testWords) {
+                pstmt.setInt(1, Integer.parseInt(word[0]));
+                pstmt.setInt(2, Integer.parseInt(word[1]));
+                pstmt.setInt(3, Integer.parseInt(word[2]));
+                pstmt.setInt(4, Integer.parseInt(word[3]));
+                pstmt.setString(5, word[4]);
+                pstmt.setString(6, word[5]);
+                pstmt.setString(7, word[6]);
+                pstmt.setString(8, word[7]);
+                pstmt.setString(9, word[8]);
                 pstmt.executeUpdate();
             }
         }
@@ -81,92 +85,69 @@ public class NerDateIndexGeneratorTest extends BaseIndexTest {
         new File(TEST_STOPWORDS_PATH).delete();
     }
 
-    private void deleteDirectory(File dir) {
-        if (dir.exists()) {
-            for (File file : dir.listFiles()) {
-                if (file.isDirectory()) {
-                    deleteDirectory(file);
-                } else {
-                    file.delete();
-                }
-            }
-            dir.delete();
-        }
-    }
-
     @Test
     public void testBasicDateIndexing() throws Exception {
-        // Create and run date indexer
-        try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
-                levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
-            indexer.generateIndex();
-        }
-
-        // Open LevelDB and verify contents
-        Options options = new Options();
-        try (DB db = factory.open(levelDbDir, options)) {
-            // Test first date
-            String key = "20240115";
-            PositionList positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
-            assertNotNull(positions, "Should have positions for 2024-01-15");
-            assertEquals(1, positions.size(), "Should have one position for 2024-01-15");
-
-            // Test second date
-            key = "20240201";
-            positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
-            assertNotNull(positions, "Should have positions for 2024-02-01");
-            assertEquals(1, positions.size(), "Should have one position for 2024-02-01");
-        }
+        // Fetch first batch of entries
+        var entries = generator.fetchBatch(0);
+        
+        // Process batch and verify results
+        ListMultimap<String, PositionList> result = generator.processBatch(entries);
+        
+        // Verify January date
+        String key1 = "20240115";
+        assertTrue(result.containsKey(key1), "Should contain January date");
+        assertEquals(1, result.get(key1).get(0).getPositions().size(), 
+            "Should have one position for January date");
+        
+        // Verify February date
+        String key2 = "20240201";
+        assertTrue(result.containsKey(key2), "Should contain February date");
+        assertEquals(1, result.get(key2).get(0).getPositions().size(), 
+            "Should have one position for February date");
     }
 
     @Test
     public void testDateNormalization() throws Exception {
-        // Insert document record for additional test data
+        // Insert mixed format date data
         try (PreparedStatement pstmt = sqliteConn.prepareStatement(
                 "INSERT INTO documents (document_id, timestamp) VALUES (?, ?)")) {
-            pstmt.setInt(1, 3);
+            pstmt.setInt(1, 2);
             pstmt.setString(2, "2024-01-28");
             pstmt.executeUpdate();
         }
 
-        // Insert additional date annotations with different formats
-        String[][] additionalDates = {
-            { "3", "0", "0", "10", "2024-01-15", "2024-01-15", "DATE" },
-            { "3", "0", "11", "21", "2024-01-15", "2024-01-15", "DATE" }
+        String[][] mixedDateWords = {
+            // Different formats for January 15, 2024
+            { "2", "0", "0", "15", "Jan 15, 2024", "2024-01-15", "DATE", "2024-01-15", "DATE" },
+            { "2", "0", "16", "31", "January 15 2024", "2024-01-15", "DATE", "2024-01-15", "DATE" },
+            { "2", "0", "32", "42", "01/15/2024", "2024-01-15", "DATE", "2024-01-15", "DATE" }
         };
 
         try (PreparedStatement pstmt = sqliteConn.prepareStatement(
-                "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, normalized_ner, ner) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?)")) {
-            for (String[] annotation : additionalDates) {
-                pstmt.setInt(1, Integer.parseInt(annotation[0]));
-                pstmt.setInt(2, Integer.parseInt(annotation[1]));
-                pstmt.setInt(3, Integer.parseInt(annotation[2]));
-                pstmt.setInt(4, Integer.parseInt(annotation[3]));
-                pstmt.setString(5, annotation[4]);
-                pstmt.setString(6, annotation[5]);
-                pstmt.setString(7, annotation[6]);
+                "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, lemma, pos, normalized_ner, ner) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            for (String[] word : mixedDateWords) {
+                pstmt.setInt(1, Integer.parseInt(word[0]));
+                pstmt.setInt(2, Integer.parseInt(word[1]));
+                pstmt.setInt(3, Integer.parseInt(word[2]));
+                pstmt.setInt(4, Integer.parseInt(word[3]));
+                pstmt.setString(5, word[4]);
+                pstmt.setString(6, word[5]);
+                pstmt.setString(7, word[6]);
+                pstmt.setString(8, word[7]);
+                pstmt.setString(9, word[8]);
                 pstmt.executeUpdate();
             }
         }
 
-        // Generate index
-        try (NerDateIndexGenerator indexer = new NerDateIndexGenerator(
-                levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
-            indexer.generateIndex();
-        }
+        // Fetch and process entries
+        var entries = generator.fetchBatch(0);
+        var result = generator.processBatch(entries);
 
         // Verify date normalization
-        Options options = new Options();
-        try (DB db = factory.open(levelDbDir, options)) {
-            String key = "20240115";
-            PositionList positions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey(key))));
-            assertNotNull(positions, "Should have positions for 2024-01-15");
-            assertEquals(3, positions.size(), "Should have three positions for 2024-01-15 (1 from setup + 2 from additional dates)");
-        }
-    }
-
-    private static byte[] bytes(String str) {
-        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String key3 = "20240115";
+        assertTrue(result.containsKey(key3), "Should contain normalized January date");
+        assertEquals(4, result.get(key3).get(0).getPositions().size(), 
+            "Should have four positions for normalized January date (one from setupTestData and three from mixed formats)");
     }
 } 

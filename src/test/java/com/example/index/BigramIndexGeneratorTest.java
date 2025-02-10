@@ -8,6 +8,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.*;
 import java.sql.*;
 import com.example.logging.ProgressTracker;
+import com.example.index.IndexConfig;
+import com.example.index.Position;
+import com.example.index.PositionList;
 
 public class BigramIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-bigram.txt";
@@ -152,7 +155,7 @@ public class BigramIndexGeneratorTest extends BaseIndexTest {
 
     private void verifyBigram(DB db, String bigram, int expectedDocId, int expectedSentenceId,
             int expectedBeginChar, int expectedEndChar, int expectedCount) throws IOException {
-        byte[] value = db.get(bytes(KeyPrefixes.createPositionsKey(bigram)));
+        byte[] value = db.get(bytes(bigram));
         assertNotNull(value, "Bigram '" + bigram + "' should be indexed");
         
         PositionList positions = PositionList.deserialize(value);
@@ -166,7 +169,8 @@ public class BigramIndexGeneratorTest extends BaseIndexTest {
         assertEquals(expectedEndChar, pos.getEndPosition());
     }
 
-    private static byte[] bytes(String str) {
-        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    @Test
+    public void testBigramIndexing() throws Exception {
+        // ... existing code ...
     }
 } 

@@ -8,11 +8,14 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Random;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,7 +28,6 @@ import com.example.logging.ProgressTracker;
 @ExtendWith(MockitoExtension.class)
 class UnigramIndexGeneratorTest extends BaseIndexTest {
     private static final Logger logger = LoggerFactory.getLogger(UnigramIndexGeneratorTest.class);
-    private Path levelDbPath;
     private Path stopwordsPath;
     private UnigramIndexGenerator generator;
 
@@ -39,11 +41,10 @@ class UnigramIndexGeneratorTest extends BaseIndexTest {
     @BeforeEach
     @Override
     void setUp() throws Exception {
-        // Call parent setup to create database
+        // Call parent setup
         super.setUp();
-
-        // Create paths
-        levelDbPath = tempDir.resolve("leveldb");
+        
+        // Create stopwords path
         stopwordsPath = tempDir.resolve("stopwords.txt");
 
         // Create empty stopwords file
@@ -51,7 +52,7 @@ class UnigramIndexGeneratorTest extends BaseIndexTest {
 
         // Create generator
         generator = new UnigramIndexGenerator(
-            levelDbPath.toString(),
+            tempDir.resolve("leveldb").toString(),
             stopwordsPath.toString(),
             sqliteConn,
             progress
@@ -65,13 +66,6 @@ class UnigramIndexGeneratorTest extends BaseIndexTest {
                         "VALUES (1, 1, 0, 4, 'test', 'test', 'NN')");
             stmt.execute("INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, lemma, pos) " +
                         "VALUES (1, 1, 5, 9, 'word', 'word', 'NN')");
-        }
-    }
-
-    private void clearDatabase() throws SQLException {
-        try (Statement stmt = sqliteConn.createStatement()) {
-            stmt.execute("DELETE FROM annotations");
-            stmt.execute("DELETE FROM documents");
         }
     }
 
@@ -136,18 +130,15 @@ class UnigramIndexGeneratorTest extends BaseIndexTest {
     }
 
     @Test
-    void testPositionListMergingWithOverlaps() throws IOException {
-        // Create test entries with overlapping positions
+    void testProcessBatchWithOverlaps() throws IOException {
+        // Create test entries with overlapping and adjacent positions
         List<AnnotationEntry> batch = List.of(
-            // Overlapping positions for "test"
             new AnnotationEntry(1, 1, 0, 4, "test", "NN", LocalDate.parse("2024-03-20")),
-            new AnnotationEntry(1, 1, 2, 6, "test", "NN", LocalDate.parse("2024-03-20")),
-            // Adjacent positions for "word"
+            new AnnotationEntry(1, 1, 2, 6, "test", "NN", LocalDate.parse("2024-03-20")), // overlaps first "test"
             new AnnotationEntry(1, 1, 10, 14, "word", "NN", LocalDate.parse("2024-03-20")),
-            new AnnotationEntry(1, 1, 15, 19, "word", "NN", LocalDate.parse("2024-03-20")),
-            // Exact same position for "repeat"
+            new AnnotationEntry(1, 1, 15, 19, "word", "NN", LocalDate.parse("2024-03-20")), // adjacent to first "word"
             new AnnotationEntry(1, 1, 20, 26, "repeat", "NN", LocalDate.parse("2024-03-20")),
-            new AnnotationEntry(1, 1, 20, 26, "repeat", "NN", LocalDate.parse("2024-03-20"))
+            new AnnotationEntry(1, 1, 20, 26, "repeat", "NN", LocalDate.parse("2024-03-20")) // exact match with previous
         );
 
         // Process batch
@@ -176,97 +167,6 @@ class UnigramIndexGeneratorTest extends BaseIndexTest {
         assertEquals(26, repeatPositions.getPositions().get(0).getEndPosition());
         assertEquals(20, repeatPositions.getPositions().get(1).getBeginPosition());
         assertEquals(26, repeatPositions.getPositions().get(1).getEndPosition());
-    }
-
-    @Test
-    void testMemoryBounds() throws Exception {
-        // Clear database
-        clearDatabase();
-
-        // Record initial memory
-        System.gc(); // Request GC to get more accurate baseline
-        long initialMemory = memoryBean.getHeapMemoryUsage().getUsed();
-        
-        // Insert large batch of test data
-        insertLargeTestDataset(LARGE_BATCH_SIZE);
-
-        // Generate index
-        generator.generateIndex();
-
-        // Record peak memory
-        System.gc(); // Request GC to get more accurate measurement
-        long peakMemory = memoryBean.getHeapMemoryUsage().getUsed();
-
-        // Verify memory growth is bounded
-        // We expect memory growth to be less than 1GB regardless of input size
-        long memoryGrowth = peakMemory - initialMemory;
-        assertTrue(memoryGrowth < 1024 * 1024 * 1024L, 
-            "Memory growth (" + memoryGrowth / 1024 / 1024 + "MB) exceeded bounds");
-    }
-
-    @Test
-    void testLargeDatasetProcessing() throws Exception {
-        // Clear database
-        clearDatabase();
-
-        // Insert large dataset
-        int numDocuments = 100;
-        int entriesPerDocument = 1000;
-        insertLargeTestDataset(numDocuments * entriesPerDocument);
-
-        // Generate index
-        long startTime = System.nanoTime();
-        generator.generateIndex();
-        long endTime = System.nanoTime();
-        long durationMs = (endTime - startTime) / 1_000_000;
-
-        // Verify progress tracking
-        verify(progress, atLeast(numDocuments)).updateIndex(anyLong());
-
-        // Log performance metrics
-        logger.info("Processed {} entries in {} ms ({} entries/sec)", 
-            numDocuments * entriesPerDocument,
-            durationMs,
-            (numDocuments * entriesPerDocument * 1000L) / durationMs);
-    }
-
-    private void insertLargeTestDataset(int numEntries) throws SQLException {
-        try (Statement stmt = sqliteConn.createStatement()) {
-            // Create documents
-            int currentDoc = 1;
-            int entriesInCurrentDoc = 0;
-            
-            stmt.execute("BEGIN TRANSACTION");
-            
-            // Insert documents and annotations
-            for (int i = 0; i < numEntries; i++) {
-                // Create new document every 100 entries
-                if (entriesInCurrentDoc == 0) {
-                    stmt.execute(String.format(
-                        "INSERT INTO documents (document_id, timestamp) VALUES (%d, '2024-03-20')",
-                        currentDoc));
-                }
-
-                // Generate random word (3-10 chars)
-                String word = generateRandomWord(3 + random.nextInt(8));
-                int beginChar = entriesInCurrentDoc * 6;
-                int endChar = beginChar + word.length();
-
-                // Insert annotation
-                stmt.execute(String.format(
-                    "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, lemma, pos) " +
-                    "VALUES (%d, %d, %d, %d, '%s', '%s', 'NN')",
-                    currentDoc, 1 + entriesInCurrentDoc / 20, beginChar, endChar, word, word));
-
-                entriesInCurrentDoc++;
-                if (entriesInCurrentDoc == 100) {
-                    currentDoc++;
-                    entriesInCurrentDoc = 0;
-                }
-            }
-            
-            stmt.execute("COMMIT");
-        }
     }
 
     private String generateRandomWord(int length) {

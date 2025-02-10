@@ -3,34 +3,78 @@ package com.example.index;
 import org.apache.commons.io.FileUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
+import java.io.*;
+
+import com.example.logging.ProgressTracker;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Base test class providing common utilities for index testing.
  * Handles database setup, cleanup, and common test data creation.
  */
 public abstract class BaseIndexTest {
+    private static final Logger logger = LoggerFactory.getLogger(BaseIndexTest.class);
     protected Path tempDir;
     protected Connection sqliteConn;
+    protected static final String TEST_STOPWORDS_PATH = "test-stopwords.txt";
 
     @BeforeEach
     void setUp() throws Exception {
+        // Create temp directory
         tempDir = Files.createTempDirectory("index-test-");
+        logger.info("Created temp directory: {}", tempDir);
+        
+        // Set up SQLite
         sqliteConn = createTestDatabase();
         createBasicTables();
+        logger.info("Created test database at: {}", tempDir.resolve("test.db"));
+
+        // Create test stopwords file
+        try (PrintWriter writer = new PrintWriter(TEST_STOPWORDS_PATH)) {
+            writer.println("the");
+            writer.println("a");
+            writer.println("is");
+        }
+        logger.info("Created stopwords file: {}", TEST_STOPWORDS_PATH);
     }
 
     @AfterEach
     void tearDown() throws Exception {
-        if (sqliteConn != null) {
+        logger.info("Starting test cleanup...");
+        
+        // Close SQLite connection
+        if (sqliteConn != null && !sqliteConn.isClosed()) {
             sqliteConn.close();
+            sqliteConn = null;
+            logger.info("Closed SQLite connection");
         }
-        FileUtils.deleteDirectory(tempDir.toFile());
+        
+        // Delete test files
+        if (tempDir.toFile().exists()) {
+            try {
+                FileUtils.deleteDirectory(tempDir.toFile());
+                logger.info("Deleted temp directory: {}", tempDir);
+            } catch (IOException e) {
+                logger.warn("Could not delete temp directory: {}", e.getMessage());
+            }
+        }
+        
+        File stopwordsFile = new File(TEST_STOPWORDS_PATH);
+        if (stopwordsFile.exists() && stopwordsFile.delete()) {
+            logger.info("Deleted stopwords file: {}", TEST_STOPWORDS_PATH);
+        }
+        
+        // Reset instance variables
+        tempDir = null;
+        sqliteConn = null;
     }
 
     protected Connection createTestDatabase() throws Exception {
@@ -48,7 +92,8 @@ public abstract class BaseIndexTest {
 
             stmt.execute("""
                 CREATE TABLE annotations (
-                    document_id INTEGER,
+                    annotation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id INTEGER NOT NULL,
                     sentence_id INTEGER,
                     begin_char INTEGER,
                     end_char INTEGER,
@@ -57,21 +102,21 @@ public abstract class BaseIndexTest {
                     pos TEXT,
                     ner TEXT,
                     normalized_ner TEXT,
-                    annotation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
+                    FOREIGN KEY (document_id) REFERENCES documents(document_id)
                 )
             """);
 
             stmt.execute("""
                 CREATE TABLE dependencies (
-                    document_id INTEGER,
+                    dependency_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id INTEGER NOT NULL,
                     sentence_id INTEGER,
                     begin_char INTEGER,
                     end_char INTEGER,
                     head_token TEXT,
                     dependent_token TEXT,
                     relation TEXT,
-                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
+                    FOREIGN KEY (document_id) REFERENCES documents(document_id)
                 )
             """);
         }

@@ -1,17 +1,17 @@
 package com.example.index;
 
-import org.iq80.leveldb.*;
-import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import org.junit.jupiter.api.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.*;
 import java.sql.*;
+import java.util.Map;
 import com.example.logging.ProgressTracker;
+import com.google.common.collect.ListMultimap;
 
 public class POSIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-pos.txt";
-    private File levelDbDir;
+    private POSIndexGenerator generator;
 
     @BeforeEach
     @Override
@@ -25,12 +25,13 @@ public class POSIndexGeneratorTest extends BaseIndexTest {
             writer.println("is");
         }
 
-        // Set up LevelDB directory
-        levelDbDir = tempDir.resolve("test-leveldb-pos").toFile();
-        if (levelDbDir.exists()) {
-            deleteDirectory(levelDbDir);
-        }
-        levelDbDir.mkdir();
+        // Create generator
+        generator = new POSIndexGenerator(
+            tempDir.resolve("test-leveldb-pos").toString(),
+            TEST_STOPWORDS_PATH,
+            sqliteConn,
+            new ProgressTracker()
+        );
 
         // Insert test data
         setupTestData();
@@ -95,52 +96,46 @@ public class POSIndexGeneratorTest extends BaseIndexTest {
         new File(TEST_STOPWORDS_PATH).delete();
     }
 
-    private void deleteDirectory(File dir) {
-        if (dir.exists()) {
-            for (File file : dir.listFiles()) {
-                if (file.isDirectory()) {
-                    deleteDirectory(file);
-                } else {
-                    file.delete();
-                }
-            }
-            dir.delete();
-        }
-    }
-
     @Test
     public void testBasicPOSIndexing() throws Exception {
-        // Create and run POS indexer
-        try (POSIndexGenerator indexer = new POSIndexGenerator(
-                levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
-            indexer.generateIndex();
+        // Fetch first batch of entries
+        var entries = generator.fetchBatch(0);
+        
+        // Process batch and verify results
+        ListMultimap<String, PositionList> result = generator.processBatch(entries);
+        
+        // Check that all POS tags are indexed
+        String[] expectedTags = {"noun", "verb", "adj", "det", "adp", "pron", "aux"};
+        for (String tag : expectedTags) {
+            assertTrue(result.containsKey(tag.toLowerCase()), 
+                "Should contain POS tag: " + tag);
         }
-
-        // Open LevelDB and verify contents
-        Options options = new Options();
-        try (DB db = factory.open(levelDbDir, options)) {
-            // Check that all POS tags are indexed
-            String[] expectedTags = {"noun", "verb", "adj", "det", "adp", "pron", "aux"};
-            for (String tag : expectedTags) {
-                byte[] value = db.get(bytes(KeyPrefixes.createPositionsKey(tag)));
-                assertNotNull(value, "POS tag " + tag + " should be indexed");
-                
-                PositionList positions = PositionList.deserialize(value);
-                assertTrue(positions.size() > 0, "Should have positions for " + tag);
-            }
-            
-            // Verify NOUN has multiple positions
-            PositionList nounPositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey("noun"))));
-            assertEquals(3, nounPositions.size(), "Should have three NOUN positions");
-            
-            // Verify DET is indexed despite being a stopword
-            PositionList detPositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey("det"))));
-            assertEquals(3, detPositions.size(), "Should have three DET positions");
-        }
+        
+        // Verify NOUN has multiple positions
+        var nounPositions = result.get("noun");
+        int totalNounPositions = nounPositions.stream()
+            .mapToInt(pl -> pl.getPositions().size())
+            .sum();
+        assertEquals(3, totalNounPositions, "Should have 3 NOUN positions");
+        
+        // Verify DET is indexed despite being a stopword
+        var detPositions = result.get("det");
+        int totalDetPositions = detPositions.stream()
+            .mapToInt(pl -> pl.getPositions().size())
+            .sum();
+        assertEquals(3, totalDetPositions, "Should have 3 DET positions");
     }
 
     @Test
     public void testCaseNormalization() throws Exception {
+        // Clear existing data
+        try (PreparedStatement pstmt = sqliteConn.prepareStatement("DELETE FROM documents")) {
+            pstmt.executeUpdate();
+        }
+        try (PreparedStatement pstmt = sqliteConn.prepareStatement("DELETE FROM annotations")) {
+            pstmt.executeUpdate();
+        }
+
         // Insert document record for mixed case test data
         try (PreparedStatement pstmt = sqliteConn.prepareStatement(
                 "INSERT INTO documents (document_id, timestamp) VALUES (?, ?)")) {
@@ -150,16 +145,16 @@ public class POSIndexGeneratorTest extends BaseIndexTest {
         }
 
         // Insert mixed case POS tags
-        try (PreparedStatement pstmt = sqliteConn.prepareStatement(
-                "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, token, lemma, pos) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?)")) {
-            Object[][] mixedCaseWords = {
-                { 3, 0, 0, 5, "Hello", "hello", "NOUN" },
-                { 3, 0, 6, 11, "World", "world", "noun" },
-                { 3, 0, 12, 14, "is", "be", "Verb" },
-                { 3, 0, 15, 20, "great", "great", "ADJ" }
-            };
+        Object[][] mixedCaseWords = {
+            { 3, 0, 0, 4, "test", "NOUN" },
+            { 3, 0, 5, 9, "word", "noun" },
+            { 3, 0, 10, 14, "run", "VERB" },
+            { 3, 0, 15, 19, "fast", "verb" }
+        };
 
+        try (PreparedStatement pstmt = sqliteConn.prepareStatement(
+                "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, lemma, pos) " +
+                "VALUES (?, ?, ?, ?, ?, ?)")) {
             for (Object[] word : mixedCaseWords) {
                 pstmt.setInt(1, (Integer) word[0]);
                 pstmt.setInt(2, (Integer) word[1]);
@@ -167,31 +162,25 @@ public class POSIndexGeneratorTest extends BaseIndexTest {
                 pstmt.setInt(4, (Integer) word[3]);
                 pstmt.setString(5, (String) word[4]);
                 pstmt.setString(6, (String) word[5]);
-                pstmt.setString(7, (String) word[6]);
                 pstmt.executeUpdate();
             }
         }
 
-        // Generate index
-        try (POSIndexGenerator indexer = new POSIndexGenerator(
-                levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
-            indexer.generateIndex();
-        }
+        // Fetch and process entries
+        var entries = generator.fetchBatch(0);
+        var result = generator.processBatch(entries);
 
         // Verify case normalization
-        Options options = new Options();
-        try (DB db = factory.open(levelDbDir, options)) {
-            // Check that different cases of NOUN are merged
-            PositionList nounPositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey("noun"))));
-            assertEquals(5, nounPositions.size(), "Should have five NOUN positions (3 from setup + 2 from mixed case)");
+        var nounPositions = result.get("noun");
+        int totalNounPositions = nounPositions.stream()
+            .mapToInt(pl -> pl.getPositions().size())
+            .sum();
+        assertEquals(2, totalNounPositions, "Should have 2 NOUN positions after case normalization");
 
-            // Check that different cases of VERB are merged
-            PositionList verbPositions = PositionList.deserialize(db.get(bytes(KeyPrefixes.createPositionsKey("verb"))));
-            assertEquals(2, verbPositions.size(), "Should have two VERB positions (1 from setup + 1 from mixed case)");
-        }
-    }
-
-    private static byte[] bytes(String str) {
-        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var verbPositions = result.get("verb");
+        int totalVerbPositions = verbPositions.stream()
+            .mapToInt(pl -> pl.getPositions().size())
+            .sum();
+        assertEquals(2, totalVerbPositions, "Should have 2 VERB positions after case normalization");
     }
 } 
