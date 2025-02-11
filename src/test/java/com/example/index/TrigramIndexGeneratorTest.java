@@ -1,20 +1,28 @@
 package com.example.index;
 
-import org.iq80.leveldb.*;
-import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import org.junit.jupiter.api.*;
 import static org.junit.jupiter.api.Assertions.*;
+import org.iq80.leveldb.Options;
 
 import java.io.*;
 import java.sql.*;
+import java.nio.file.Path;
+import java.util.Optional;
 import com.example.logging.ProgressTracker;
 import com.example.index.IndexConfig;
 import com.example.core.Position;
 import com.example.core.PositionList;
+import com.example.core.IndexAccess;
+import com.example.core.IndexAccessException;
 
 public class TrigramIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-trigram.txt";
-    private File levelDbDir;
+    private File indexBaseDir;
+    private IndexAccess indexAccess;
+
+    private static byte[] bytes(String str) {
+        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
 
     @BeforeEach
     @Override
@@ -28,12 +36,12 @@ public class TrigramIndexGeneratorTest extends BaseIndexTest {
             writer.println("is");
         }
 
-        // Set up LevelDB directory
-        levelDbDir = tempDir.resolve("test-leveldb-trigram").toFile();
-        if (levelDbDir.exists()) {
-            deleteDirectory(levelDbDir);
+        // Set up index directory
+        indexBaseDir = tempDir.resolve("test-index-trigram").toFile();
+        if (indexBaseDir.exists()) {
+            deleteDirectory(indexBaseDir);
         }
-        levelDbDir.mkdir();
+        indexBaseDir.mkdir();
 
         // Insert test data
         setupTestData();
@@ -98,6 +106,9 @@ public class TrigramIndexGeneratorTest extends BaseIndexTest {
     @AfterEach
     void tearDown() throws Exception {
         super.tearDown();
+        if (indexAccess != null) {
+            indexAccess.close();
+        }
         new File(TEST_STOPWORDS_PATH).delete();
     }
 
@@ -118,56 +129,57 @@ public class TrigramIndexGeneratorTest extends BaseIndexTest {
     public void testBasicTrigramIndexing() throws Exception {
         // Create and run trigram indexer
         try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
+                indexBaseDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
 
-        // Open LevelDB and verify contents
+        // Create IndexAccess instance for verification
         Options options = new Options();
-        try (DB db = factory.open(levelDbDir, options)) {
-            // Test trigrams with stopwords
-            verifyTrigram(db, "the" + IndexGenerator.DELIMITER + "black" + 
-                IndexGenerator.DELIMITER + "cat", 1, 0, 0, 13, 2);
+        indexAccess = new IndexAccess(indexBaseDir.toPath(), "trigram", options);
 
-            // Test regular trigrams in first document
-            verifyTrigram(db, "black" + IndexGenerator.DELIMITER + "cat" + 
-                IndexGenerator.DELIMITER + "sit", 1, 0, 4, 18, 1);
-            verifyTrigram(db, "cat" + IndexGenerator.DELIMITER + "sit" + 
-                IndexGenerator.DELIMITER + "quietly", 1, 0, 10, 26, 1);
-            verifyTrigram(db, "sit" + IndexGenerator.DELIMITER + "quietly" + 
-                IndexGenerator.DELIMITER + "now", 1, 0, 14, 30, 1);
-        }
+        // Test trigrams with stopwords
+        verifyTrigram("the" + IndexGenerator.DELIMITER + "black" + 
+            IndexGenerator.DELIMITER + "cat", 1, 0, 0, 13, 2);
+
+        // Test regular trigrams in first document
+        verifyTrigram("black" + IndexGenerator.DELIMITER + "cat" + 
+            IndexGenerator.DELIMITER + "sit", 1, 0, 4, 18, 1);
+        verifyTrigram("cat" + IndexGenerator.DELIMITER + "sit" + 
+            IndexGenerator.DELIMITER + "quietly", 1, 0, 10, 26, 1);
+        verifyTrigram("sit" + IndexGenerator.DELIMITER + "quietly" + 
+            IndexGenerator.DELIMITER + "now", 1, 0, 14, 30, 1);
     }
 
     @Test
     public void testSentenceBoundaries() throws Exception {
         // Create and run trigram indexer
         try (TrigramIndexGenerator indexer = new TrigramIndexGenerator(
-                levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
+                indexBaseDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
 
-        // Open LevelDB and verify contents
+        // Create IndexAccess instance for verification
         Options options = new Options();
-        try (DB db = factory.open(levelDbDir, options)) {
-            // Verify no trigrams cross sentence boundaries
-            assertNull(db.get(bytes("quietly" + IndexGenerator.DELIMITER + "now" + 
-                IndexGenerator.DELIMITER + "it")), "Trigram should not cross sentence boundary");
-            assertNull(db.get(bytes("now" + IndexGenerator.DELIMITER + "it" + 
-                IndexGenerator.DELIMITER + "purr")), "Trigram should not cross sentence boundary");
-        }
+        indexAccess = new IndexAccess(indexBaseDir.toPath(), "trigram", options);
+
+        // Verify no trigrams cross sentence boundaries
+        Optional<PositionList> quietly = indexAccess.get(bytes("quietly" + IndexGenerator.DELIMITER + "now" + 
+            IndexGenerator.DELIMITER + "it"));
+        Optional<PositionList> now = indexAccess.get(bytes("now" + IndexGenerator.DELIMITER + "it" + 
+            IndexGenerator.DELIMITER + "purr"));
+        assertTrue(quietly.isEmpty(), "Trigram should not cross sentence boundary");
+        assertTrue(now.isEmpty(), "Trigram should not cross sentence boundary");
     }
 
-    private void verifyTrigram(DB db, String trigram, int expectedDocId, int expectedSentenceId,
-            int expectedBeginChar, int expectedEndChar, int expectedCount) throws IOException {
-        byte[] value = db.get(bytes(trigram));
-        assertNotNull(value, "Trigram '" + trigram + "' should be indexed");
+    private void verifyTrigram(String trigram, int expectedDocId, int expectedSentenceId,
+            int expectedBeginChar, int expectedEndChar, int expectedCount) throws IOException, IndexAccessException {
+        Optional<PositionList> positions = indexAccess.get(bytes(trigram));
+        assertTrue(positions.isPresent(), "Trigram '" + trigram + "' should be indexed");
         
-        PositionList positions = PositionList.deserialize(value);
-        assertEquals(expectedCount, positions.size(),
+        assertEquals(expectedCount, positions.get().size(),
                 String.format("Trigram '%s' should appear %d time(s)", trigram, expectedCount));
         
-        Position pos = positions.getPositions().get(0);
+        Position pos = positions.get().getPositions().get(0);
         assertEquals(expectedDocId, pos.getDocumentId());
         assertEquals(expectedSentenceId, pos.getSentenceId());
         assertEquals(expectedBeginChar, pos.getBeginPosition());

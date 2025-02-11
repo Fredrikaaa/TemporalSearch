@@ -15,6 +15,8 @@ import java.util.Map;
 import com.example.logging.ProgressTracker;
 import com.example.core.Position;
 import com.example.core.PositionList;
+import com.example.core.IndexAccess;
+import com.example.core.IndexAccessException;
 
 /**
  * Generates a streaming bigram index from annotation entries.
@@ -22,14 +24,14 @@ import com.example.core.PositionList;
  * Uses streaming processing and external sorting for efficient memory usage.
  */
 public final class BigramIndexGenerator extends IndexGenerator<AnnotationEntry> {
-    public BigramIndexGenerator(String levelDbPath, String stopwordsPath,
+    public BigramIndexGenerator(String indexBaseDir, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
-        super(levelDbPath, stopwordsPath, sqliteConn, progress);
+        super(indexBaseDir, stopwordsPath, sqliteConn, progress);
     }
 
-    public BigramIndexGenerator(String levelDbPath, String stopwordsPath,
+    public BigramIndexGenerator(String indexBaseDir, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress, IndexConfig config) throws IOException {
-        super(levelDbPath, stopwordsPath, sqliteConn, progress, config);
+        super(indexBaseDir, stopwordsPath, sqliteConn, progress, config);
     }
 
     @Override

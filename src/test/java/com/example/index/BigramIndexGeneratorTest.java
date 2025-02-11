@@ -1,20 +1,28 @@
 package com.example.index;
 
-import org.iq80.leveldb.*;
-import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import org.junit.jupiter.api.*;
 import static org.junit.jupiter.api.Assertions.*;
+import org.iq80.leveldb.Options;
 
 import java.io.*;
 import java.sql.*;
+import java.nio.file.Path;
+import java.util.Optional;
 import com.example.logging.ProgressTracker;
 import com.example.index.IndexConfig;
 import com.example.core.Position;
 import com.example.core.PositionList;
+import com.example.core.IndexAccess;
+import com.example.core.IndexAccessException;
 
 public class BigramIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-bigram.txt";
-    private File levelDbDir;
+    private File indexBaseDir;
+    private IndexAccess indexAccess;
+
+    private static byte[] bytes(String str) {
+        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
 
     @BeforeEach
     @Override
@@ -28,12 +36,12 @@ public class BigramIndexGeneratorTest extends BaseIndexTest {
             writer.println("is");
         }
 
-        // Set up LevelDB directory
-        levelDbDir = tempDir.resolve("test-leveldb-bigram").toFile();
-        if (levelDbDir.exists()) {
-            deleteDirectory(levelDbDir);
+        // Set up index directory
+        indexBaseDir = tempDir.resolve("test-index-bigram").toFile();
+        if (indexBaseDir.exists()) {
+            deleteDirectory(indexBaseDir);
         }
-        levelDbDir.mkdir();
+        indexBaseDir.mkdir();
 
         // Insert test data
         setupTestData();
@@ -94,6 +102,9 @@ public class BigramIndexGeneratorTest extends BaseIndexTest {
     @AfterEach
     void tearDown() throws Exception {
         super.tearDown();
+        if (indexAccess != null) {
+            indexAccess.close();
+        }
         new File(TEST_STOPWORDS_PATH).delete();
     }
 
@@ -114,63 +125,58 @@ public class BigramIndexGeneratorTest extends BaseIndexTest {
     public void testBasicIndexing() throws Exception {
         // Create and run bigram indexer
         try (BigramIndexGenerator indexer = new BigramIndexGenerator(
-                levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
+                indexBaseDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
 
-        // Open LevelDB and verify contents
+        // Create IndexAccess instance for verification
         Options options = new Options();
-        try (DB db = factory.open(levelDbDir, options)) {
-            // Test bigrams with stopwords
-            verifyBigram(db, "the" + IndexGenerator.DELIMITER + "black", 1, 0, 0, 9, 2); // Appears in both documents
+        indexAccess = new IndexAccess(indexBaseDir.toPath(), "bigram", options);
 
-            // Test regular bigrams
-            verifyBigram(db, "black" + IndexGenerator.DELIMITER + "cat", 1, 0, 4, 13, 1);
-            verifyBigram(db, "cat" + IndexGenerator.DELIMITER + "sit", 1, 0, 10, 18, 1);
-            verifyBigram(db, "sit" + IndexGenerator.DELIMITER + "quietly", 1, 0, 14, 26, 1);
+        // Test bigrams with stopwords
+        verifyBigram("the" + IndexGenerator.DELIMITER + "black", 1, 0, 0, 9, 2); // Appears in both documents
 
-            // Test bigrams in second document
-            verifyBigram(db, "black" + IndexGenerator.DELIMITER + "dog", 2, 0, 4, 13, 1);
-            verifyBigram(db, "dog" + IndexGenerator.DELIMITER + "bark", 2, 0, 10, 19, 1);
-        }
+        // Test regular bigrams
+        verifyBigram("black" + IndexGenerator.DELIMITER + "cat", 1, 0, 4, 13, 1);
+        verifyBigram("cat" + IndexGenerator.DELIMITER + "sit", 1, 0, 10, 18, 1);
+        verifyBigram("sit" + IndexGenerator.DELIMITER + "quietly", 1, 0, 14, 26, 1);
+
+        // Test bigrams in second document
+        verifyBigram("black" + IndexGenerator.DELIMITER + "dog", 2, 0, 4, 13, 1);
+        verifyBigram("dog" + IndexGenerator.DELIMITER + "bark", 2, 0, 10, 19, 1);
     }
 
     @Test
     public void testSentenceBoundaries() throws Exception {
+        // Create and run bigram indexer
         try (BigramIndexGenerator indexer = new BigramIndexGenerator(
-                levelDbDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
+                indexBaseDir.getPath(), TEST_STOPWORDS_PATH, sqliteConn, new ProgressTracker())) {
             indexer.generateIndex();
         }
 
-        // Open LevelDB and verify contents
+        // Create IndexAccess instance for verification
         Options options = new Options();
-        try (DB db = factory.open(levelDbDir, options)) {
-            // Verify no bigrams cross sentence boundaries
-            assertNull(db.get(bytes("quietly" + IndexGenerator.DELIMITER + "it")),
-                    "Bigram should not cross sentence boundary");
-            assertNull(db.get(bytes("softly" + IndexGenerator.DELIMITER + "the")),
-                    "Bigram should not cross sentence boundary");
-        }
+        indexAccess = new IndexAccess(indexBaseDir.toPath(), "bigram", options);
+
+        // Verify no bigrams cross sentence boundaries
+        Optional<PositionList> quietly = indexAccess.get(bytes("quietly" + IndexGenerator.DELIMITER + "it"));
+        Optional<PositionList> softly = indexAccess.get(bytes("softly" + IndexGenerator.DELIMITER + "the"));
+        assertTrue(quietly.isEmpty(), "Bigram should not cross sentence boundary");
+        assertTrue(softly.isEmpty(), "Bigram should not cross sentence boundary");
     }
 
-    private void verifyBigram(DB db, String bigram, int expectedDocId, int expectedSentenceId,
-            int expectedBeginChar, int expectedEndChar, int expectedCount) throws IOException {
-        byte[] value = db.get(bytes(bigram));
-        assertNotNull(value, "Bigram '" + bigram + "' should be indexed");
+    private void verifyBigram(String bigram, int expectedDocId, int expectedSentenceId,
+            int expectedBeginChar, int expectedEndChar, int expectedCount) throws IOException, IndexAccessException {
+        Optional<PositionList> positions = indexAccess.get(bytes(bigram));
+        assertTrue(positions.isPresent(), "Bigram '" + bigram + "' should be indexed");
         
-        PositionList positions = PositionList.deserialize(value);
-        assertEquals(expectedCount, positions.size(),
+        assertEquals(expectedCount, positions.get().size(),
                 String.format("Bigram '%s' should appear %d time(s)", bigram, expectedCount));
         
-        Position pos = positions.getPositions().get(0);
+        Position pos = positions.get().getPositions().get(0);
         assertEquals(expectedDocId, pos.getDocumentId());
         assertEquals(expectedSentenceId, pos.getSentenceId());
         assertEquals(expectedBeginChar, pos.getBeginPosition());
         assertEquals(expectedEndChar, pos.getEndPosition());
-    }
-
-    @Test
-    public void testBigramIndexing() throws Exception {
-        // ... existing code ...
     }
 } 
