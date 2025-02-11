@@ -6,7 +6,7 @@
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-            <level>${DEBUG_MODE}</level>
+            <level>WARN</level>
         </filter>
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
@@ -70,10 +70,9 @@
     <!-- Suppress LevelDB configuration messages -->
     <logger name="com.example.index.LevelDBConfig" level="WARN"/>
 
-    <!-- Index generation logging - reduced to INFO by default -->
+    <!-- Index generation logging - reduced to WARN for console -->
     <logger name="com.example.index" level="INFO">
         <appender-ref ref="FILE"/>
-        <appender-ref ref="CONSOLE"/>
     </logger>
 
     <!-- Root logger -->

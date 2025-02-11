@@ -8,6 +8,8 @@ import java.sql.*;
 import java.util.Map;
 import com.example.logging.ProgressTracker;
 import com.google.common.collect.ListMultimap;
+import com.example.core.Position;
+import com.example.core.PositionList;
 
 public class NerDateIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-ner.txt";

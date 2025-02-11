@@ -9,8 +9,8 @@ import java.io.*;
 import java.sql.*;
 import com.example.logging.ProgressTracker;
 import com.example.index.IndexConfig;
-import com.example.index.Position;
-import com.example.index.PositionList;
+import com.example.core.Position;
+import com.example.core.PositionList;
 
 public class TrigramIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-trigram.txt";
