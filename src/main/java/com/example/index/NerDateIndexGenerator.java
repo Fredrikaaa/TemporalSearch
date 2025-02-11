@@ -52,7 +52,7 @@ public final class NerDateIndexGenerator extends IndexGenerator<AnnotationEntry>
                       "ORDER BY a.document_id, a.sentence_id, a.begin_char LIMIT ? OFFSET ?";
         
         try (PreparedStatement stmt = sqliteConn.prepareStatement(query)) {
-            stmt.setInt(1, DOC_BATCH_SIZE);
+            stmt.setInt(1, config.getBatchSize());
             stmt.setInt(2, offset);
 
             try (ResultSet rs = stmt.executeQuery()) {

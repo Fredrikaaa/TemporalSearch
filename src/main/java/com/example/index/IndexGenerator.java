@@ -1,8 +1,6 @@
 package com.example.index;
 
 import com.google.common.collect.ListMultimap;
-import org.iq80.leveldb.*;
-import static org.iq80.leveldb.impl.Iq80DBFactory.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.example.logging.ProgressTracker;
@@ -10,6 +8,9 @@ import com.example.logging.IndexingMetrics;
 import com.google.code.externalsorting.ExternalSort;
 import com.example.core.Position;
 import com.example.core.PositionList;
+import com.example.core.IndexAccess;
+import com.example.core.IndexAccessException;
+import org.iq80.leveldb.Options;
 
 import java.io.*;
 import java.nio.file.*;
@@ -31,16 +32,13 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
     public static final String DELIMITER = "\0";
     public static final char ESCAPE_CHAR = '\u001F';
 
-    private final DB levelDb;
+    private final IndexAccess indexAccess;
     private final Set<String> stopwords;
     protected final Connection sqliteConn;
     protected final ProgressTracker progress;
     private final Path tempDir;
     private long totalNGramsGenerated = 0;
     protected final IndexConfig config;
-
-    // Memory and processing configuration
-    protected static final int DOC_BATCH_SIZE = 1000; // Smaller batch size for more frequent progress updates
 
     /**
      * Gets the name of the table to query for entries.
@@ -54,24 +52,26 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
      */
     protected abstract String getIndexName();
 
-    /**
-     * Converts a string to UTF-8 bytes for LevelDB operations.
-     * @param str The string to convert
-     * @return The UTF-8 encoded bytes
-     */
-    protected static byte[] bytes(String str) {
-        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    }
-
-    protected IndexGenerator(String levelDbPath, String stopwordsPath,
+    protected IndexGenerator(String indexBaseDir, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress) throws IOException {
-        this(levelDbPath, stopwordsPath, sqliteConn, progress, new IndexConfig.Builder().build());
+        this(indexBaseDir, stopwordsPath, sqliteConn, progress, new IndexConfig.Builder().build());
     }
 
-    protected IndexGenerator(String levelDbPath, String stopwordsPath,
+    protected IndexGenerator(String indexBaseDir, String stopwordsPath,
             Connection sqliteConn, ProgressTracker progress, IndexConfig config) throws IOException {
-        // Initialize LevelDB with performance options
-        this.levelDb = factory.open(new File(levelDbPath), LevelDBConfig.createOptimizedOptions());
+        // Initialize IndexAccess with optimized options
+        Options options = new Options();
+        options.createIfMissing(true);
+        options.cacheSize(64 * 1024 * 1024); // 64MB cache
+        options.writeBufferSize(8 * 1024 * 1024); // 8MB write buffer
+        options.blockSize(4 * 1024); // 4KB block size
+        options.compressionType(org.iq80.leveldb.CompressionType.SNAPPY);
+
+        try {
+            this.indexAccess = new IndexAccess(Path.of(indexBaseDir), getIndexName(), options);
+        } catch (IndexAccessException e) {
+            throw new IOException("Failed to initialize IndexAccess", e);
+        }
 
         this.stopwords = loadStopwords(stopwordsPath);
         this.sqliteConn = sqliteConn;
@@ -155,17 +155,14 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
     }
 
     /**
-     * Writes the final merged and sorted entries to LevelDB.
+     * Writes the final merged and sorted entries to the index.
      * @param sortedFile The file containing the sorted entries
      */
     protected void writeToLevelDB(File sortedFile) throws IOException {
-        WriteBatch batch = null;
         int batchCount = 0;
         long startTime = System.currentTimeMillis();
         
         try (BufferedReader reader = new BufferedReader(new FileReader(sortedFile))) {
-            batch = levelDb.createWriteBatch();
-            
             String currentTerm = null;
             PositionList mergedPositions = null;
             String line;
@@ -191,25 +188,20 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
                 // If we have a new term, write the current one
                 if (!currentTerm.equals(term)) {
                     // Write current term
-                    writeToBatch(batch, currentTerm, mergedPositions);
-                    batchCount++;
+                    try {
+                        indexAccess.put(bytes(currentTerm), mergedPositions);
+                        batchCount++;
+                        totalNGramsGenerated++;
+                    } catch (IndexAccessException e) {
+                        throw new IOException("Failed to write term: " + currentTerm, e);
+                    }
                     
-                    // Write batch if full
-                    if (batchCount >= LevelDBConfig.BATCH_SIZE) {
-                        levelDb.write(batch);
-                        batch.close();
-                        batch = levelDb.createWriteBatch();
-                        batchCount = 0;
-                        logger.debug("Wrote batch of {} entries", LevelDBConfig.BATCH_SIZE);
-                        
-                        // Collect stats periodically
-                        if (totalNGramsGenerated % (LevelDBConfig.BATCH_SIZE * 10) == 0) {
-                            LevelDBConfig.collectLevelDbStats(levelDb);
-                            long elapsed = System.currentTimeMillis() - startTime;
-                            logger.info("Write progress: {} terms, {} terms/sec", 
-                                totalNGramsGenerated,
-                                String.format("%.2f", totalNGramsGenerated * 1000.0 / elapsed));
-                        }
+                    // Collect stats periodically
+                    if (totalNGramsGenerated % 10000 == 0) {
+                        long elapsed = System.currentTimeMillis() - startTime;
+                        logger.info("Write progress: {} terms, {} terms/sec", 
+                            totalNGramsGenerated,
+                            String.format("%.2f", totalNGramsGenerated * 1000.0 / elapsed));
                     }
                     
                     // Start new term
@@ -223,33 +215,23 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
 
             // Write the last term if we have one
             if (currentTerm != null && mergedPositions != null) {
-                writeToBatch(batch, currentTerm, mergedPositions);
-                batchCount++;
-            }
-
-            // Write final batch if not empty
-            if (batchCount > 0) {
-                levelDb.write(batch);
-                logger.debug("Wrote final batch of {} entries", batchCount);
-                LevelDBConfig.collectLevelDbStats(levelDb);
-            }
-        } finally {
-            if (batch != null) {
                 try {
-                    batch.close();
-                } catch (Exception e) {
-                    logger.warn("Error closing batch: {}", e.getMessage());
+                    indexAccess.put(bytes(currentTerm), mergedPositions);
+                    totalNGramsGenerated++;
+                } catch (IndexAccessException e) {
+                    throw new IOException("Failed to write final term: " + currentTerm, e);
                 }
             }
+
+            logger.info("Finished writing {} terms to index", totalNGramsGenerated);
         }
     }
 
     /**
-     * Writes a term and its positions to a WriteBatch.
+     * Converts a string to UTF-8 bytes for index operations.
      */
-    private void writeToBatch(WriteBatch batch, String term, PositionList positions) throws IOException {
-        batch.put(bytes(term), positions.serialize());
-        totalNGramsGenerated++;
+    protected static byte[] bytes(String str) {
+        return str.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /**
@@ -260,7 +242,7 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
         List<File> tempFiles = new ArrayList<>();
         int offset = 0;
         IndexingMetrics metrics = new IndexingMetrics();
-        metrics.startBatch(DOC_BATCH_SIZE, getIndexName());
+        metrics.startBatch(config.getBatchSize(), getIndexName());
 
         try {
             // Process batches and write to temp files
@@ -288,13 +270,6 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
             // Write sorted entries to LevelDB
             writeToLevelDB(outputFile);
             
-            // Close LevelDB after writing
-            try {
-                levelDb.close();
-            } catch (IOException e) {
-                logger.warn("Error closing LevelDB after writing: {}", e.getMessage());
-            }
-
             // Final metrics
             metrics.logIndexingMetrics();
             logger.info("Index generation complete. Total entries: {}", totalNGramsGenerated);
@@ -333,19 +308,10 @@ public abstract class IndexGenerator<T extends IndexEntry> implements AutoClosea
 
     @Override
     public void close() throws IOException {
-        if (levelDb != null) {
-            levelDb.close();
-        }
-        if (Files.exists(tempDir)) {
-            Files.walk(tempDir)
-                 .sorted((a, b) -> b.compareTo(a))
-                 .forEach(path -> {
-                     try {
-                         Files.deleteIfExists(path);
-                     } catch (IOException e) {
-                         logger.debug("Could not delete temporary file: {} ({})", path, e.getMessage());
-                     }
-                 });
+        try {
+            indexAccess.close();
+        } catch (IndexAccessException e) {
+            throw new IOException("Failed to close index access", e);
         }
     }
 } 

@@ -2,6 +2,7 @@ package com.example.index;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.anyLong;
 
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
@@ -24,6 +25,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.example.logging.ProgressTracker;
+import com.example.core.IndexAccess;
+import com.example.core.PositionList;
+import org.iq80.leveldb.Options;
 
 @ExtendWith(MockitoExtension.class)
 class UnigramIndexGeneratorTest extends BaseIndexTest {
@@ -50,9 +54,9 @@ class UnigramIndexGeneratorTest extends BaseIndexTest {
         // Create empty stopwords file
         Files.writeString(stopwordsPath, "the\na\nan\n");
 
-        // Create generator
+        // Create generator with new index base directory
         generator = new UnigramIndexGenerator(
-            tempDir.resolve("leveldb").toString(),
+            indexBaseDir.toString(),
             stopwordsPath.toString(),
             sqliteConn,
             progress
@@ -167,6 +171,33 @@ class UnigramIndexGeneratorTest extends BaseIndexTest {
         assertEquals(26, repeatPositions.getPositions().get(0).getEndPosition());
         assertEquals(20, repeatPositions.getPositions().get(1).getBeginPosition());
         assertEquals(26, repeatPositions.getPositions().get(1).getEndPosition());
+    }
+
+    @Test
+    void testGenerateIndex() throws Exception {
+        // Insert test data
+        insertBasicTestData();
+
+        // Generate index
+        generator.generateIndex();
+
+        // Close the generator to release the LevelDB lock
+        generator.close();
+
+        // Create a new IndexAccess instance for verification
+        try (IndexAccess indexAccess = new IndexAccess(indexBaseDir, "unigram", createTestOptions())) {
+            // Verify index contents
+            var testPositions = indexAccess.get("test".getBytes());
+            assertTrue(testPositions.isPresent(), "Expected positions for 'test'");
+            assertEquals(1, testPositions.get().getPositions().size());
+
+            var wordPositions = indexAccess.get("word".getBytes());
+            assertTrue(wordPositions.isPresent(), "Expected positions for 'word'");
+            assertEquals(1, wordPositions.get().getPositions().size());
+        }
+
+        // Verify progress tracking
+        verify(progress, atLeastOnce()).updateIndex(anyLong());
     }
 
     private String generateRandomWord(int length) {

@@ -2,18 +2,20 @@ package com.example.index;
 
 /**
  * Configuration class for index generation settings.
- * Handles settings related to index preservation and safety checks.
+ * Handles settings related to index preservation, safety checks, and performance tuning.
  */
 public class IndexConfig {
     
     private final boolean preserveExistingIndex;
     private final long sizeThresholdForConfirmation;
     private final Integer limit;
+    private final int batchSize;
     
     private IndexConfig(Builder builder) {
         this.preserveExistingIndex = builder.preserveExistingIndex;
         this.sizeThresholdForConfirmation = builder.sizeThresholdForConfirmation;
         this.limit = builder.limit;
+        this.batchSize = builder.batchSize;
     }
     
     public boolean shouldPreserveExistingIndex() {
@@ -27,11 +29,16 @@ public class IndexConfig {
     public Integer getLimit() {
         return limit;
     }
+
+    public int getBatchSize() {
+        return batchSize;
+    }
     
     public static class Builder {
         private boolean preserveExistingIndex = false;
         private long sizeThresholdForConfirmation = 1024 * 1024 * 1024; // 1GB
         private Integer limit = null;
+        private int batchSize = 1000; // Default batch size
         
         public Builder withPreserveExistingIndex(boolean preserve) {
             this.preserveExistingIndex = preserve;
@@ -48,6 +55,14 @@ public class IndexConfig {
 
         public Builder withLimit(Integer limit) {
             this.limit = limit;
+            return this;
+        }
+
+        public Builder withBatchSize(int batchSize) {
+            if (batchSize <= 0) {
+                throw new IllegalArgumentException("Batch size must be positive");
+            }
+            this.batchSize = batchSize;
             return this;
         }
         

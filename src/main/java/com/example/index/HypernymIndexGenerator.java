@@ -83,7 +83,7 @@ public final class HypernymIndexGenerator extends IndexGenerator<DependencyEntry
             inClause);
         
         try (PreparedStatement stmt = sqliteConn.prepareStatement(query)) {
-            stmt.setInt(1, DOC_BATCH_SIZE);
+            stmt.setInt(1, config.getBatchSize());
             stmt.setInt(2, offset);
             
             try (ResultSet rs = stmt.executeQuery()) {

@@ -4,6 +4,7 @@ import org.apache.commons.io.FileUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import static org.junit.jupiter.api.Assertions.*;
+import org.iq80.leveldb.Options;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,6 +24,7 @@ import org.slf4j.LoggerFactory;
 public abstract class BaseIndexTest {
     private static final Logger logger = LoggerFactory.getLogger(BaseIndexTest.class);
     protected Path tempDir;
+    protected Path indexBaseDir;
     protected Connection sqliteConn;
     protected static final String TEST_STOPWORDS_PATH = "test-stopwords.txt";
 
@@ -31,6 +33,11 @@ public abstract class BaseIndexTest {
         // Create temp directory
         tempDir = Files.createTempDirectory("index-test-");
         logger.info("Created temp directory: {}", tempDir);
+        
+        // Create index base directory
+        indexBaseDir = tempDir.resolve("indexes");
+        Files.createDirectories(indexBaseDir);
+        logger.info("Created index directory: {}", indexBaseDir);
         
         // Set up SQLite
         sqliteConn = createTestDatabase();
@@ -74,6 +81,7 @@ public abstract class BaseIndexTest {
         
         // Reset instance variables
         tempDir = null;
+        indexBaseDir = null;
         sqliteConn = null;
     }
 
@@ -120,5 +128,28 @@ public abstract class BaseIndexTest {
                 )
             """);
         }
+    }
+
+    /**
+     * Creates optimized LevelDB options for testing.
+     * @return Options configured for testing
+     */
+    protected Options createTestOptions() {
+        Options options = new Options();
+        options.createIfMissing(true);
+        options.cacheSize(16 * 1024 * 1024); // 16MB cache for testing
+        options.writeBufferSize(4 * 1024 * 1024); // 4MB write buffer
+        options.blockSize(4 * 1024); // 4KB block size
+        options.compressionType(org.iq80.leveldb.CompressionType.SNAPPY);
+        return options;
+    }
+
+    /**
+     * Gets the path for a specific index type.
+     * @param indexType The type of index
+     * @return Path to the index directory
+     */
+    protected Path getIndexPath(String indexType) {
+        return indexBaseDir.resolve(indexType);
     }
 } 
