@@ -30,7 +30,7 @@ public class LevelDBBrowser {
                 .description("Browse contents of LevelDB index databases");
 
         parser.addArgument("index_type")
-                .choices("unigram", "bigram", "trigram", "dependency", "ner_date", "pos")
+                .choices("unigram", "bigram", "trigram", "dependency", "ner_date", "pos", "hypernym")
                 .help("Type of index to browse");
 
         parser.addArgument("db_path")
@@ -61,6 +61,10 @@ public class LevelDBBrowser {
                 .setDefault(0)
                 .help("Minimum number of occurrences required to display an entry");
 
+        parser.addArgument("--top")
+                .type(Integer.class)
+                .help("Show only top N categories (for hypernym index)");
+
         try {
             Namespace ns = parser.parseArgs(args);
             String indexType = ns.getString("index_type");
@@ -71,6 +75,7 @@ public class LevelDBBrowser {
             boolean showTime = ns.getBoolean("time");
             boolean showSummary = ns.getBoolean("summary");
             int minOccurrences = ns.getInt("min_occurrences");
+            int topN = ns.getInt("top");
 
             String dbPath = basePath + "/" + indexType;
 
@@ -98,11 +103,17 @@ public class LevelDBBrowser {
                 }
 
                 if (words != null) {
-                    lookupWords(db, words, indexType, showTime, minOccurrences);
+                    if (indexType.equals("dependency")) {
+                        lookupDependency(db, words, showTime, minOccurrences);
+                    } else if (indexType.equals("hypernym")) {
+                        lookupHypernym(db, words, showTime, minOccurrences);
+                    } else {
+                        lookupWords(db, words, indexType, showTime, minOccurrences);
+                    }
                 }
 
                 if (listEntries || showCounts) {
-                    listEntries(db, indexType, showCounts, minOccurrences);
+                    listEntries(db, indexType, showCounts, minOccurrences, topN);
                 }
             }
         } catch (ArgumentParserException e) {
@@ -118,7 +129,7 @@ public class LevelDBBrowser {
     private static int getExpectedWordCount(String indexType) {
         return switch (indexType) {
             case "unigram", "ner_date", "pos" -> 1;
-            case "bigram" -> 2;
+            case "bigram", "hypernym" -> 2;
             case "trigram" -> 3;
             case "dependency" -> 3;
             default -> throw new IllegalArgumentException("Unknown index type: " + indexType);
@@ -192,6 +203,8 @@ public class LevelDBBrowser {
                     words.get(0).substring(4, 6),
                     words.get(0).substring(6, 8));
             case "pos" -> String.format("POS tag '%s'", words.get(0).toLowerCase());
+            case "hypernym" -> String.format("hypernym relation '%s' -> '%s'", 
+                    words.get(0).toLowerCase(), words.get(1).toLowerCase());
             default -> throw new IllegalArgumentException("Invalid index type");
         };
     }
@@ -296,38 +309,96 @@ public class LevelDBBrowser {
         }
     }
 
-    private static void listEntries(DB db, String indexType, boolean showCounts, int minOccurrences) throws IOException {
+    private static void listEntries(DB db, String indexType, boolean showCounts, int minOccurrences, int topN) throws IOException {
         System.out.printf("Listing entries in %s index:%n", indexType);
         int totalEntries = 0;
         
-        try (DBIterator iterator = db.iterator()) {
-            iterator.seekToFirst();
+        if (indexType.equals("hypernym")) {
+            // Use TreeMap for sorted categories
+            Map<String, Map<String, Integer>> hypernymGroups = new TreeMap<>();
+            Map<String, Integer> categoryTotalOccurrences = new HashMap<>();
             
-            while (iterator.hasNext()) {
-                String key = asString(iterator.peekNext().getKey());
-                PositionList positions = PositionList.deserialize(iterator.peekNext().getValue());
+            try (DBIterator iterator = db.iterator()) {
+                iterator.seekToFirst();
                 
-                if (positions.size() < minOccurrences) {
+                while (iterator.hasNext()) {
+                    String key = asString(iterator.peekNext().getKey());
+                    PositionList positions = PositionList.deserialize(iterator.peekNext().getValue());
+                    
+                    if (positions.size() >= minOccurrences) {
+                        String[] parts = key.split(DELIMITER);
+                        if (parts.length == 2) {
+                            String category = parts[0];
+                            String instance = parts[1];
+                            hypernymGroups.computeIfAbsent(category, k -> new TreeMap<>())
+                                        .put(instance, positions.size());
+                            categoryTotalOccurrences.merge(category, positions.size(), Integer::sum);
+                        }
+                    }
                     iterator.next();
-                    continue;
                 }
+            }
+
+            // Sort categories by total occurrences if showing counts, otherwise by number of instances
+            List<Map.Entry<String, Map<String, Integer>>> sortedCategories = new ArrayList<>(hypernymGroups.entrySet());
+            if (showCounts) {
+                sortedCategories.sort((a, b) -> categoryTotalOccurrences.get(b.getKey()).compareTo(categoryTotalOccurrences.get(a.getKey())));
+            } else {
+                sortedCategories.sort((a, b) -> Integer.compare(b.getValue().size(), a.getValue().size()));
+            }
+
+            // Get top N if specified
+            if (topN > 0) {
+                sortedCategories = sortedCategories.subList(0, Math.min(topN, sortedCategories.size()));
+            }
+            
+            // Print grouped results
+            for (Map.Entry<String, Map<String, Integer>> categoryEntry : sortedCategories) {
+                String category = categoryEntry.getKey();
+                Map<String, Integer> instances = categoryEntry.getValue();
+                int totalOccurrences = categoryTotalOccurrences.get(category);
                 
                 if (showCounts) {
-                    if (indexType.equals("dependency")) {
-                        System.out.printf("  %s (%d occurrences)%n", formatDependencyKey(key), positions.size());
-                    } else {
-                        System.out.printf("  %s (%d occurrences)%n", key, positions.size());
-                    }
+                    System.out.printf("  %s (%d total occurrences) -> %s%n", category, totalOccurrences,
+                            instances.entrySet().stream()
+                                    .map(e -> String.format("%s (%d)", e.getKey(), e.getValue()))
+                                    .collect(Collectors.joining(", ")));
                 } else {
-                    if (indexType.equals("dependency")) {
-                        System.out.printf("  %s%n", formatDependencyKey(key));
-                    } else {
-                        System.out.printf("  %s%n", key);
-                    }
+                    System.out.printf("  %s (%d instances) -> %s%n", category, instances.size(),
+                            String.join(", ", instances.keySet()));
                 }
-                
                 totalEntries++;
-                iterator.next();
+            }
+        } else {
+            try (DBIterator iterator = db.iterator()) {
+                iterator.seekToFirst();
+                
+                while (iterator.hasNext()) {
+                    String key = asString(iterator.peekNext().getKey());
+                    PositionList positions = PositionList.deserialize(iterator.peekNext().getValue());
+                    
+                    if (positions.size() < minOccurrences) {
+                        iterator.next();
+                        continue;
+                    }
+                    
+                    if (showCounts) {
+                        if (indexType.equals("dependency")) {
+                            System.out.printf("  %s (%d occurrences)%n", formatDependencyKey(key), positions.size());
+                        } else {
+                            System.out.printf("  %s (%d occurrences)%n", key, positions.size());
+                        }
+                    } else {
+                        if (indexType.equals("dependency")) {
+                            System.out.printf("  %s%n", formatDependencyKey(key));
+                        } else {
+                            System.out.printf("  %s%n", key);
+                        }
+                    }
+                    
+                    totalEntries++;
+                    iterator.next();
+                }
             }
         }
         
@@ -338,6 +409,12 @@ public class LevelDBBrowser {
         String[] parts = key.split(DELIMITER);
         if (parts.length != 3) return key;
         return String.format("%s-%s->%s", parts[0], parts[1], parts[2]);
+    }
+
+    private static String formatHypernymKey(String key) {
+        String[] parts = key.split(DELIMITER);
+        if (parts.length != 2) return key;
+        return String.format("%s -> %s", parts[0], parts[1]);
     }
 
     private static byte[] bytes(String str) {
@@ -417,5 +494,56 @@ public class LevelDBBrowser {
             case 1000 -> "501-1000";
             default -> "1000+";
         };
+    }
+
+    private static void lookupHypernym(DB db, List<String> words, boolean showTime, int minOccurrences) throws IOException {
+        if (words.size() != 2) {
+            System.err.println("Error: hypernym index requires exactly 2 words (category instance)");
+            System.exit(1);
+        }
+
+        String category = words.get(0).toLowerCase();
+        String instance = words.get(1).toLowerCase();
+        String key = category + DELIMITER + instance;
+
+        // Get positions for key
+        byte[] data = db.get(bytes(key));
+        if (data == null) {
+            System.out.printf("No hypernym relation found between category '%s' and instance '%s'%n",
+                    category, instance);
+            return;
+        }
+
+        PositionList positions = PositionList.deserialize(data);
+        if (positions.size() < minOccurrences) {
+            System.out.printf("Hypernym relation between '%s' and '%s' found but has fewer than %d occurrences (%d)%n",
+                    category, instance, minOccurrences, positions.size());
+            return;
+        }
+
+        System.out.printf("Found hypernym relation: '%s' is a category for '%s' in %d positions:%n",
+                category, instance, positions.size());
+
+        if (showTime) {
+            List<Position> sortedPositions = new ArrayList<>(positions.getPositions());
+            sortedPositions.sort((a, b) -> a.getTimestamp().compareTo(b.getTimestamp()));
+            
+            // Group positions by timestamp
+            Map<String, Integer> timeDistribution = new TreeMap<>();
+            for (Position pos : sortedPositions) {
+                String yearMonth = pos.getTimestamp().toString().substring(0, 7); // YYYY-MM
+                timeDistribution.merge(yearMonth, 1, Integer::sum);
+            }
+
+            System.out.println("\nTemporal distribution:");
+            timeDistribution.forEach((date, count) -> System.out.printf("%s: %d occurrences%n", date, count));
+        } else {
+            for (Position pos : positions.getPositions()) {
+                System.out.printf("  Document %d, Sentence %d, Chars %d-%d, Date: %s%n",
+                        pos.getDocumentId(), pos.getSentenceId(),
+                        pos.getBeginPosition(), pos.getEndPosition(),
+                        pos.getTimestamp());
+            }
+        }
     }
 }

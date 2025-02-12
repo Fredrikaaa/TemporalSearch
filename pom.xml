@@ -196,7 +196,9 @@
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>3.6.0</version>
                 <executions>
+                    <!-- Pipeline JAR -->
                     <execution>
+                        <id>pipeline-jar</id>
                         <phase>package</phase>
                         <goals>
                             <goal>shade</goal>
@@ -236,7 +238,6 @@
                                         <exclude>module-info.class</exclude>
                                     </excludes>
                                 </filter>
-                                <!-- Handle overlapping Hamcrest/JUnit classes -->
                                 <filter>
                                     <artifact>junit:junit</artifact>
                                     <excludes>
@@ -244,12 +245,47 @@
                                         <exclude>LICENSE.txt</exclude>
                                     </excludes>
                                 </filter>
-                                <!-- Keep the latest version of overlapping classes -->
                                 <filter>
                                     <artifact>org.hamcrest:hamcrest-core</artifact>
                                     <includes>
                                         <include>**</include>
                                     </includes>
+                                </filter>
+                            </filters>
+                            <minimizeJar>false</minimizeJar>
+                        </configuration>
+                    </execution>
+                    <!-- Browser JAR -->
+                    <execution>
+                        <id>browser-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <finalName>leveldb-browser</finalName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.example.LevelDBBrowser</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>META-INF/MANIFEST.MF</exclude>
+                                        <exclude>META-INF/LICENSE*</exclude>
+                                        <exclude>META-INF/NOTICE*</exclude>
+                                        <exclude>META-INF/DEPENDENCIES</exclude>
+                                        <exclude>META-INF/*.txt</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                        <exclude>module-info.class</exclude>
+                                    </excludes>
                                 </filter>
                             </filters>
                             <minimizeJar>false</minimizeJar>

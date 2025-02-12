@@ -32,9 +32,7 @@ public final class HypernymIndexGenerator extends IndexGenerator<DependencyEntry
         "nmod:as",
         "nmod:including",
         "nmod:especially",
-        "nmod:particularly",
-        "conj:and",
-        "conj:or"
+        "nmod:particularly"
     );
 
     public HypernymIndexGenerator(String levelDbPath, String stopwordsPath,
@@ -67,19 +65,27 @@ public final class HypernymIndexGenerator extends IndexGenerator<DependencyEntry
             .collect(java.util.stream.Collectors.joining(", "));
             
         String query = String.format(
-            "SELECT d.document_id, d.sentence_id, " +
-            "a1.lemma as head_lemma, a2.lemma as dependent_lemma, " +
-            "d.relation, d.begin_char, d.end_char, doc.timestamp " +
-            "FROM dependencies d " +
-            "JOIN documents doc ON d.document_id = doc.document_id " +
-            "JOIN annotations a1 ON d.document_id = a1.document_id " +
-            "  AND d.sentence_id = a1.sentence_id " +
-            "  AND d.head_token = a1.token " +
-            "JOIN annotations a2 ON d.document_id = a2.document_id " +
-            "  AND d.sentence_id = a2.sentence_id " +
-            "  AND d.dependent_token = a2.token " +
-            "WHERE d.relation IN (%s) " +
-            "ORDER BY d.document_id, d.sentence_id, d.begin_char LIMIT ? OFFSET ?",
+            "WITH filtered_deps AS (" +
+            "    SELECT document_id, sentence_id, head_token, dependent_token, " +
+            "           relation, begin_char, end_char " +
+            "    FROM dependencies " +
+            "    WHERE relation IN (%s)" +
+            "), " +
+            "head_tokens AS (" +
+            "    SELECT d.*, a.lemma as head_lemma " +
+            "    FROM filtered_deps d " +
+            "    JOIN annotations a ON d.document_id = a.document_id " +
+            "        AND d.sentence_id = a.sentence_id " +
+            "        AND d.head_token = a.token" +
+            ") " +
+            "SELECT h.*, a.lemma as dependent_lemma, doc.timestamp " +
+            "FROM head_tokens h " +
+            "JOIN annotations a ON h.document_id = a.document_id " +
+            "    AND h.sentence_id = a.sentence_id " +
+            "    AND h.dependent_token = a.token " +
+            "JOIN documents doc ON h.document_id = doc.document_id " +
+            "ORDER BY h.document_id, h.sentence_id, h.begin_char " +
+            "LIMIT ? OFFSET ?",
             inClause);
         
         try (PreparedStatement stmt = sqliteConn.prepareStatement(query)) {
