@@ -2,7 +2,6 @@ package com.example;
 
 import org.iq80.leveldb.*;
 import static org.iq80.leveldb.impl.Iq80DBFactory.*;
-import com.example.index.*;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
@@ -11,9 +10,6 @@ import java.io.*;
 import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.nio.file.*;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.stream.Collectors;
 import com.example.core.Position;
 import com.example.core.PositionList;
@@ -63,6 +59,7 @@ public class LevelDBBrowser {
 
         parser.addArgument("--top")
                 .type(Integer.class)
+                .setDefault(0)
                 .help("Show only top N categories (for hypernym index)");
 
         try {
@@ -110,9 +107,7 @@ public class LevelDBBrowser {
                     } else {
                         lookupWords(db, words, indexType, showTime, minOccurrences);
                     }
-                }
-
-                if (listEntries || showCounts) {
+                } else if (listEntries || showCounts) {
                     listEntries(db, indexType, showCounts, minOccurrences, topN);
                 }
             }
@@ -220,8 +215,13 @@ public class LevelDBBrowser {
         Map<String, PositionList> matches = new HashMap<>();
         
         try (DBIterator iterator = db.iterator()) {
-            // Seek to the first key with our pattern
-            iterator.seek(bytes(searchPattern));
+            if (pattern.size() == 1) {
+                // Search for head token only
+                iterator.seek(bytes(headToken + DELIMITER));
+            } else {
+                // Search for specific pattern
+                iterator.seek(bytes(searchPattern));
+            }
             
             while (iterator.hasNext()) {
                 String key = asString(iterator.peekNext().getKey());
@@ -231,25 +231,36 @@ public class LevelDBBrowser {
                 
                 if (parts.length != 3) continue;
                 
-                if (matchesPattern(parts[0], headToken) &&
-                    matchesPattern(parts[1], relation) &&
-                    matchesPattern(parts[2], depToken)) {
-                    logger.debug("Found matching dependency: {} -{}- {}", parts[0], parts[1], parts[2]);
-                    matches.put(key, PositionList.deserialize(iterator.peekNext().getValue()));
-                }
-               
-                // Stop if we've moved past potential matches
-                if (!key.startsWith(searchPattern) && !headToken.equals(WILDCARD)) {
+                // Stop if we've moved past potential matches for the head token
+                if (!parts[0].equals(headToken) && pattern.size() == 1) {
                     break;
                 }
                 
+                // For full pattern matching
+                if (pattern.size() > 1 && (!parts[0].equals(headToken) || !parts[1].equals(relation))) {
+                    if (parts[0].compareTo(headToken) > 0) break;
+                    iterator.next();
+                    continue;
+                }
+                
+                // For three-part pattern
+                if (pattern.size() > 2 && !parts[2].equals(depToken)) {
+                    iterator.next();
+                    continue;
+                }
+                
+                matches.put(key, PositionList.deserialize(iterator.peekNext().getValue()));
                 iterator.next();
             }
         }
 
         if (matches.isEmpty()) {
-            System.out.printf("No matches found for dependency pattern: %s%n",
-                    formatDependencyPattern(headToken, relation, depToken));
+            if (pattern.size() == 1) {
+                System.out.printf("No dependencies found with head token '%s'%n", headToken);
+            } else {
+                System.out.printf("No matches found for dependency pattern: %s%n",
+                        formatDependencyPattern(headToken, relation, depToken));
+            }
             return;
         }
 
@@ -257,15 +268,27 @@ public class LevelDBBrowser {
         matches.entrySet().removeIf(entry -> entry.getValue().size() < minOccurrences);
 
         if (matches.isEmpty()) {
-            System.out.printf("No matches found for dependency pattern %s with at least %d occurrences%n",
-                    formatDependencyPattern(headToken, relation, depToken), minOccurrences);
+            System.out.printf("No matches found with at least %d occurrences%n", minOccurrences);
             return;
         }
 
-        System.out.printf("Found matches for dependency pattern %s:%n",
-                formatDependencyPattern(headToken, relation, depToken));
+        // Sort matches by relation and dependent token
+        List<Map.Entry<String, PositionList>> sortedMatches = new ArrayList<>(matches.entrySet());
+        sortedMatches.sort((a, b) -> {
+            String[] partsA = a.getKey().split(DELIMITER);
+            String[] partsB = b.getKey().split(DELIMITER);
+            int relCompare = partsA[1].compareTo(partsB[1]);
+            return relCompare != 0 ? relCompare : partsA[2].compareTo(partsB[2]);
+        });
 
-        for (Map.Entry<String, PositionList> entry : matches.entrySet()) {
+        if (pattern.size() == 1) {
+            System.out.printf("Found dependencies for head token '%s':%n", headToken);
+        } else {
+            System.out.printf("Found matches for dependency pattern '%s-%s->%s':%n",
+                    headToken, relation, depToken);
+        }
+
+        for (Map.Entry<String, PositionList> entry : sortedMatches) {
             String[] parts = entry.getKey().split(DELIMITER);
             PositionList positions = entry.getValue();
 
@@ -275,10 +298,6 @@ public class LevelDBBrowser {
                 showPositions(parts, positions);
             }
         }
-    }
-
-    private static boolean matchesPattern(String value, String pattern) {
-        return pattern.equals(WILDCARD) || pattern.equals(value);
     }
 
     private static String formatDependencyPattern(String head, String rel, String dep) {
