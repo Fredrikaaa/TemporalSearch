@@ -61,6 +61,14 @@ public class TemporalCondition implements Condition {
         this.range = Optional.empty();
     }
 
+    public TemporalCondition(Type type, String variable, LocalDateTime compareDate, String range) {
+        this.type = type;
+        this.startDate = compareDate;
+        this.endDate = Optional.empty();
+        this.variable = Optional.of(variable);
+        this.range = Optional.of(range);
+    }
+
     @Override
     public String getType() {
         return "TEMPORAL";
@@ -90,6 +98,10 @@ public class TemporalCondition implements Condition {
     public String toString() {
         if (variable.isPresent()) {
             if (type != null) {
+                if (range.isPresent()) {
+                    return String.format("TemporalCondition{type=%s, variable=%s, compareDate=%s, range=%s}",
+                        type, variable.get(), startDate, range.get());
+                }
                 return String.format("TemporalCondition{type=%s, variable=%s, compareDate=%s}",
                     type, variable.get(), startDate);
             }

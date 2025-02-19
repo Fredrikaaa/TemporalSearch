@@ -19,6 +19,9 @@ public class QueryParser {
     private static class ThrowingErrorListener extends BaseErrorListener {
         @Override
         public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
+            if (msg.contains("extraneous input '}'")) {
+                throw new UnsupportedOperationException("Subqueries are not yet supported");
+            }
             throw new RuntimeException("Syntax error at position " + charPositionInLine + ": " + msg);
         }
     }
@@ -29,6 +32,7 @@ public class QueryParser {
      * @param queryString The query string to parse
      * @return The parsed Query object
      * @throws QueryParseException if there is an error parsing the query
+     * @throws UnsupportedOperationException if a feature is not yet implemented
      */
     public Query parse(String queryString) throws QueryParseException {
         try {
@@ -58,9 +62,16 @@ public class QueryParser {
 
             logger.debug("Successfully parsed query: {}", query);
             return query;
+        } catch (UnsupportedOperationException e) {
+            // Pass through UnsupportedOperationException
+            throw e;
         } catch (RuntimeException e) {
             logger.error("Error parsing query: {}", queryString, e);
-            throw new QueryParseException("Failed to parse query: " + e.getMessage(), e);
+            String message = e.getMessage();
+            if (message != null && message.startsWith("Failed to parse query: ")) {
+                message = message.substring("Failed to parse query: ".length());
+            }
+            throw new QueryParseException(message, e);
         }
     }
 } 
