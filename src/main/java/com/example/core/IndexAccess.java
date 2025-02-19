@@ -25,19 +25,19 @@ public class IndexAccess implements AutoCloseable {
     /**
      * Creates a new IndexAccess instance for a specific index type.
      *
-     * @param baseDir Base directory for all indexes
+     * @param indexPath Full path to the index directory
      * @param indexType The type of index (e.g., "unigram", "bigram", "dependency")
      * @param options LevelDB options for this index
      * @throws IndexAccessException if initialization fails
      */
-    public IndexAccess(Path baseDir, String indexType, Options options) throws IndexAccessException {
+    public IndexAccess(Path indexPath, String indexType, Options options) throws IndexAccessException {
         this.indexType = indexType;
-        this.indexPath = baseDir.resolve(indexType).toString();
+        this.indexPath = indexPath.toString();
         this.isOpen = new AtomicBoolean(true);
 
         try {
             // Create index directory if it doesn't exist
-            File indexDir = new File(indexPath);
+            File indexDir = new File(indexPath.toString());
             if (!indexDir.exists()) {
                 if (!indexDir.mkdirs()) {
                     throw new IndexAccessException(

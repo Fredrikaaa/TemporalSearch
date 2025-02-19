@@ -14,7 +14,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.io.*;
 import java.nio.file.Files;
-import org.apache.commons.io.FileUtils;
+import com.google.common.io.MoreFiles;
+import com.google.common.io.RecursiveDeleteOption;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
@@ -52,12 +53,8 @@ public class PipelineTest {
     }
 
     @AfterEach
-    void tearDown() throws Exception {
-        logger.info("Cleaning up test environment");
-        if (sqliteConn != null) {
-            sqliteConn.close();
-        }
-        FileUtils.deleteDirectory(tempDir.toFile());
+    void cleanup() throws IOException {
+        MoreFiles.deleteRecursively(tempDir, RecursiveDeleteOption.ALLOW_INSECURE);
     }
 
     protected Connection createTestDatabase() throws Exception {

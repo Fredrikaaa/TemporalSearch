@@ -1,11 +1,13 @@
 package com.example.index;
 
-import org.apache.commons.io.FileUtils;
+import com.google.common.io.MoreFiles;
+import com.google.common.io.RecursiveDeleteOption;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import static org.junit.jupiter.api.Assertions.*;
 import org.iq80.leveldb.Options;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -67,7 +69,7 @@ public abstract class BaseIndexTest {
         // Delete test files
         if (tempDir.toFile().exists()) {
             try {
-                FileUtils.deleteDirectory(tempDir.toFile());
+                MoreFiles.deleteRecursively(tempDir, RecursiveDeleteOption.ALLOW_INSECURE);
                 logger.info("Deleted temp directory: {}", tempDir);
             } catch (IOException e) {
                 logger.warn("Could not delete temp directory: {}", e.getMessage());

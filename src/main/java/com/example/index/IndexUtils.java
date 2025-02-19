@@ -1,6 +1,7 @@
 package com.example.index;
 
-import org.apache.commons.io.FileUtils;
+import com.google.common.io.MoreFiles;
+import com.google.common.io.RecursiveDeleteOption;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,19 +24,17 @@ public class IndexUtils {
      */
     public static void safeDeleteIndex(Path indexPath, IndexConfig config) throws IOException {
         if (!config.shouldPreserveExistingIndex() && Files.exists(indexPath)) {
-            long size = FileUtils.sizeOfDirectory(indexPath.toFile());
+            long size = getIndexSize(indexPath);
             
             if (size >= config.getSizeThresholdForConfirmation()) {
                 logger.warn("Large index ({}MB) detected at {}. Deletion requires confirmation.", 
                     size / (1024 * 1024), indexPath);
-                // In a real interactive environment, we would prompt for confirmation here
-                // For now, we'll just log the warning and proceed
+                throw new IOException("Index size " + size + " bytes exceeds threshold " + 
+                    config.getSizeThresholdForConfirmation() + " bytes. Deletion requires confirmation.");
             }
             
             logger.info("Deleting existing index at {}", indexPath);
-            FileUtils.deleteDirectory(indexPath.toFile());
-            Files.createDirectories(indexPath);
-            logger.info("Index directory cleared and recreated");
+            deleteIndex(indexPath);
         } else if (Files.exists(indexPath)) {
             logger.info("Preserving existing index at {}", indexPath);
         } else {
@@ -48,13 +47,49 @@ public class IndexUtils {
      * Gets the size of an index directory in bytes.
      * 
      * @param indexPath Path to the index directory
-     * @return Size of the directory in bytes, or 0 if the directory doesn't exist
-     * @throws IOException if there's an error accessing the directory
+     * @return Size of the directory in bytes, or -1 if there's an error
      */
-    public static long getIndexSize(Path indexPath) throws IOException {
-        if (Files.exists(indexPath)) {
-            return FileUtils.sizeOfDirectory(indexPath.toFile());
+    public static long getIndexSize(Path indexPath) {
+        try {
+            if (!Files.exists(indexPath)) {
+                return -1;
+            }
+            return Files.walk(indexPath)
+                .filter(p -> Files.isRegularFile(p))
+                .mapToLong(p -> {
+                    try {
+                        return Files.size(p);
+                    } catch (IOException e) {
+                        logger.error("Failed to get size of file: {}", p, e);
+                        return 0;
+                    }
+                })
+                .sum();
+        } catch (IOException e) {
+            logger.error("Failed to get size of index directory: {}", indexPath, e);
+            return -1;
         }
-        return 0;
+    }
+
+    public static void deleteIndex(Path indexPath) {
+        try {
+            MoreFiles.deleteRecursively(indexPath, RecursiveDeleteOption.ALLOW_INSECURE);
+        } catch (IOException e) {
+            logger.error("Failed to delete index directory: {}", indexPath, e);
+        }
+    }
+
+    public static boolean isIndexEmpty(Path indexPath) {
+        try {
+            if (!Files.exists(indexPath)) {
+                return true;
+            }
+            try (var files = Files.list(indexPath)) {
+                return !files.findAny().isPresent();
+            }
+        } catch (IOException e) {
+            logger.error("Failed to check if index is empty: {}", indexPath, e);
+            return true;
+        }
     }
 } 

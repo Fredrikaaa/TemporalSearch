@@ -8,6 +8,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -16,7 +17,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @DisplayName("Query Parser Tests")
 class QueryParserTest {
     private QueryParser parser;
-    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ISO_DATE_TIME;
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ISO_DATE;
+    private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ISO_DATE_TIME;
 
     @BeforeEach
     void setUp() {
@@ -52,7 +54,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with NER condition")
     void parseNerCondition() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE NER(PERSON, \"Albert Einstein\")";
+        String queryStr = "SELECT documents FROM wikipedia WHERE NER(\"PERSON\", \"Albert Einstein\")";
         Query query = parser.parse(queryStr);
 
         assertEquals(1, query.getConditions().size());
@@ -65,69 +67,82 @@ class QueryParserTest {
     }
 
     @Test
-    @DisplayName("Parse query with NER variable condition")
-    void parseNerVariableCondition() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE NER(PERSON, ?scientist)";
+    @DisplayName("Parse query with NER wildcard type")
+    void parseNerWildcardType() throws QueryParseException {
+        String queryStr = "SELECT documents FROM wikipedia WHERE NER(\"*\", \"Google\")";
+        Query query = parser.parse(queryStr);
+
+        NerCondition condition = (NerCondition) query.getConditions().get(0);
+        assertEquals("*", condition.getEntityType());
+        assertEquals("Google", condition.getTarget());
+        assertFalse(condition.isVariable());
+    }
+
+    @Test
+    @DisplayName("Parse query with NER variable and wildcard")
+    void parseNerVariableWithWildcard() throws QueryParseException {
+        String queryStr = "SELECT documents FROM wikipedia WHERE NER(\"PERSON\", ?scientist*)";
         Query query = parser.parse(queryStr);
 
         NerCondition condition = (NerCondition) query.getConditions().get(0);
         assertEquals("PERSON", condition.getEntityType());
-        assertEquals("scientist", condition.getTarget());
+        assertEquals("scientist*", condition.getTarget());
         assertTrue(condition.isVariable());
     }
 
     @Test
-    @DisplayName("Parse query with temporal condition")
-    void parseTemporalCondition() throws QueryParseException {
-        String date = "2024-01-01T00:00:00";
-        String queryStr = "SELECT documents FROM wikipedia WHERE TEMPORAL(AFTER \"" + date + "\")";
+    @DisplayName("Parse query with date comparison")
+    void parseDateComparison() throws QueryParseException {
+        String date = "2024-01-01";
+        String queryStr = "SELECT documents FROM wikipedia WHERE DATE(?date) < \"" + date + "\"";
         Query query = parser.parse(queryStr);
 
         assertTrue(query.getConditions().get(0) instanceof TemporalCondition);
         TemporalCondition condition = (TemporalCondition) query.getConditions().get(0);
         
-        assertEquals(TemporalCondition.Type.AFTER, condition.getTemporalType());
-        assertEquals(LocalDateTime.parse(date, DATE_FORMATTER), condition.getStartDate());
+        assertEquals(TemporalCondition.Type.BEFORE, condition.getTemporalType());
+        assertEquals(
+            LocalDateTime.of(LocalDate.parse(date, DATE_FORMATTER), java.time.LocalTime.MIN),
+            condition.getStartDate()
+        );
+        assertTrue(condition.getVariable().isPresent());
+        assertEquals("date", condition.getVariable().get());
     }
 
     @Test
-    @DisplayName("Parse query with temporal between condition")
-    void parseTemporalBetweenCondition() throws QueryParseException {
-        String start = "2024-01-01T00:00:00";
-        String end = "2024-12-31T23:59:59";
-        String queryStr = String.format(
-            "SELECT documents FROM wikipedia WHERE TEMPORAL(BETWEEN \"%s\" AND \"%s\")",
-            start, end
-        );
+    @DisplayName("Parse query with date NEAR range")
+    void parseDateNearRange() throws QueryParseException {
+        String queryStr = "SELECT documents FROM wikipedia WHERE DATE(?founding) NEAR(\"1980-01-01\", \"5y\")";
         Query query = parser.parse(queryStr);
 
         TemporalCondition condition = (TemporalCondition) query.getConditions().get(0);
-        assertEquals(TemporalCondition.Type.BETWEEN, condition.getTemporalType());
-        assertEquals(LocalDateTime.parse(start, DATE_FORMATTER), condition.getStartDate());
-        assertTrue(condition.getEndDate().isPresent());
-        assertEquals(LocalDateTime.parse(end, DATE_FORMATTER), condition.getEndDate().get());
+        assertEquals(TemporalCondition.Type.NEAR, condition.getTemporalType());
+        assertTrue(condition.getVariable().isPresent());
+        assertEquals("founding", condition.getVariable().get());
+        assertTrue(condition.getRange().isPresent());
+        assertEquals("5y", condition.getRange().get());
     }
 
     @Test
     @DisplayName("Parse query with dependency condition")
     void parseDependencyCondition() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE DEPENDENCY(\"eat\", \"nsubj\", \"cat\")";
+        String queryStr = "SELECT documents FROM wikipedia WHERE DEPENDS(\"cat\", \"nsubj\", \"eats\")";
         Query query = parser.parse(queryStr);
 
         assertTrue(query.getConditions().get(0) instanceof DependencyCondition);
         DependencyCondition condition = (DependencyCondition) query.getConditions().get(0);
         
-        assertEquals("eat", condition.getGovernor());
+        assertEquals("cat", condition.getGovernor());
         assertEquals("nsubj", condition.getRelation());
-        assertEquals("cat", condition.getDependent());
+        assertEquals("eats", condition.getDependent());
     }
 
     @Test
-    @DisplayName("Parse query with multiple conditions")
+    @DisplayName("Parse query with multiple conditions using AND")
     void parseMultipleConditions() throws QueryParseException {
         String queryStr = "SELECT documents FROM wikipedia " +
                          "WHERE CONTAINS(\"physics\") " +
-                         "NER(PERSON, \"Einstein\")";
+                         "AND NER(\"PERSON\", \"Einstein\")";
         Query query = parser.parse(queryStr);
 
         assertEquals(2, query.getConditions().size());
@@ -163,8 +178,8 @@ class QueryParserTest {
     void parseComplexQuery() throws QueryParseException {
         String queryStr = "SELECT documents FROM wikipedia " +
                          "WHERE CONTAINS(\"quantum physics\") " +
-                         "NER(PERSON, \"Bohr\") " +
-                         "TEMPORAL(AFTER \"2000-01-01T00:00:00\") " +
+                         "AND NER(\"PERSON\", \"Bohr\") " +
+                         "AND DATE(?publication) < \"2000-01-01\" " +
                          "ORDER BY date DESC " +
                          "LIMIT 5";
         Query query = parser.parse(queryStr);
@@ -179,10 +194,23 @@ class QueryParserTest {
     @DisplayName("Parse query with nested conditions")
     void parseNestedConditions() throws QueryParseException {
         String queryStr = "SELECT documents FROM wikipedia " +
-                         "WHERE (CONTAINS(\"physics\") NER(PERSON, \"Einstein\"))";
+                         "WHERE (CONTAINS(\"physics\") AND NER(\"PERSON\", \"Einstein\"))";
         Query query = parser.parse(queryStr);
 
         assertEquals(2, query.getConditions().size());
+    }
+
+    @Test
+    @DisplayName("Parse query with subquery")
+    void parseSubquery() {
+        String queryStr = "SELECT documents FROM wikipedia " +
+                         "WHERE DATE(?date) < { " +
+                         "  SELECT documents FROM corpus " +
+                         "  WHERE NER(\"PERSON\", \"Donald Trump\") " +
+                         "  AND CONTAINS(\"president\") " +
+                         "}";
+        
+        assertThrows(UnsupportedOperationException.class, () -> parser.parse(queryStr));
     }
 
     @ParameterizedTest
@@ -191,7 +219,9 @@ class QueryParserTest {
         "SELECT documents FROM",       // Missing source
         "SELECT documents FROM wikipedia WHERE",  // Incomplete WHERE clause
         "SELECT documents FROM wikipedia ORDER",  // Incomplete ORDER BY
-        "SELECT documents FROM wikipedia LIMIT"   // Missing limit value
+        "SELECT documents FROM wikipedia LIMIT",  // Missing limit value
+        "SELECT documents FROM wikipedia WHERE CONTAINS(\"physics\") NER(\"PERSON\", \"Einstein\")",  // Missing AND
+        "SELECT documents FROM wikipedia WHERE DATE(?date) < abc"  // Invalid date format
     })
     @DisplayName("Parse invalid queries should throw exception")
     void parseInvalidQueriesShouldThrowException(String queryStr) {
