@@ -53,25 +53,25 @@ public class QueryLangBaseListener implements QueryLangListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterCondition(QueryLangParser.ConditionContext ctx) { }
+	@Override public void enterConditionList(QueryLangParser.ConditionListContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitCondition(QueryLangParser.ConditionContext ctx) { }
+	@Override public void exitConditionList(QueryLangParser.ConditionListContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterContainsExpression(QueryLangParser.ContainsExpressionContext ctx) { }
+	@Override public void enterSingleCondition(QueryLangParser.SingleConditionContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitContainsExpression(QueryLangParser.ContainsExpressionContext ctx) { }
+	@Override public void exitSingleCondition(QueryLangParser.SingleConditionContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
@@ -89,73 +89,61 @@ public class QueryLangBaseListener implements QueryLangListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterNerType(QueryLangParser.NerTypeContext ctx) { }
+	@Override public void enterEntityType(QueryLangParser.EntityTypeContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitNerType(QueryLangParser.NerTypeContext ctx) { }
+	@Override public void exitEntityType(QueryLangParser.EntityTypeContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterNerTarget(QueryLangParser.NerTargetContext ctx) { }
+	@Override public void enterEntityTarget(QueryLangParser.EntityTargetContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitNerTarget(QueryLangParser.NerTargetContext ctx) { }
+	@Override public void exitEntityTarget(QueryLangParser.EntityTargetContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterTemporalExpression(QueryLangParser.TemporalExpressionContext ctx) { }
+	@Override public void enterContainsExpression(QueryLangParser.ContainsExpressionContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitTemporalExpression(QueryLangParser.TemporalExpressionContext ctx) { }
+	@Override public void exitContainsExpression(QueryLangParser.ContainsExpressionContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterTemporalSpec(QueryLangParser.TemporalSpecContext ctx) { }
+	@Override public void enterDateExpression(QueryLangParser.DateExpressionContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitTemporalSpec(QueryLangParser.TemporalSpecContext ctx) { }
+	@Override public void exitDateExpression(QueryLangParser.DateExpressionContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterTemporalValue(QueryLangParser.TemporalValueContext ctx) { }
+	@Override public void enterDateOperator(QueryLangParser.DateOperatorContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitTemporalValue(QueryLangParser.TemporalValueContext ctx) { }
-	/**
-	 * {@inheritDoc}
-	 *
-	 * <p>The default implementation does nothing.</p>
-	 */
-	@Override public void enterTemporalOperator(QueryLangParser.TemporalOperatorContext ctx) { }
-	/**
-	 * {@inheritDoc}
-	 *
-	 * <p>The default implementation does nothing.</p>
-	 */
-	@Override public void exitTemporalOperator(QueryLangParser.TemporalOperatorContext ctx) { }
+	@Override public void exitDateOperator(QueryLangParser.DateOperatorContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
@@ -173,25 +161,61 @@ public class QueryLangBaseListener implements QueryLangListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterDependencyExpression(QueryLangParser.DependencyExpressionContext ctx) { }
+	@Override public void enterRangeSpec(QueryLangParser.RangeSpecContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitDependencyExpression(QueryLangParser.DependencyExpressionContext ctx) { }
+	@Override public void exitRangeSpec(QueryLangParser.RangeSpecContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterDepComponent(QueryLangParser.DepComponentContext ctx) { }
+	@Override public void enterDependsExpression(QueryLangParser.DependsExpressionContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitDepComponent(QueryLangParser.DepComponentContext ctx) { }
+	@Override public void exitDependsExpression(QueryLangParser.DependsExpressionContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterGovernor(QueryLangParser.GovernorContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitGovernor(QueryLangParser.GovernorContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterDependent(QueryLangParser.DependentContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitDependent(QueryLangParser.DependentContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterRelation(QueryLangParser.RelationContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitRelation(QueryLangParser.RelationContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
@@ -204,18 +228,6 @@ public class QueryLangBaseListener implements QueryLangListener {
 	 * <p>The default implementation does nothing.</p>
 	 */
 	@Override public void exitVariable(QueryLangParser.VariableContext ctx) { }
-	/**
-	 * {@inheritDoc}
-	 *
-	 * <p>The default implementation does nothing.</p>
-	 */
-	@Override public void enterVariableModifier(QueryLangParser.VariableModifierContext ctx) { }
-	/**
-	 * {@inheritDoc}
-	 *
-	 * <p>The default implementation does nothing.</p>
-	 */
-	@Override public void exitVariableModifier(QueryLangParser.VariableModifierContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *

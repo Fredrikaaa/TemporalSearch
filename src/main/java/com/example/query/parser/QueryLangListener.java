@@ -38,25 +38,25 @@ public interface QueryLangListener extends ParseTreeListener {
 	 */
 	void exitWhereClause(QueryLangParser.WhereClauseContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#condition}.
+	 * Enter a parse tree produced by {@link QueryLangParser#conditionList}.
 	 * @param ctx the parse tree
 	 */
-	void enterCondition(QueryLangParser.ConditionContext ctx);
+	void enterConditionList(QueryLangParser.ConditionListContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#condition}.
+	 * Exit a parse tree produced by {@link QueryLangParser#conditionList}.
 	 * @param ctx the parse tree
 	 */
-	void exitCondition(QueryLangParser.ConditionContext ctx);
+	void exitConditionList(QueryLangParser.ConditionListContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#containsExpression}.
+	 * Enter a parse tree produced by {@link QueryLangParser#singleCondition}.
 	 * @param ctx the parse tree
 	 */
-	void enterContainsExpression(QueryLangParser.ContainsExpressionContext ctx);
+	void enterSingleCondition(QueryLangParser.SingleConditionContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#containsExpression}.
+	 * Exit a parse tree produced by {@link QueryLangParser#singleCondition}.
 	 * @param ctx the parse tree
 	 */
-	void exitContainsExpression(QueryLangParser.ContainsExpressionContext ctx);
+	void exitSingleCondition(QueryLangParser.SingleConditionContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link QueryLangParser#nerExpression}.
 	 * @param ctx the parse tree
@@ -68,65 +68,55 @@ public interface QueryLangListener extends ParseTreeListener {
 	 */
 	void exitNerExpression(QueryLangParser.NerExpressionContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#nerType}.
+	 * Enter a parse tree produced by {@link QueryLangParser#entityType}.
 	 * @param ctx the parse tree
 	 */
-	void enterNerType(QueryLangParser.NerTypeContext ctx);
+	void enterEntityType(QueryLangParser.EntityTypeContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#nerType}.
+	 * Exit a parse tree produced by {@link QueryLangParser#entityType}.
 	 * @param ctx the parse tree
 	 */
-	void exitNerType(QueryLangParser.NerTypeContext ctx);
+	void exitEntityType(QueryLangParser.EntityTypeContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#nerTarget}.
+	 * Enter a parse tree produced by {@link QueryLangParser#entityTarget}.
 	 * @param ctx the parse tree
 	 */
-	void enterNerTarget(QueryLangParser.NerTargetContext ctx);
+	void enterEntityTarget(QueryLangParser.EntityTargetContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#nerTarget}.
+	 * Exit a parse tree produced by {@link QueryLangParser#entityTarget}.
 	 * @param ctx the parse tree
 	 */
-	void exitNerTarget(QueryLangParser.NerTargetContext ctx);
+	void exitEntityTarget(QueryLangParser.EntityTargetContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#temporalExpression}.
+	 * Enter a parse tree produced by {@link QueryLangParser#containsExpression}.
 	 * @param ctx the parse tree
 	 */
-	void enterTemporalExpression(QueryLangParser.TemporalExpressionContext ctx);
+	void enterContainsExpression(QueryLangParser.ContainsExpressionContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#temporalExpression}.
+	 * Exit a parse tree produced by {@link QueryLangParser#containsExpression}.
 	 * @param ctx the parse tree
 	 */
-	void exitTemporalExpression(QueryLangParser.TemporalExpressionContext ctx);
+	void exitContainsExpression(QueryLangParser.ContainsExpressionContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#temporalSpec}.
+	 * Enter a parse tree produced by {@link QueryLangParser#dateExpression}.
 	 * @param ctx the parse tree
 	 */
-	void enterTemporalSpec(QueryLangParser.TemporalSpecContext ctx);
+	void enterDateExpression(QueryLangParser.DateExpressionContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#temporalSpec}.
+	 * Exit a parse tree produced by {@link QueryLangParser#dateExpression}.
 	 * @param ctx the parse tree
 	 */
-	void exitTemporalSpec(QueryLangParser.TemporalSpecContext ctx);
+	void exitDateExpression(QueryLangParser.DateExpressionContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#temporalValue}.
+	 * Enter a parse tree produced by {@link QueryLangParser#dateOperator}.
 	 * @param ctx the parse tree
 	 */
-	void enterTemporalValue(QueryLangParser.TemporalValueContext ctx);
+	void enterDateOperator(QueryLangParser.DateOperatorContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#temporalValue}.
+	 * Exit a parse tree produced by {@link QueryLangParser#dateOperator}.
 	 * @param ctx the parse tree
 	 */
-	void exitTemporalValue(QueryLangParser.TemporalValueContext ctx);
-	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#temporalOperator}.
-	 * @param ctx the parse tree
-	 */
-	void enterTemporalOperator(QueryLangParser.TemporalOperatorContext ctx);
-	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#temporalOperator}.
-	 * @param ctx the parse tree
-	 */
-	void exitTemporalOperator(QueryLangParser.TemporalOperatorContext ctx);
+	void exitDateOperator(QueryLangParser.DateOperatorContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link QueryLangParser#dateValue}.
 	 * @param ctx the parse tree
@@ -138,25 +128,55 @@ public interface QueryLangListener extends ParseTreeListener {
 	 */
 	void exitDateValue(QueryLangParser.DateValueContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#dependencyExpression}.
+	 * Enter a parse tree produced by {@link QueryLangParser#rangeSpec}.
 	 * @param ctx the parse tree
 	 */
-	void enterDependencyExpression(QueryLangParser.DependencyExpressionContext ctx);
+	void enterRangeSpec(QueryLangParser.RangeSpecContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#dependencyExpression}.
+	 * Exit a parse tree produced by {@link QueryLangParser#rangeSpec}.
 	 * @param ctx the parse tree
 	 */
-	void exitDependencyExpression(QueryLangParser.DependencyExpressionContext ctx);
+	void exitRangeSpec(QueryLangParser.RangeSpecContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#depComponent}.
+	 * Enter a parse tree produced by {@link QueryLangParser#dependsExpression}.
 	 * @param ctx the parse tree
 	 */
-	void enterDepComponent(QueryLangParser.DepComponentContext ctx);
+	void enterDependsExpression(QueryLangParser.DependsExpressionContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#depComponent}.
+	 * Exit a parse tree produced by {@link QueryLangParser#dependsExpression}.
 	 * @param ctx the parse tree
 	 */
-	void exitDepComponent(QueryLangParser.DepComponentContext ctx);
+	void exitDependsExpression(QueryLangParser.DependsExpressionContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#governor}.
+	 * @param ctx the parse tree
+	 */
+	void enterGovernor(QueryLangParser.GovernorContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#governor}.
+	 * @param ctx the parse tree
+	 */
+	void exitGovernor(QueryLangParser.GovernorContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#dependent}.
+	 * @param ctx the parse tree
+	 */
+	void enterDependent(QueryLangParser.DependentContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#dependent}.
+	 * @param ctx the parse tree
+	 */
+	void exitDependent(QueryLangParser.DependentContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#relation}.
+	 * @param ctx the parse tree
+	 */
+	void enterRelation(QueryLangParser.RelationContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#relation}.
+	 * @param ctx the parse tree
+	 */
+	void exitRelation(QueryLangParser.RelationContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link QueryLangParser#variable}.
 	 * @param ctx the parse tree
@@ -167,16 +187,6 @@ public interface QueryLangListener extends ParseTreeListener {
 	 * @param ctx the parse tree
 	 */
 	void exitVariable(QueryLangParser.VariableContext ctx);
-	/**
-	 * Enter a parse tree produced by {@link QueryLangParser#variableModifier}.
-	 * @param ctx the parse tree
-	 */
-	void enterVariableModifier(QueryLangParser.VariableModifierContext ctx);
-	/**
-	 * Exit a parse tree produced by {@link QueryLangParser#variableModifier}.
-	 * @param ctx the parse tree
-	 */
-	void exitVariableModifier(QueryLangParser.VariableModifierContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link QueryLangParser#subQuery}.
 	 * @param ctx the parse tree
