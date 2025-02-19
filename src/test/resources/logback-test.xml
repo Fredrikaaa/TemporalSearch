@@ -3,10 +3,10 @@
     <!-- Silence the startup messages -->
     <statusListener class="ch.qos.logback.core.status.NopStatusListener" />
 
-    <!-- Console appender for tests -->
-    <appender name="TEST_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <!-- Console appender only for test failures -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} %-5level - %msg%n</pattern>
         </encoder>
     </appender>
 
@@ -14,25 +14,31 @@
     <appender name="NULL" class="ch.qos.logback.core.helpers.NOPAppender"/>
 
     <!-- Pipeline specific logging -->
-    <logger name="com.example.Pipeline" level="INFO" additivity="false">
-        <appender-ref ref="TEST_CONSOLE"/>
+    <logger name="com.example.Pipeline" level="WARN" additivity="false">
+        <appender-ref ref="CONSOLE"/>
     </logger>
 
     <!-- Progress tracking -->
     <logger name="com.example.logging.ProgressTracker" level="WARN" additivity="false">
-        <appender-ref ref="TEST_CONSOLE"/>
+        <appender-ref ref="CONSOLE"/>
     </logger>
 
     <!-- Override the main configuration to be much quieter -->
     <logger name="com.example.logging" level="WARN" additivity="false">
-        <appender-ref ref="TEST_CONSOLE"/>
+        <appender-ref ref="CONSOLE"/>
     </logger>
 
     <logger name="com.example.index" level="WARN">
-        <appender-ref ref="TEST_CONSOLE"/>
+        <appender-ref ref="CONSOLE"/>
     </logger>
 
-    <root level="WARN">
-        <appender-ref ref="TEST_CONSOLE"/>
+    <!-- Suppress all loggers during tests -->
+    <logger name="com.example" level="OFF"/>
+    <logger name="com.example.logging.IndexingMetrics" level="OFF"/>
+    <logger name="com.example.index" level="OFF"/>
+
+    <!-- Root logger -->
+    <root level="OFF">
+        <appender-ref ref="CONSOLE"/>
     </root>
 </configuration> 

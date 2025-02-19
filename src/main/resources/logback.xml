@@ -1,24 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <!-- Properties -->
-    <property name="DEBUG_MODE" value="${DEBUG_MODE:-false}"/>
-    <property name="TEST_MODE" value="${TEST_MODE:-false}"/>
-
+    <statusListener class="ch.qos.logback.core.status.NopStatusListener" />
+    
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
             <level>WARN</level>
         </filter>
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} %-5level - %msg%n</pattern>
         </encoder>
-        <!-- Filter out IndexingMetrics logs from console -->
-        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
-            <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
-                <expression>return !logger.equals("com.example.logging.IndexingMetrics") || message.contains("\"event\":\"indexing_metrics\"");</expression>
-            </evaluator>
-            <OnMismatch>DENY</OnMismatch>
-            <OnMatch>NEUTRAL</OnMatch>
-        </filter>
     </appender>
 
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -29,16 +19,8 @@
             <totalSizeCap>3GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
-        <!-- Don't log during tests unless explicitly enabled -->
-        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
-            <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
-                <expression>return !Boolean.parseBoolean(System.getProperty("TEST_MODE", "false"));</expression>
-            </evaluator>
-            <OnMismatch>DENY</OnMismatch>
-            <OnMatch>NEUTRAL</OnMatch>
-        </filter>
     </appender>
 
     <appender name="METRICS" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -51,14 +33,6 @@
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %msg%n</pattern>
         </encoder>
-        <!-- Don't log during tests unless explicitly enabled -->
-        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
-            <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
-                <expression>return !Boolean.parseBoolean(System.getProperty("TEST_MODE", "false"));</expression>
-            </evaluator>
-            <OnMismatch>DENY</OnMismatch>
-            <OnMatch>NEUTRAL</OnMatch>
-        </filter>
     </appender>
 
     <!-- Specific logger for metrics -->
@@ -70,18 +44,17 @@
     <!-- Suppress LevelDB configuration messages -->
     <logger name="com.example.index.LevelDBConfig" level="WARN"/>
 
-    <!-- Index generation logging - reduced to WARN for console -->
+    <!-- Index generation logging -->
     <logger name="com.example.index" level="INFO">
         <appender-ref ref="FILE"/>
     </logger>
 
     <!-- Root logger -->
-    <root level="INFO">
+    <root level="WARN">
+        <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>
-        <if condition='property("DEBUG_MODE").equals("true")'>
-            <then>
-                <appender-ref ref="CONSOLE"/>
-            </then>
-        </if>
     </root>
+
+    <!-- Application logging -->
+    <logger name="com.example" level="${logging.level:-WARN}" />
 </configuration>
