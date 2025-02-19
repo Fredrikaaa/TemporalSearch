@@ -22,6 +22,7 @@ condition
     | nerExpression
     | temporalExpression
     | dependencyExpression
+    | subQuery
     | '(' condition+ ')'
     ;
 
@@ -30,26 +31,69 @@ containsExpression
     ;
 
 nerExpression
-    : NER '(' type=identifier ',' identTarget=identifier ')'
-    | NER '(' type=identifier ',' varTarget=variable ')'
+    : NER '(' type=nerType ',' target=nerTarget ')'
+    ;
+
+nerType
+    : identifier
+    | WILDCARD
+    ;
+
+nerTarget
+    : identifier
+    | variable
     ;
 
 temporalExpression
     : TEMPORAL '(' dateSpec=temporalSpec ')'
+    | DATE '(' dateVar=variable ')'
+    | DATE '(' dateVar=variable ')' temporalOperator dateValue
     ;
 
 temporalSpec
-    : BEFORE date=STRING
-    | AFTER date=STRING
-    | BETWEEN start=STRING AND end=STRING
+    : BEFORE date=temporalValue
+    | AFTER date=temporalValue
+    | BETWEEN start=temporalValue AND end=temporalValue
+    | NEAR date=temporalValue ',' range=STRING
+    ;
+
+temporalValue
+    : STRING
+    | variable
+    ;
+
+temporalOperator
+    : BEFORE
+    | AFTER
+    | BETWEEN
+    | NEAR
+    ;
+
+dateValue
+    : STRING
+    | subQuery
     ;
 
 dependencyExpression
-    : DEPENDENCY '(' governor=identifier ',' relation=identifier ',' dependent=identifier ')'
+    : DEPENDENCY '(' governor=depComponent ',' relation=identifier ',' dependent=depComponent ')'
+    ;
+
+depComponent
+    : identifier
+    | variable
     ;
 
 variable
-    : '?' name=IDENTIFIER ('*' | '?')?
+    : VARIABLE name=IDENTIFIER variableModifier?
+    ;
+
+variableModifier
+    : WILDCARD    // For pattern matching
+    | OPTIONAL    // For optional matches
+    ;
+
+subQuery
+    : '{' query '}'
     ;
 
 orderByClause
@@ -71,6 +115,7 @@ WHERE: 'WHERE';
 CONTAINS: 'CONTAINS';
 NER: 'NER';
 TEMPORAL: 'TEMPORAL';
+DATE: 'DATE';
 DEPENDENCY: 'DEPENDENCY';
 ORDER: 'ORDER';
 BY: 'BY';
@@ -80,7 +125,12 @@ LIMIT: 'LIMIT';
 BEFORE: 'BEFORE';
 AFTER: 'AFTER';
 BETWEEN: 'BETWEEN';
+NEAR: 'NEAR';
 AND: 'AND';
+
+VARIABLE: '?';
+WILDCARD: '*';
+OPTIONAL: '?';
 
 STRING: '"' (~["\\] | '\\' .)* '"';
 IDENTIFIER: [a-zA-Z_][a-zA-Z0-9_]*;

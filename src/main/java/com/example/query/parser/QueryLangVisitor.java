@@ -47,6 +47,18 @@ public interface QueryLangVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitNerExpression(QueryLangParser.NerExpressionContext ctx);
 	/**
+	 * Visit a parse tree produced by {@link QueryLangParser#nerType}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitNerType(QueryLangParser.NerTypeContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link QueryLangParser#nerTarget}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitNerTarget(QueryLangParser.NerTargetContext ctx);
+	/**
 	 * Visit a parse tree produced by {@link QueryLangParser#temporalExpression}.
 	 * @param ctx the parse tree
 	 * @return the visitor result
@@ -59,17 +71,53 @@ public interface QueryLangVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitTemporalSpec(QueryLangParser.TemporalSpecContext ctx);
 	/**
+	 * Visit a parse tree produced by {@link QueryLangParser#temporalValue}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitTemporalValue(QueryLangParser.TemporalValueContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link QueryLangParser#temporalOperator}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitTemporalOperator(QueryLangParser.TemporalOperatorContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link QueryLangParser#dateValue}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitDateValue(QueryLangParser.DateValueContext ctx);
+	/**
 	 * Visit a parse tree produced by {@link QueryLangParser#dependencyExpression}.
 	 * @param ctx the parse tree
 	 * @return the visitor result
 	 */
 	T visitDependencyExpression(QueryLangParser.DependencyExpressionContext ctx);
 	/**
+	 * Visit a parse tree produced by {@link QueryLangParser#depComponent}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitDepComponent(QueryLangParser.DepComponentContext ctx);
+	/**
 	 * Visit a parse tree produced by {@link QueryLangParser#variable}.
 	 * @param ctx the parse tree
 	 * @return the visitor result
 	 */
 	T visitVariable(QueryLangParser.VariableContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link QueryLangParser#variableModifier}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitVariableModifier(QueryLangParser.VariableModifierContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link QueryLangParser#subQuery}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitSubQuery(QueryLangParser.SubQueryContext ctx);
 	/**
 	 * Visit a parse tree produced by {@link QueryLangParser#orderByClause}.
 	 * @param ctx the parse tree

@@ -68,6 +68,26 @@ public interface QueryLangListener extends ParseTreeListener {
 	 */
 	void exitNerExpression(QueryLangParser.NerExpressionContext ctx);
 	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#nerType}.
+	 * @param ctx the parse tree
+	 */
+	void enterNerType(QueryLangParser.NerTypeContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#nerType}.
+	 * @param ctx the parse tree
+	 */
+	void exitNerType(QueryLangParser.NerTypeContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#nerTarget}.
+	 * @param ctx the parse tree
+	 */
+	void enterNerTarget(QueryLangParser.NerTargetContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#nerTarget}.
+	 * @param ctx the parse tree
+	 */
+	void exitNerTarget(QueryLangParser.NerTargetContext ctx);
+	/**
 	 * Enter a parse tree produced by {@link QueryLangParser#temporalExpression}.
 	 * @param ctx the parse tree
 	 */
@@ -88,6 +108,36 @@ public interface QueryLangListener extends ParseTreeListener {
 	 */
 	void exitTemporalSpec(QueryLangParser.TemporalSpecContext ctx);
 	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#temporalValue}.
+	 * @param ctx the parse tree
+	 */
+	void enterTemporalValue(QueryLangParser.TemporalValueContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#temporalValue}.
+	 * @param ctx the parse tree
+	 */
+	void exitTemporalValue(QueryLangParser.TemporalValueContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#temporalOperator}.
+	 * @param ctx the parse tree
+	 */
+	void enterTemporalOperator(QueryLangParser.TemporalOperatorContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#temporalOperator}.
+	 * @param ctx the parse tree
+	 */
+	void exitTemporalOperator(QueryLangParser.TemporalOperatorContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#dateValue}.
+	 * @param ctx the parse tree
+	 */
+	void enterDateValue(QueryLangParser.DateValueContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#dateValue}.
+	 * @param ctx the parse tree
+	 */
+	void exitDateValue(QueryLangParser.DateValueContext ctx);
+	/**
 	 * Enter a parse tree produced by {@link QueryLangParser#dependencyExpression}.
 	 * @param ctx the parse tree
 	 */
@@ -98,6 +148,16 @@ public interface QueryLangListener extends ParseTreeListener {
 	 */
 	void exitDependencyExpression(QueryLangParser.DependencyExpressionContext ctx);
 	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#depComponent}.
+	 * @param ctx the parse tree
+	 */
+	void enterDepComponent(QueryLangParser.DepComponentContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#depComponent}.
+	 * @param ctx the parse tree
+	 */
+	void exitDepComponent(QueryLangParser.DepComponentContext ctx);
+	/**
 	 * Enter a parse tree produced by {@link QueryLangParser#variable}.
 	 * @param ctx the parse tree
 	 */
@@ -107,6 +167,26 @@ public interface QueryLangListener extends ParseTreeListener {
 	 * @param ctx the parse tree
 	 */
 	void exitVariable(QueryLangParser.VariableContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#variableModifier}.
+	 * @param ctx the parse tree
+	 */
+	void enterVariableModifier(QueryLangParser.VariableModifierContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#variableModifier}.
+	 * @param ctx the parse tree
+	 */
+	void exitVariableModifier(QueryLangParser.VariableModifierContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link QueryLangParser#subQuery}.
+	 * @param ctx the parse tree
+	 */
+	void enterSubQuery(QueryLangParser.SubQueryContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link QueryLangParser#subQuery}.
+	 * @param ctx the parse tree
+	 */
+	void exitSubQuery(QueryLangParser.SubQueryContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link QueryLangParser#orderByClause}.
 	 * @param ctx the parse tree
