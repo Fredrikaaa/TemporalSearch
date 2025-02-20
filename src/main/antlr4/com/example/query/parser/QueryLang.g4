@@ -16,15 +16,75 @@ grammar QueryLang;
 /**
  * The root rule for a query. Follows SQL-like structure with SELECT, FROM, WHERE
  * and optional ORDER BY and LIMIT clauses.
- * Example: SELECT documents FROM corpus WHERE CONTAINS("AI")
+ * Example: SELECT PERSON, DATE, SNIPPET() FROM corpus WHERE CONTAINS("AI")
  * Pattern: Sequence with optional elements
  */
 query
-    : SELECT 'documents' FROM source=identifier
+    : SELECT columns=columnList FROM source=identifier
       whereClause?
       orderByClause?
       limitClause?
       EOF
+    ;
+
+/**
+ * Column specification list
+ * Example: PERSON AS name, DATE, SNIPPET(LENGTH=100)
+ * Pattern: Sequence with separator (comma)
+ */
+columnList
+    : first=columnSpec (',' next+=columnSpec)*
+    | '*'  // Select all available columns
+    ;
+
+/**
+ * Single column specification with optional alias
+ * Example: PERSON AS politician
+ * Pattern: Column type with optional alias and options
+ */
+columnSpec
+    : columnType (AS alias=identifier)?  // Basic column with optional alias
+    | SNIPPET '(' snippetOptions? ')'    // Snippet with options
+    | COUNT '(' countTarget? ')'         // Count aggregation
+    ;
+
+/**
+ * Available column types for value extraction
+ */
+columnType
+    : PERSON    // Person name extraction
+    | DATE      // Date value extraction  
+    | LOCATION  // Location name extraction
+    | TERM      // Matched term
+    | RELATION  // Dependency relation
+    | CATEGORY  // Hypernym category
+    ;
+
+/**
+ * Snippet configuration options
+ * Example: SNIPPET(LENGTH=100, HIGHLIGHT="*")
+ */
+snippetOptions
+    : first=snippetOption (',' next+=snippetOption)*
+    ;
+
+/**
+ * Individual snippet option
+ */
+snippetOption
+    : LENGTH '=' NUMBER     // Context length
+    | CONTEXT '=' NUMBER    // Words of context
+    | HIGHLIGHT '=' STRING  // Highlight style
+    | FORMAT '=' STRING     // Output format
+    ;
+
+/**
+ * Count aggregation target
+ */
+countTarget
+    : MATCHES              // Count total matches
+    | UNIQUE columnType    // Count unique values
+    | DOCUMENTS           // Count matching documents
     ;
 
 /**
@@ -264,4 +324,21 @@ STRING: '"' (~["\\] | '\\' .)* '"';  // Quoted strings with escape support
 IDENTIFIER: [a-zA-Z_][a-zA-Z0-9_]*;  // Standard identifier pattern
 NUMBER: [0-9]+;  // Integer numbers
 WS: [ \t\r\n]+ -> skip;  // Ignore whitespace
-COMMENT: '//' ~[\r\n]* -> skip;  // Single-line comments 
+COMMENT: '//' ~[\r\n]* -> skip;  // Single-line comments
+
+// Add new lexer rules at the end
+PERSON: 'PERSON';
+LOCATION: 'LOCATION';
+TERM: 'TERM';
+RELATION: 'RELATION';
+CATEGORY: 'CATEGORY';
+SNIPPET: 'SNIPPET';
+COUNT: 'COUNT';
+LENGTH: 'LENGTH';
+CONTEXT: 'CONTEXT';
+HIGHLIGHT: 'HIGHLIGHT';
+FORMAT: 'FORMAT';
+MATCHES: 'MATCHES';
+UNIQUE: 'UNIQUE';
+DOCUMENTS: 'DOCUMENTS';
+AS: 'AS'; 
