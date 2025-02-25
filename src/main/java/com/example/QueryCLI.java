@@ -109,6 +109,19 @@ public class QueryCLI {
             validator.validate(query);
             logger.debug("Parsed and validated query: {}", query);
 
+            // Check if this is a COUNT query
+            boolean isCountQuery = false;
+            CountNode countNode = null;
+            
+            // TODO: Extract the count node from the select list when it's implemented
+            // For now, we'll just check if the query has a COUNT in it
+            if (queryStr.toUpperCase().contains("COUNT(")) {
+                isCountQuery = true;
+                // For demonstration, we'll assume COUNT(*) for now
+                countNode = CountNode.countAll();
+                logger.debug("Detected COUNT query: {}", countNode);
+            }
+
             // Execute query conditions
             Set<Integer> results = new HashSet<>();
             boolean firstCondition = true;
@@ -125,26 +138,84 @@ public class QueryCLI {
                 }
             }
 
+            // Create a result processor for applying result control operations
+            ResultProcessor resultProcessor = new ResultProcessor();
+            
+            // Convert document IDs to result rows
+            List<Map<String, String>> resultRows = new ArrayList<>();
+            for (Integer docId : results) {
+                Map<String, String> row = new HashMap<>();
+                row.put("document_id", docId.toString());
+                // TODO: Fetch additional document details
+                resultRows.add(row);
+            }
+            
+            // Create a result table
+            List<com.example.query.model.column.ColumnSpec> columns = new ArrayList<>();
+            columns.add(new com.example.query.model.column.ColumnSpec(
+                "document_id", 
+                com.example.query.model.column.ColumnType.TERM
+            ));
+            // TODO: Add more columns based on query select list
+            
+            ResultTable resultTable = new ResultTable(
+                columns, 
+                resultRows, 
+                10, 
+                com.example.query.format.TableConfig.getDefault()
+            );
+            
             // Apply ordering if specified
-            List<Integer> orderedResults = new ArrayList<>(results);
             if (!query.getOrderBy().isEmpty()) {
-                // TODO: Implement ordering
-                logger.warn("Order by not yet implemented");
+                logger.debug("Applying ordering: {}", query.getOrderBy());
+                resultTable = resultProcessor.applyOrdering(resultTable, query.getOrderBy());
             }
 
             // Apply limit if specified
             if (query.getLimit().isPresent()) {
                 int limit = query.getLimit().get();
-                if (orderedResults.size() > limit) {
-                    orderedResults = orderedResults.subList(0, limit);
-                }
+                logger.debug("Applying limit: {}", limit);
+                resultTable = resultProcessor.applyLimit(resultTable, limit);
             }
 
-            // Display results
-            System.out.printf("Found %d matching documents%n", orderedResults.size());
-            for (Integer docId : orderedResults) {
-                System.out.printf("Document ID: %d%n", docId);
-                // TODO: Fetch and display document details
+            // Handle COUNT queries
+            if (isCountQuery && countNode != null) {
+                int count;
+                String columnName = null;
+                
+                switch (countNode.type()) {
+                    case ALL:
+                        count = resultProcessor.countAll(resultTable);
+                        break;
+                    case UNIQUE:
+                        columnName = countNode.variable().orElse("document_id");
+                        count = resultProcessor.countUnique(resultTable, columnName);
+                        break;
+                    case DOCUMENTS:
+                        count = resultProcessor.countDocuments(resultTable);
+                        break;
+                    default:
+                        throw new IllegalStateException("Unknown count type: " + countNode.type());
+                }
+                
+                // Create a count result table
+                resultTable = resultProcessor.createCountResultTable(
+                    count, 
+                    countNode.type(), 
+                    columnName
+                );
+                
+                // Display count result
+                System.out.printf("Count result: %d%n", count);
+            } else {
+                // Display regular results
+                System.out.printf("Found %d matching documents%n", resultTable.getRowCount());
+                
+                // Format and display the result table
+                for (int i = 0; i < resultTable.getRowCount(); i++) {
+                    System.out.printf("Document ID: %s%n", resultTable.getValue(i, "document_id"));
+                    // TODO: Display more document details
+                }
             }
 
         } catch (QueryParseException e) {
