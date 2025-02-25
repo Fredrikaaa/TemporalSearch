@@ -15,12 +15,10 @@ import java.util.*;
 public class SnippetGenerator {
     private static final Logger logger = LoggerFactory.getLogger(SnippetGenerator.class);
     
-    private static final String HIGHLIGHT_PREFIX = "*";
-    private static final String HIGHLIGHT_SUFFIX = "*";
-    private static final String TYPE_SEPARATOR = ":";
-    
     private final Connection connection;
     private final SnippetConfig config;
+    private final SnippetExpander expander;
+    private final Highlighter highlighter;
     
     /**
      * Creates a new SnippetGenerator with default configuration
@@ -38,72 +36,112 @@ public class SnippetGenerator {
     public SnippetGenerator(Connection connection, SnippetConfig config) {
         this.connection = connection;
         this.config = config;
+        this.expander = new SnippetExpander(connection);
+        this.highlighter = new Highlighter(config.highlightStyle());
+        logger.debug("Created SnippetGenerator with config: windowSize={}, highlightStyle={}, showSentenceBoundaries={}",
+            config.windowSize(), config.highlightStyle(), config.showSentenceBoundaries());
     }
     
     /**
      * Generates a snippet for a match in a document
-     * @param documentId ID of the document containing the match
-     * @param sentenceId ID of the sentence containing the match
-     * @param matchStart Start position of the match in the sentence
-     * @param matchEnd End position of the match in the sentence
-     * @param matchType Type of the match (e.g. PERSON, DATE)
-     * @param matchValue Extracted value from the match
+     * @param anchor The anchor point to generate a snippet for
      * @return Generated snippet with highlights and values
+     * @throws SQLException if a database access error occurs
      */
-    public TableSnippet generateSnippet(
-            long documentId,
-            int sentenceId,
-            int matchStart,
-            int matchEnd,
-            String matchType,
-            String matchValue
-    ) throws SQLException {
-        // Fetch the sentence text and position
-        String sentenceText = fetchSentenceText(documentId, sentenceId);
-        if (sentenceText == null) {
-            throw new IllegalStateException("Sentence not found: " + sentenceId);
+    public TableSnippet generateSnippet(ContextAnchor anchor) throws SQLException {
+        logger.debug("Generating snippet for anchor: documentId={}, sentenceId={}, variableName={}",
+            anchor.documentId(), anchor.sentenceId(), anchor.variableName());
+            
+        // Expand context around anchor
+        List<SnippetExpander.SentenceContext> sentences = expander.expand(anchor, config.windowSize());
+        
+        if (sentences.isEmpty()) {
+            logger.warn("No sentences found for anchor: {}", anchor);
+            throw new IllegalStateException("No sentences found for anchor: " + anchor);
         }
         
-        // Calculate context window
-        int contextStart = Math.max(0, matchStart - config.contextChars());
-        int contextEnd = Math.min(sentenceText.length(), matchEnd + config.contextChars());
+        // Find the match sentence
+        SnippetExpander.SentenceContext matchSentence = sentences.stream()
+            .filter(SnippetExpander.SentenceContext::isMatchSentence)
+            .findFirst()
+            .orElseThrow(() -> new IllegalStateException("Match sentence not found in context window"));
+            
+        // Get token information for highlighting
+        int matchStart = -1;
+        int matchEnd = -1;
+        String matchValue = null;
         
-        // Truncate if exceeds max length
-        if (contextEnd - contextStart > config.maxLength()) {
-            int excess = (contextEnd - contextStart) - config.maxLength();
-            contextStart += excess / 2;
-            contextEnd -= excess / 2;
-            if (excess % 2 == 1) contextEnd--;
+        String sql = """
+            SELECT begin_char, end_char, token, ner
+            FROM annotations
+            WHERE document_id = ? AND sentence_id = ? AND begin_char <= ? AND end_char >= ?
+            """;
+            
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setLong(1, anchor.documentId());
+            stmt.setInt(2, anchor.sentenceId());
+            stmt.setInt(3, anchor.tokenPosition());
+            stmt.setInt(4, anchor.tokenPosition());
+            
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    matchStart = rs.getInt("begin_char") - matchSentence.beginChar();
+                    matchEnd = rs.getInt("end_char") - matchSentence.beginChar();
+                    matchValue = rs.getString("token");
+                }
+            }
         }
         
-        // Extract the snippet text
-        String snippetText = sentenceText.substring(contextStart, contextEnd);
-        
-        // Add ellipsis if truncated
-        if (contextStart > 0) {
-            snippetText = "..." + snippetText;
-        }
-        if (contextEnd < sentenceText.length()) {
-            snippetText = snippetText + "...";
+        if (matchStart == -1 || matchEnd == -1) {
+            logger.warn("Could not find token at position {} in sentence {}", 
+                anchor.tokenPosition(), anchor.sentenceId());
+            // Fall back to using the whole sentence
+            matchStart = 0;
+            matchEnd = matchSentence.text().length();
+            matchValue = matchSentence.text();
         }
         
-        // Create highlight span adjusted for context window and ellipsis
-        int adjustedStart = matchStart - contextStart + (contextStart > 0 ? 3 : 0);
-        int adjustedEnd = matchEnd - contextStart + (contextStart > 0 ? 3 : 0);
-        var highlight = new TableSnippet.SimpleSpan(
-            matchType,
-            matchValue,
-            adjustedStart,
-            adjustedEnd
-        );
+        // Build the snippet text
+        StringBuilder snippetText = new StringBuilder();
+        List<TableSnippet.SimpleSpan> highlights = new ArrayList<>();
+        int currentPosition = 0;
+        
+        for (var sentence : sentences) {
+            if (config.showSentenceBoundaries() && snippetText.length() > 0) {
+                snippetText.append(" | ");
+                currentPosition += 3;
+            } else if (snippetText.length() > 0) {
+                snippetText.append(" ");
+                currentPosition += 1;
+            }
+            
+            // Add the sentence text
+            String sentenceText = sentence.text();
+            snippetText.append(sentenceText);
+            
+            // If this is the match sentence, add a highlight
+            if (sentence.isMatchSentence()) {
+                int highlightStart = currentPosition + matchStart;
+                int highlightEnd = currentPosition + matchEnd;
+                
+                highlights.add(new TableSnippet.SimpleSpan(
+                    anchor.variableName(),
+                    matchValue,
+                    highlightStart,
+                    highlightEnd
+                ));
+            }
+            
+            currentPosition += sentenceText.length();
+        }
         
         // Create match values map
         Map<String, String> matchValues = new HashMap<>();
-        matchValues.put(matchType, matchValue);
+        matchValues.put(anchor.variableName(), matchValue);
         
         return new TableSnippet(
-            snippetText,
-            List.of(highlight),
+            snippetText.toString(),
+            highlights,
             matchValues
         );
     }
@@ -122,38 +160,16 @@ public class SnippetGenerator {
         
         // Apply highlights
         for (var highlight : sortedHighlights) {
-            String highlightText = HIGHLIGHT_PREFIX +
-                                 highlight.type() +
-                                 TYPE_SEPARATOR +
-                                 highlight.value() +
-                                 HIGHLIGHT_SUFFIX;
+            String highlightedText = snippet.text().substring(highlight.start(), highlight.end());
+            String formattedText = highlighter.highlight(highlightedText, 0, highlightedText.length());
+            
             result.replace(
                 highlight.start(),
                 highlight.end(),
-                highlightText
+                formattedText
             );
         }
         
         return result.toString();
-    }
-    
-    private String fetchSentenceText(long documentId, int sentenceId) throws SQLException {
-        String sql = """
-            SELECT text, begin_char, end_char
-            FROM sentences
-            WHERE document_id = ? AND sentence_id = ?
-            """;
-            
-        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
-            stmt.setLong(1, documentId);
-            stmt.setInt(2, sentenceId);
-            
-            try (ResultSet rs = stmt.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getString("text");
-                }
-                return null;
-            }
-        }
     }
 } 

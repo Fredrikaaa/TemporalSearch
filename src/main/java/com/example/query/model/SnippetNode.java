@@ -1,27 +1,82 @@
 package com.example.query.model;
 
+import com.example.query.snippet.SnippetConfig;
+
 /**
  * Represents a SNIPPET expression in the SELECT clause of a query.
  * This node captures the variable to extract a snippet for and the optional window size.
  */
 public record SnippetNode(
     String variable,
-    int windowSize
+    int windowSize,
+    String highlightStyle,
+    boolean showSentenceBoundaries
 ) implements SelectColumn {
     
     public static final int DEFAULT_WINDOW_SIZE = 1;  // Default 1 sentence window
+    public static final String DEFAULT_HIGHLIGHT_STYLE = "**";  // Default bold highlighting
+    public static final boolean DEFAULT_SHOW_SENTENCE_BOUNDARIES = false;
+    
+    /**
+     * Creates a new SnippetNode with the specified variable and default settings
+     * @param variable The variable to extract a snippet for
+     */
+    public SnippetNode(String variable) {
+        this(variable, DEFAULT_WINDOW_SIZE, DEFAULT_HIGHLIGHT_STYLE, DEFAULT_SHOW_SENTENCE_BOUNDARIES);
+    }
+    
+    /**
+     * Creates a new SnippetNode with the specified variable and window size
+     * @param variable The variable to extract a snippet for
+     * @param windowSize The number of sentences to include on each side of the match
+     */
+    public SnippetNode(String variable, int windowSize) {
+        this(variable, windowSize, DEFAULT_HIGHLIGHT_STYLE, DEFAULT_SHOW_SENTENCE_BOUNDARIES);
+    }
     
     public SnippetNode {
         if (variable == null || variable.isEmpty()) {
             throw new IllegalArgumentException("variable must not be null or empty");
         }
-        if (windowSize < 1) {
-            throw new IllegalArgumentException("windowSize must be positive");
+        if (windowSize < 0 || windowSize > 5) {
+            throw new IllegalArgumentException("windowSize must be between 0 and 5");
         }
+        if (highlightStyle == null || highlightStyle.isEmpty()) {
+            throw new IllegalArgumentException("highlightStyle must not be null or empty");
+        }
+    }
+    
+    /**
+     * Creates a SnippetConfig from this node's settings
+     * @return A SnippetConfig with this node's settings
+     */
+    public SnippetConfig toSnippetConfig() {
+        return new SnippetConfig(windowSize, highlightStyle, showSentenceBoundaries);
     }
 
     @Override
     public String toString() {
-        return String.format("SNIPPET(%s, window=%d)", variable, windowSize);
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("SNIPPET(%s", variable));
+        
+        if (windowSize != DEFAULT_WINDOW_SIZE || 
+            !highlightStyle.equals(DEFAULT_HIGHLIGHT_STYLE) || 
+            showSentenceBoundaries != DEFAULT_SHOW_SENTENCE_BOUNDARIES) {
+            
+            sb.append(", window=").append(windowSize);
+            
+            if (!highlightStyle.equals(DEFAULT_HIGHLIGHT_STYLE) || 
+                showSentenceBoundaries != DEFAULT_SHOW_SENTENCE_BOUNDARIES) {
+                
+                sb.append(", style=").append(highlightStyle);
+                
+                if (showSentenceBoundaries != DEFAULT_SHOW_SENTENCE_BOUNDARIES) {
+                    sb.append(", boundaries=").append(showSentenceBoundaries);
+                }
+            }
+        }
+        
+        sb.append(")");
+        return sb.toString();
     }
 } 

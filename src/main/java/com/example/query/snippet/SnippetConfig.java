@@ -4,17 +4,18 @@ package com.example.query.snippet;
  * Configuration for snippet generation
  */
 public record SnippetConfig(
-    int contextChars,    // Number of characters to include around match
-    int maxLength        // Maximum total length of snippet
+    int windowSize,     // Number of sentences around match (0-5)
+    String highlightStyle,  // Style for highlighting matches
+    boolean showSentenceBoundaries  // Whether to show sentence boundaries
 ) {
-    public static final SnippetConfig DEFAULT = new SnippetConfig(50, 200);
-    
+    public static final SnippetConfig DEFAULT = new SnippetConfig(1, "**", false);
+
     public SnippetConfig {
-        if (contextChars < 0) {
-            throw new IllegalArgumentException("contextChars must be non-negative");
+        if (windowSize < 0 || windowSize > 5) {
+            throw new IllegalArgumentException("windowSize must be between 0 and 5");
         }
-        if (maxLength < contextChars * 2) {
-            throw new IllegalArgumentException("maxLength must be at least twice contextChars");
+        if (highlightStyle == null || highlightStyle.isEmpty()) {
+            throw new IllegalArgumentException("highlightStyle must not be null or empty");
         }
     }
 } 
