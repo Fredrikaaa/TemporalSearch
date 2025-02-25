@@ -1,344 +1,186 @@
-/**
- * Grammar for a SQL-like query language specialized for NLP operations.
- * Supports operations like named entity recognition (NER), text search,
- * temporal queries, and dependency parsing.
- * 
- * The grammar follows these main patterns from ANTLR documentation:
- * - Sequence: Basic SQL structure (SELECT FROM WHERE)
- * - Choice: Different types of conditions
- * - Token dependency: Matching parentheses and quotes
- * - Nested phrase: Subqueries and nested conditions
- */
 grammar QueryLang;
+
+// Lexer Rules (Tokens)
+// Keywords
+SELECT: 'SELECT';
+FROM: 'FROM';
+WHERE: 'WHERE';
+SNIPPET: 'SNIPPET';
+WINDOW: 'WINDOW';
+NER: 'NER';
+DEPENDS: 'DEPENDS';
+DATE: 'DATE';
+NEAR: 'NEAR';
+BETWEEN: 'BETWEEN';
+GRANULARITY: 'GRANULARITY';
+DOCUMENT: 'DOCUMENT';
+SENTENCE: 'SENTENCE';
+METADATA: 'METADATA';
+CONTAINS: 'CONTAINS';
+CONTAINED_BY: 'CONTAINED_BY';
+INTERSECT: 'INTERSECT';
+RADIUS: 'RADIUS';
+AND: 'AND';
+ORDER: 'ORDER';
+BY: 'BY';
+ASC: 'ASC';
+DESC: 'DESC';
+LIMIT: 'LIMIT';
+AS: 'AS';
+COUNT: 'COUNT';
+UNIQUE: 'UNIQUE';
+DOCUMENTS: 'DOCUMENTS';
+
+// Structure tokens
+LPAREN: '(';
+RPAREN: ')';
+COMMA: ',';
+EQUALS: '=';
+LBRACKET: '[';
+RBRACKET: ']';
+WILDCARD: '*';
+QUESTION: '?';
+LT: '<';
+GT: '>';
+LE: '<=';
+GE: '>=';
+EQ: '==';
+
+// Time units
+YEAR: 'y';
+DAY: 'd';
+
+// Basic tokens
+IDENTIFIER: [a-zA-Z_][a-zA-Z0-9_]*;
+STRING: '"' (~["\r\n])* '"';
+NUMBER: [0-9]+;
+
+// Skip whitespace and comments
+WS: [ \t\r\n]+ -> skip;
+COMMENT: '//' ~[\r\n]* -> skip;
+BLOCK_COMMENT: '/*' .*? '*/' -> skip;
 
 // Parser Rules
 
-/**
- * The root rule for a query. Follows SQL-like structure with SELECT, FROM, WHERE
- * and optional ORDER BY and LIMIT clauses.
- * Example: SELECT PERSON, DATE, SNIPPET() FROM corpus WHERE CONTAINS("AI")
- * Pattern: Sequence with optional elements
- */
 query
-    : SELECT columns=columnList FROM source=identifier
+    : SELECT selectList
+      FROM identifier
       whereClause?
-      orderByClause?
-      limitClause?
+      granularityClause?
       EOF
     ;
 
-/**
- * Column specification list
- * Example: PERSON AS name, DATE, SNIPPET(LENGTH=100)
- * Pattern: Sequence with separator (comma)
- */
-columnList
-    : first=columnSpec (',' next+=columnSpec)*
-    | '*'  // Select all available columns
+selectList
+    : selectColumn (',' selectColumn)*
     ;
 
-/**
- * Single column specification with optional alias
- * Example: PERSON AS politician
- * Pattern: Column type with optional alias and options
- */
-columnSpec
-    : columnType (AS alias=identifier)?  // Basic column with optional alias
-    | SNIPPET '(' snippetOptions? ')'    // Snippet with options
-    | COUNT '(' countTarget? ')'         // Count aggregation
+selectColumn
+    : variable
+    | snippetExpression
+    | metadataExpression
+    | identifier
     ;
 
-/**
- * Available column types for value extraction
- */
-columnType
-    : PERSON    // Person name extraction
-    | DATE      // Date value extraction  
-    | LOCATION  // Location name extraction
-    | TERM      // Matched term
-    | RELATION  // Dependency relation
-    | CATEGORY  // Hypernym category
+snippetExpression
+    : SNIPPET LPAREN variable (COMMA WINDOW EQUALS NUMBER)? RPAREN
     ;
 
-/**
- * Snippet configuration options
- * Example: SNIPPET(LENGTH=100, HIGHLIGHT="*")
- */
-snippetOptions
-    : first=snippetOption (',' next+=snippetOption)*
+metadataExpression
+    : METADATA
     ;
 
-/**
- * Individual snippet option
- */
-snippetOption
-    : LENGTH '=' NUMBER     // Context length
-    | CONTEXT '=' NUMBER    // Words of context
-    | HIGHLIGHT '=' STRING  // Highlight style
-    | FORMAT '=' STRING     // Output format
-    ;
-
-/**
- * Count aggregation target
- */
-countTarget
-    : MATCHES              // Count total matches
-    | UNIQUE columnType    // Count unique values
-    | DOCUMENTS           // Count matching documents
-    ;
-
-/**
- * Matches either a plain identifier or a quoted string.
- * Examples: myCorpus, "my corpus"
- * Pattern: Choice between token types
- */
-identifier
-    : IDENTIFIER
-    | STRING
-    ;
-
-/**
- * The WHERE clause containing a list of conditions.
- * Example: WHERE NER("PERSON", "?person") AND CONTAINS("scientist")
- * Pattern: Sequence with mandatory WHERE keyword and conditions
- */
 whereClause
-    : WHERE conditions=conditionList EOF?
+    : WHERE conditionList
     ;
 
-/**
- * A list of conditions joined by AND operators.
- * Example: condition1 AND condition2 AND condition3
- * Pattern: Sequence with separator (AND)
- */
 conditionList
-    : first=singleCondition (AND next+=singleCondition)*
+    : singleCondition (AND singleCondition)*
     ;
 
-/**
- * A single condition without AND.
- * Pattern: Choice between different condition types
- */
 singleCondition
     : nerExpression
-    | containsExpression  
+    | containsExpression
     | dateExpression
     | dependsExpression
-    | subQuery
-    | '(' nested=conditionList ')'  // Nested conditions
+    | LPAREN conditionList RPAREN
     ;
 
-/**
- * Named Entity Recognition (NER) expression.
- * Matches entities of a specific type.
- * Example: NER("PERSON", "?person") or NER("ORGANIZATION", "Google")
- * Pattern: Token dependency (matching parentheses)
- */
+dateExpression
+    : DATE LPAREN variable COMMA operator=dateOperator range=dateValue
+      (RADIUS radius=NUMBER unit=timeUnit)? RPAREN
+    | DATE LPAREN variable COMMA comparisonOp year=NUMBER RPAREN
+    ;
+
+dateOperator
+    : CONTAINS
+    | CONTAINED_BY
+    | INTERSECT
+    | NEAR
+    ;
+
+dateValue
+    : LBRACKET start=NUMBER COMMA end=NUMBER RBRACKET  # DateRange
+    | single=NUMBER                                     # SingleYear
+    ;
+
+timeUnit
+    : YEAR
+    | DAY
+    ;
+
+granularityClause
+    : GRANULARITY (DOCUMENT | SENTENCE NUMBER?)
+    ;
+
 nerExpression
-    : NER '(' type=entityType ',' target=entityTarget ')'
+    : NER LPAREN type=entityType COMMA target=entityTarget RPAREN
     ;
 
-/**
- * The type of entity to match in NER expressions.
- * Can be a string, identifier, or wildcard (*).
- * Examples: "PERSON", ORGANIZATION, *
- * Pattern: Choice between token types
- */
 entityType
     : STRING
     | identifier
     | WILDCARD
     ;
 
-/**
- * The target entity to match or variable to bind.
- * Examples: "Google", ?company
- * Pattern: Choice between string and variable
- */
 entityTarget 
     : STRING
     | variable
     ;
 
-/**
- * Text search expression.
- * Example: CONTAINS("artificial intelligence")
- * Pattern: Token dependency (matching parentheses)
- */
 containsExpression
-    : CONTAINS '(' text=STRING ')'
+    : CONTAINS LPAREN terms+=STRING (COMMA terms+=STRING)* RPAREN
     ;
 
-/**
- * Date/temporal expressions with various forms:
- * 1. Comparison: DATE("?date") < "2020"
- * 2. Variable binding: DATE("?date")
- * 3. Direct date: DATE "2020"
- * 4. Near with range: DATE("?date") NEAR("1980", "5y")
- * Pattern: Choice between different date expressions
- */
-dateExpression
-    : DATE '(' dateVar=variable ')' dateOp=dateOperator dateCompareValue=dateValue  // Comparison
-    | DATE '(' dateVar=variable ')'                                // Variable binding
-    | DATE dateString=STRING                                          // Direct date
-    | DATE '(' dateVar=variable ')' NEAR '(' dateCompareValue=dateValue ',' dateRange=rangeSpec ')'  // NEAR with range
-    ;
-
-/**
- * Comparison operators for dates.
- * Pattern: Choice between operators
- */
-dateOperator
-    : '<' | '>' | '<=' | '>=' | '=='
-    ;
-
-/**
- * The value to compare dates against.
- * Can be a string date or a subquery.
- * Pattern: Choice between string and subquery
- */
-dateValue
-    : STRING
-    | subQuery
-    ;
-
-/**
- * Range specification for NEAR operations.
- * Example: "5y" for 5 years
- * Pattern: Simple string token
- */
-rangeSpec
-    : STRING
-    ;
-
-/**
- * Dependency parsing expression.
- * Matches relationships between words/phrases.
- * Example: DEPENDS("?org", "founded", "?date")
- * Pattern: Token dependency (matching parentheses)
- */
 dependsExpression
-    : DEPENDS '(' gov=governor ',' rel=relation ',' dep=dependent ')'
+    : DEPENDS LPAREN gov=governor COMMA rel=relation COMMA dep=dependent RPAREN
     ;
 
-/**
- * The governor (head) in a dependency relation.
- * Can be a variable or identifier.
- * Pattern: Choice between variable, string, and identifier
- */
 governor
     : variable
     | STRING
     | identifier
     ;
 
-/**
- * The dependent (child) in a dependency relation.
- * Can be a variable or identifier.
- * Pattern: Choice between variable, string, and identifier
- */
+relation
+    : STRING
+    | identifier
+    ;
+
 dependent
     : variable
     | STRING
     | identifier
     ;
 
-/**
- * The type of relationship in a dependency.
- * Example: "founded", "owns", etc.
- * Pattern: Choice between string and identifier
- */
-relation
-    : STRING
-    | identifier
-    ;
-
-/**
- * Variable definition with optional wildcard.
- * Examples: ?person, ?org*
- * Pattern: Sequence with optional wildcard
- */
 variable
-    : '?' name=IDENTIFIER wild=WILDCARD?  // Matches ?person*
+    : QUESTION IDENTIFIER
     ;
 
-/**
- * Nested subquery in curly braces.
- * Example: { SELECT documents FROM corpus WHERE ... }
- * Pattern: Nested phrase (recursive query)
- */
-subQuery
-    : '{' nested=query '}'
+identifier
+    : IDENTIFIER
+    | STRING
     ;
 
-/**
- * ORDER BY clause for result ordering.
- * Example: ORDER BY date DESC
- * Pattern: Sequence with separator (comma)
- */
-orderByClause
-    : ORDER BY first=orderSpec (',' next+=orderSpec)* EOF?
-    ;
-
-/**
- * Specification for ordering results.
- * Example: date DESC
- * Pattern: Sequence with optional direction
- */
-orderSpec
-    : field=identifier dir=(ASC | DESC)?
-    ;
-
-/**
- * LIMIT clause to restrict number of results.
- * Example: LIMIT 10
- * Pattern: Simple sequence
- */
-limitClause
-    : LIMIT count=NUMBER EOF?
-    ;
-
-// Lexer Rules
-
-// Keywords
-SELECT: 'SELECT';
-FROM: 'FROM';
-WHERE: 'WHERE';
-AND: 'AND';
-CONTAINS: 'CONTAINS';
-NER: 'NER';
-DATE: 'DATE';
-DEPENDS: 'DEPENDS';
-ORDER: 'ORDER';
-BY: 'BY';
-ASC: 'ASC';
-DESC: 'DESC';
-LIMIT: 'LIMIT';
-NEAR: 'NEAR';
-
-// Special characters
-WILDCARD: '*';  // Wildcard character
-
-// Basic tokens
-STRING: '"' (~["\\] | '\\' .)* '"';  // Quoted strings with escape support
-IDENTIFIER: [a-zA-Z_][a-zA-Z0-9_]*;  // Standard identifier pattern
-NUMBER: [0-9]+;  // Integer numbers
-WS: [ \t\r\n]+ -> skip;  // Ignore whitespace
-COMMENT: '//' ~[\r\n]* -> skip;  // Single-line comments
-
-// Add new lexer rules at the end
-PERSON: 'PERSON';
-LOCATION: 'LOCATION';
-TERM: 'TERM';
-RELATION: 'RELATION';
-CATEGORY: 'CATEGORY';
-SNIPPET: 'SNIPPET';
-COUNT: 'COUNT';
-LENGTH: 'LENGTH';
-CONTEXT: 'CONTEXT';
-HIGHLIGHT: 'HIGHLIGHT';
-FORMAT: 'FORMAT';
-MATCHES: 'MATCHES';
-UNIQUE: 'UNIQUE';
-DOCUMENTS: 'DOCUMENTS';
-AS: 'AS'; 
+comparisonOp
+    : LT | GT | LE | GE | EQ
+    ; 

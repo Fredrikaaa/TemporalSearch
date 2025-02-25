@@ -1,5 +1,5 @@
 *.db
-antlr*
+docs*
 lindex/
 target/
 .project
@@ -12,7 +12,6 @@ indexes/
 dependency-reduced-pom.xml
 indexes_backup/**
 indexes/**/*
-externalsortinginjava-0.6.2-javadoc/
 simplewiki*
 stanford-english-extra-corenlp-models-current/
 .cursor
