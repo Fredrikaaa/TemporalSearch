@@ -21,6 +21,8 @@ CONTAINED_BY: 'CONTAINED_BY';
 INTERSECT: 'INTERSECT';
 RADIUS: 'RADIUS';
 AND: 'AND';
+OR: 'OR';
+NOT: 'NOT';
 ORDER: 'ORDER';
 BY: 'BY';
 ASC: 'ASC';
@@ -103,7 +105,26 @@ whereClause
     ;
 
 conditionList
-    : singleCondition (AND singleCondition)*
+    : condition (logicalOp condition)*
+    ;
+
+condition
+    : notCondition
+    | atomicCondition
+    ;
+
+notCondition
+    : NOT atomicCondition
+    ;
+
+atomicCondition
+    : singleCondition
+    | LPAREN conditionList RPAREN
+    ;
+
+logicalOp
+    : AND
+    | OR
     ;
 
 singleCondition
@@ -111,7 +132,6 @@ singleCondition
     | containsExpression
     | dateExpression
     | dependsExpression
-    | LPAREN conditionList RPAREN
     ;
 
 dateExpression

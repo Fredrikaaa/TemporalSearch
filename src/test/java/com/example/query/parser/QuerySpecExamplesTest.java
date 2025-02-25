@@ -1,0 +1,182 @@
+package com.example.query.parser;
+
+import org.antlr.v4.runtime.*;
+import org.antlr.v4.runtime.tree.ParseTree;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * Tests to validate that all examples from the grammar specification document parse correctly.
+ * These tests help ensure that the implementation matches the intended syntax.
+ */
+@DisplayName("Query Specification Examples Validation Tests")
+public class QuerySpecExamplesTest {
+
+    /**
+     * Parses a query string using the ANTLR parser directly and returns the parse tree.
+     */
+    private ParseTree parseQuery(String queryString) {
+        CharStream input = CharStreams.fromString(queryString);
+        QueryLangLexer lexer = new QueryLangLexer(input);
+        lexer.removeErrorListeners();
+        lexer.addErrorListener(new BaseErrorListener() {
+            @Override
+            public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
+                throw new RuntimeException("Lexer error at " + line + ":" + charPositionInLine + " - " + msg);
+            }
+        });
+
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+        QueryLangParser parser = new QueryLangParser(tokens);
+        parser.removeErrorListeners();
+        parser.addErrorListener(new BaseErrorListener() {
+            @Override
+            public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
+                throw new RuntimeException("Parser error at " + line + ":" + charPositionInLine + " - " + msg);
+            }
+        });
+
+        return parser.query();
+    }
+
+    /**
+     * Helper method to assert that a query from the specification parses correctly.
+     */
+    private void assertSpecExampleValid(String queryString) {
+        assertDoesNotThrow(() -> parseQuery(queryString),
+                "Specification example should have valid syntax: " + queryString);
+    }
+
+    @Test
+    @DisplayName("Basic query examples from spec")
+    void testBasicQueryExamples() {
+        // Simple query with CONTAINS
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE CONTAINS(\"artificial intelligence\")");
+        
+        // Query with variable binding in NER
+        assertSpecExampleValid("SELECT ?person FROM corpus WHERE NER(\"PERSON\", ?person)");
+    }
+
+    @Test
+    @DisplayName("Snippet examples from spec")
+    void testSnippetExamples() {
+        // Basic snippet usage
+        assertSpecExampleValid("SELECT ?person, SNIPPET(?person) FROM corpus WHERE NER(\"PERSON\", ?person)");
+        
+        // Snippet with custom window size
+        assertSpecExampleValid("SELECT ?person, SNIPPET(?person, WINDOW=10) FROM corpus WHERE NER(\"PERSON\", ?person)");
+    }
+
+    @Test
+    @DisplayName("Metadata examples from spec")
+    void testMetadataExamples() {
+        assertSpecExampleValid("SELECT METADATA FROM corpus WHERE CONTAINS(\"climate change\")");
+    }
+
+    @Test
+    @DisplayName("Count expression examples from spec")
+    void testCountExpressionExamples() {
+        // Count all matches
+        assertSpecExampleValid("SELECT COUNT(*) FROM corpus WHERE CONTAINS(\"neural network\")");
+        
+        // Count unique values of a variable
+        assertSpecExampleValid("SELECT COUNT(UNIQUE ?person) FROM corpus WHERE NER(\"PERSON\", ?person)");
+        
+        // Count documents
+        assertSpecExampleValid("SELECT COUNT(DOCUMENTS) FROM corpus WHERE CONTAINS(\"machine learning\")");
+    }
+
+    @Test
+    @DisplayName("Date comparison examples from spec")
+    void testDateComparisonExamples() {
+        // Greater than comparison
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, > 1990)");
+        
+        // Less than comparison
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, < 2000)");
+        
+        // Equals comparison
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, == 1995)");
+        
+        // Greater than or equal comparison
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, >= 1995)");
+        
+        // Less than or equal comparison
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, <= 2005)");
+    }
+
+    @Test
+    @DisplayName("Complex date operations examples from spec")
+    void testComplexDateOperationsExamples() {
+        // Contains date range
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, CONTAINS [1990, 2000])");
+        
+        // Contained by date
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, CONTAINED_BY 2000)");
+        
+        // Intersect with date range
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, INTERSECT [1990, 2000])");
+        
+        // Near date with radius
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, NEAR 2000 RADIUS 5y)");
+    }
+
+    @Test
+    @DisplayName("Granularity examples from spec")
+    void testGranularityExamples() {
+        // Document granularity
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY DOCUMENT");
+        
+        // Sentence granularity
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY SENTENCE");
+        
+        // Sentence granularity with context size
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY SENTENCE 3");
+    }
+
+    @Test
+    @DisplayName("Order by examples from spec")
+    void testOrderByExamples() {
+        // Simple order by
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company");
+        
+        // Order by with direction
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company ASC");
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company DESC");
+        
+        // Multiple order by fields
+        assertSpecExampleValid("SELECT ?company, ?date FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company ASC, ?date DESC");
+    }
+
+    @Test
+    @DisplayName("Limit examples from spec")
+    void testLimitExamples() {
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) LIMIT 10");
+    }
+
+    @Test
+    @DisplayName("Combined features examples from spec")
+    void testCombinedFeaturesExamples() {
+        // Example with multiple features
+        assertSpecExampleValid(
+            "SELECT ?person, SNIPPET(?person, WINDOW=5) " +
+            "FROM corpus " +
+            "WHERE NER(\"PERSON\", ?person) AND DATE(?person, > 2000) " +
+            "GRANULARITY SENTENCE 3 " +
+            "ORDER BY ?person DESC " +
+            "LIMIT 5"
+        );
+        
+        // Complex query with all features
+        assertSpecExampleValid(
+            "SELECT ?person, ?org, SNIPPET(?person), COUNT(UNIQUE ?org) " +
+            "FROM corpus " +
+            "WHERE NER(\"PERSON\", ?person) AND NER(\"ORGANIZATION\", ?org) AND CONTAINS(\"founded\") " +
+            "GRANULARITY SENTENCE 2 " +
+            "ORDER BY ?person ASC, ?org DESC " +
+            "LIMIT 20"
+        );
+    }
+} 

@@ -1,4 +1,4 @@
-package com.example.snippet;
+package com.example.query.snippet;
 
 import java.util.List;
 import java.util.Map;

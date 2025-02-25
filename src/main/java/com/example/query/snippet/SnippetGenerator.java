@@ -1,4 +1,4 @@
-package com.example.snippet;
+package com.example.query.snippet;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

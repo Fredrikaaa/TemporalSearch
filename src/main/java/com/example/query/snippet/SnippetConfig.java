@@ -1,4 +1,4 @@
-package com.example.snippet;
+package com.example.query.snippet;
 
 /**
  * Configuration for snippet generation

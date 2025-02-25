@@ -9,10 +9,37 @@ import java.util.Optional;
  */
 public class TemporalCondition implements Condition {
     public enum Type {
-        BEFORE,
-        AFTER,
-        BETWEEN,
-        NEAR
+        BEFORE,        // <
+        AFTER,         // >
+        BEFORE_EQUAL,  // <=
+        AFTER_EQUAL,   // >=
+        EQUAL,         // ==
+        CONTAINS,      // CONTAINS
+        CONTAINED_BY,  // CONTAINED_BY
+        INTERSECT,     // INTERSECT
+        NEAR,          // NEAR
+        BETWEEN        // Date range between two points
+    }
+    
+    /**
+     * Maps comparison operators to TemporalCondition.Type
+     */
+    public enum ComparisonType {
+        LT(Type.BEFORE),
+        GT(Type.AFTER),
+        LE(Type.BEFORE_EQUAL),
+        GE(Type.AFTER_EQUAL),
+        EQ(Type.EQUAL);
+        
+        private final Type temporalType;
+        
+        ComparisonType(Type temporalType) {
+            this.temporalType = temporalType;
+        }
+        
+        public Type getTemporalType() {
+            return temporalType;
+        }
     }
 
     private final Type type;
@@ -21,6 +48,17 @@ public class TemporalCondition implements Condition {
     private final Optional<String> variable;
     private final Optional<String> range;
 
+    // Constructor for simple date comparison with a variable
+    public TemporalCondition(ComparisonType comparisonType, String variable, int year) {
+        this.type = comparisonType.getTemporalType();
+        // Convert year to LocalDateTime at start of year
+        this.startDate = LocalDateTime.of(year, 1, 1, 0, 0);
+        this.endDate = Optional.empty();
+        this.variable = Optional.of(variable);
+        this.range = Optional.empty();
+    }
+
+    // Existing constructors
     public TemporalCondition(Type type, LocalDateTime startDate) {
         this.type = type;
         this.startDate = startDate;
