@@ -146,7 +146,7 @@ orderByClause
     ;
 
 orderSpec
-    : field=identifier (ASC | DESC)?
+    : (identifier | variable) (ASC | DESC)?
     ;
 
 limitClause

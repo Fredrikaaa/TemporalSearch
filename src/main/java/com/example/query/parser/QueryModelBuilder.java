@@ -19,10 +19,16 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     
     @Override
     public Query visitQuery(QueryLangParser.QueryContext ctx) {
-        String source = (String) visitIdentifier(ctx.source);
+        String source = null;
+        if (ctx.identifier() != null) {
+            source = (String) visitIdentifier(ctx.identifier());
+        }
+        
         List<Condition> conditions = new ArrayList<>();
         List<OrderSpec> orderSpecs = new ArrayList<>();
         Optional<Integer> limit = Optional.empty();
+        Optional<Query.Granularity> granularity = Optional.empty();
+        Optional<Integer> granularitySize = Optional.empty();
 
         if (ctx.whereClause() != null) {
             conditions.addAll(visitConditionList(ctx.whereClause().conditionList()));
@@ -37,8 +43,86 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         if (ctx.limitClause() != null) {
             limit = Optional.of(Integer.parseInt(ctx.limitClause().count.getText()));
         }
+        
+        if (ctx.granularityClause() != null) {
+            if (ctx.granularityClause().DOCUMENT() != null) {
+                granularity = Optional.of(Query.Granularity.DOCUMENT);
+            } else if (ctx.granularityClause().SENTENCE() != null) {
+                granularity = Optional.of(Query.Granularity.SENTENCE);
+                if (ctx.granularityClause().NUMBER() != null) {
+                    granularitySize = Optional.of(Integer.parseInt(ctx.granularityClause().NUMBER().getText()));
+                }
+            }
+        }
 
-        return new Query(source, conditions, orderSpecs, limit);
+        return new Query(source, conditions, orderSpecs, limit, granularity, granularitySize);
+    }
+
+    @Override
+    public List<SelectColumn> visitSelectList(QueryLangParser.SelectListContext ctx) {
+        List<SelectColumn> columns = new ArrayList<>();
+        for (QueryLangParser.SelectColumnContext colCtx : ctx.selectColumn()) {
+            columns.add((SelectColumn) visit(colCtx));
+        }
+        return columns;
+    }
+    
+    @Override
+    public Object visitVariableColumn(QueryLangParser.VariableColumnContext ctx) {
+        return visit(ctx.variable());
+    }
+    
+    @Override
+    public Object visitSnippetColumn(QueryLangParser.SnippetColumnContext ctx) {
+        return visit(ctx.snippetExpression());
+    }
+    
+    @Override
+    public Object visitMetadataColumn(QueryLangParser.MetadataColumnContext ctx) {
+        return visit(ctx.metadataExpression());
+    }
+    
+    @Override
+    public Object visitCountColumn(QueryLangParser.CountColumnContext ctx) {
+        return visit(ctx.countExpression());
+    }
+    
+    @Override
+    public Object visitIdentifierColumn(QueryLangParser.IdentifierColumnContext ctx) {
+        return visit(ctx.identifier());
+    }
+    
+    @Override
+    public Object visitSnippetExpression(QueryLangParser.SnippetExpressionContext ctx) {
+        String variable = (String) visit(ctx.variable());
+        int windowSize = SnippetNode.DEFAULT_WINDOW_SIZE;
+        
+        if (ctx.NUMBER() != null) {
+            windowSize = Integer.parseInt(ctx.NUMBER().getText());
+        }
+        
+        return new SnippetNode(variable, windowSize);
+    }
+    
+    @Override
+    public Object visitMetadataExpression(QueryLangParser.MetadataExpressionContext ctx) {
+        return new MetadataNode();
+    }
+    
+    @Override
+    public Object visitCountAllExpression(QueryLangParser.CountAllExpressionContext ctx) {
+        return CountNode.countAll();
+    }
+    
+    @Override
+    public Object visitCountUniqueExpression(QueryLangParser.CountUniqueExpressionContext ctx) {
+        String variable = (String) visit(ctx.variable());
+        return CountNode.countUnique(variable);
+    }
+    
+    @Override
+    public Object visitCountDocumentsExpression(QueryLangParser.CountDocumentsExpressionContext ctx) {
+        return CountNode.countDocuments();
     }
 
     @Override
@@ -79,7 +163,11 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitContainsExpression(QueryLangParser.ContainsExpressionContext ctx) {
-        return new ContainsCondition(unquote(ctx.STRING().getText()));
+        List<String> terms = new ArrayList<>();
+        for (var termCtx : ctx.terms) {
+            terms.add(unquote(termCtx.getText()));
+        }
+        return new ContainsCondition(terms);
     }
 
     @Override
@@ -116,60 +204,82 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitVariable(QueryLangParser.VariableContext ctx) {
-        StringBuilder var = new StringBuilder();
-        var.append(ctx.IDENTIFIER().getText());
-        if (ctx.WILDCARD() != null) {
-            var.append("*");
-        }
-        return var.toString();
+        return ctx.IDENTIFIER().getText();
     }
 
     @Override
-    public Object visitDateExpression(QueryLangParser.DateExpressionContext ctx) {
-        if (ctx.NEAR() != null) {
-            // Handle NEAR with range
-            String dateVar = (String) visitVariable(ctx.dateVar);
-            LocalDateTime compareDate = null;
-            
-            if (ctx.dateCompareValue != null && ctx.dateCompareValue.STRING() != null) {
-                compareDate = parseDateTime(ctx.dateCompareValue.STRING().getText());
-            } else if (ctx.dateCompareValue != null && ctx.dateCompareValue.subQuery() != null) {
-                throw new UnsupportedOperationException("Subquery date comparison not yet implemented");
-            }
-
-            String range = unquote(ctx.dateRange.STRING().getText());
-            return new TemporalCondition(TemporalCondition.Type.NEAR, dateVar, compareDate, range);
-        } else if (ctx.dateOp != null) {
-            // Handle DATE(?var) < "2020" or similar
-            String dateVar = (String) visitVariable(ctx.dateVar);
-            LocalDateTime compareDate = null;
-            
-            if (ctx.dateCompareValue != null && ctx.dateCompareValue.STRING() != null) {
-                compareDate = parseDateTime(ctx.dateCompareValue.STRING().getText());
-            } else if (ctx.dateCompareValue != null && ctx.dateCompareValue.subQuery() != null) {
-                throw new UnsupportedOperationException("Subquery date comparison not yet implemented");
-            }
-
-            TemporalCondition.Type type = getTemporalType(ctx.dateOp.getText());
-            return new TemporalCondition(type, dateVar, compareDate);
-        } else if (ctx.dateVar != null) {
-            // Simple DATE(?var)
-            return new TemporalCondition((String) visitVariable(ctx.dateVar));
-        } else if (ctx.dateString != null) {
-            // Simple DATE "2020"
-            return new TemporalCondition(TemporalCondition.Type.NEAR, parseDateTime(ctx.dateString.getText()));
+    public Object visitDateComparisonExpression(QueryLangParser.DateComparisonExpressionContext ctx) {
+        String variable = (String) visit(ctx.variable());
+        int year = Integer.parseInt(ctx.year.getText());
+        TemporalCondition.ComparisonType compType = mapComparisonOp(ctx.comparisonOp().getText());
+        
+        return new TemporalCondition(compType, variable, year);
+    }
+    
+    @Override
+    public Object visitDateOperatorExpression(QueryLangParser.DateOperatorExpressionContext ctx) {
+        String variable = (String) visit(ctx.variable());
+        TemporalCondition.Type type = mapDateOperator(ctx.dateOperator().getText());
+        
+        // Process the date value
+        Object dateValueResult = visit(ctx.dateValue());
+        LocalDateTime startDate = null;
+        Optional<LocalDateTime> endDate = Optional.empty();
+        
+        if (dateValueResult instanceof LocalDateTime) {
+            startDate = (LocalDateTime) dateValueResult;
+        } else if (dateValueResult instanceof LocalDateTime[] dateRange) {
+            startDate = dateRange[0];
+            endDate = Optional.of(dateRange[1]);
         }
-        throw new IllegalStateException("Invalid date expression");
+        
+        // Handle radius if present
+        if (ctx.radius != null) {
+            String radiusValue = ctx.radius.getText() + ctx.unit.getText();
+            return new TemporalCondition(type, variable, startDate, radiusValue);
+        }
+        
+        if (endDate.isPresent()) {
+            // TODO: Properly handle date ranges
+            return new TemporalCondition(type, variable, startDate);
+        } else {
+            return new TemporalCondition(type, variable, startDate);
+        }
+    }
+    
+    @Override
+    public Object visitDateRange(QueryLangParser.DateRangeContext ctx) {
+        int startYear = Integer.parseInt(ctx.start.getText());
+        int endYear = Integer.parseInt(ctx.end.getText());
+        LocalDateTime startDate = LocalDateTime.of(startYear, 1, 1, 0, 0);
+        LocalDateTime endDate = LocalDateTime.of(endYear, 12, 31, 23, 59, 59);
+        return new LocalDateTime[] { startDate, endDate };
+    }
+    
+    @Override
+    public Object visitSingleYear(QueryLangParser.SingleYearContext ctx) {
+        int year = Integer.parseInt(ctx.single.getText());
+        return LocalDateTime.of(year, 1, 1, 0, 0);
     }
 
-    private TemporalCondition.Type getTemporalType(String operator) {
+    private TemporalCondition.ComparisonType mapComparisonOp(String operator) {
         return switch (operator) {
-            case "<" -> TemporalCondition.Type.BEFORE;
-            case ">" -> TemporalCondition.Type.AFTER;
-            case "<=" -> TemporalCondition.Type.BEFORE;  // Using BEFORE for <=
-            case ">=" -> TemporalCondition.Type.AFTER;   // Using AFTER for >=
-            case "==" -> TemporalCondition.Type.NEAR;    // Using NEAR for exact matches
-            default -> throw new IllegalStateException("Invalid temporal operator: " + operator);
+            case "<" -> TemporalCondition.ComparisonType.LT;
+            case ">" -> TemporalCondition.ComparisonType.GT;
+            case "<=" -> TemporalCondition.ComparisonType.LE;
+            case ">=" -> TemporalCondition.ComparisonType.GE;
+            case "==" -> TemporalCondition.ComparisonType.EQ;
+            default -> throw new IllegalStateException("Invalid comparison operator: " + operator);
+        };
+    }
+    
+    private TemporalCondition.Type mapDateOperator(String operator) {
+        return switch (operator) {
+            case "CONTAINS" -> TemporalCondition.Type.CONTAINS;
+            case "CONTAINED_BY" -> TemporalCondition.Type.CONTAINED_BY;
+            case "INTERSECT" -> TemporalCondition.Type.INTERSECT;
+            case "NEAR" -> TemporalCondition.Type.NEAR;
+            default -> throw new IllegalStateException("Invalid date operator: " + operator);
         };
     }
 
@@ -216,7 +326,17 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitOrderSpec(QueryLangParser.OrderSpecContext ctx) {
-        String field = (String) visitIdentifier(ctx.field);
+        String field;
+        
+        // Extract the field name from either identifier or variable
+        if (ctx.identifier() != null) {
+            field = (String) visitIdentifier(ctx.identifier());
+        } else if (ctx.variable() != null) {
+            field = (String) visit(ctx.variable());
+        } else {
+            throw new IllegalStateException("OrderSpec must have either identifier or variable");
+        }
+        
         OrderSpec.Direction direction = OrderSpec.Direction.ASC; // Default to ascending
         
         if (ctx.DESC() != null) {
@@ -224,11 +344,6 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         }
         
         return new OrderSpec(field, direction);
-    }
-
-    @Override
-    public Object visitSubQuery(QueryLangParser.SubQueryContext ctx) {
-        throw new UnsupportedOperationException("Subqueries are not yet supported");
     }
 
     private LocalDateTime parseDateTime(String text) {
@@ -248,13 +363,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         }
         return text;
     }
-
-    /**
-     * Convenience method to parse a query string and return a Query object.
-     *
-     * @param tree The ANTLR parse tree
-     * @return The constructed Query object
-     */
+    
     public Query buildQuery(ParseTree tree) {
         return (Query) visit(tree);
     }
