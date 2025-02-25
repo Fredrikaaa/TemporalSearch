@@ -30,7 +30,9 @@ class QuerySemanticValidatorTest {
                 new NerCondition("PERSON", "Einstein", false)
             ),
             Collections.singletonList(new OrderSpec("date", OrderSpec.Direction.DESC)),
-            Optional.of(10)
+            Optional.of(10),
+            Optional.empty(),  // granularity
+            Optional.empty()   // granularitySize
         );
 
         assertDoesNotThrow(() -> validator.validate(query));
@@ -42,7 +44,9 @@ class QuerySemanticValidatorTest {
         Query query = new Query("wikipedia",
             Collections.singletonList(new ContainsCondition("")),
             Collections.emptyList(),
-            Optional.empty()
+            Optional.empty(),
+            Optional.empty(),  // granularity
+            Optional.empty()   // granularitySize
         );
 
         assertThrows(QueryParseException.class, () -> validator.validate(query));
@@ -54,7 +58,9 @@ class QuerySemanticValidatorTest {
         Query query = new Query("wikipedia",
             Collections.singletonList(new NerCondition("INVALID_TYPE", "test", false)),
             Collections.emptyList(),
-            Optional.empty()
+            Optional.empty(),
+            Optional.empty(),  // granularity
+            Optional.empty()   // granularitySize
         );
 
         QueryParseException e = assertThrows(QueryParseException.class, 
@@ -71,7 +77,9 @@ class QuerySemanticValidatorTest {
                 new NerCondition("ORGANIZATION", "scientist", true)
             ),
             Collections.emptyList(),
-            Optional.empty()
+            Optional.empty(),
+            Optional.empty(),  // granularity
+            Optional.empty()   // granularitySize
         );
 
         QueryParseException e = assertThrows(QueryParseException.class, 
@@ -88,7 +96,9 @@ class QuerySemanticValidatorTest {
         Query query = new Query("wikipedia",
             Collections.singletonList(new TemporalCondition(start, end)),
             Collections.emptyList(),
-            Optional.empty()
+            Optional.empty(),
+            Optional.empty(),  // granularity
+            Optional.empty()   // granularitySize
         );
 
         QueryParseException e = assertThrows(QueryParseException.class, 
@@ -102,7 +112,9 @@ class QuerySemanticValidatorTest {
         Query query = new Query("wikipedia",
             Collections.singletonList(new DependencyCondition("", "nsubj", "cat")),
             Collections.emptyList(),
-            Optional.empty()
+            Optional.empty(),
+            Optional.empty(),  // granularity
+            Optional.empty()   // granularitySize
         );
 
         QueryParseException e = assertThrows(QueryParseException.class, 
@@ -116,7 +128,9 @@ class QuerySemanticValidatorTest {
         Query query = new Query("wikipedia",
             Collections.emptyList(),
             Collections.singletonList(new OrderSpec("")),
-            Optional.empty()
+            Optional.empty(),
+            Optional.empty(),  // granularity
+            Optional.empty()   // granularitySize
         );
 
         QueryParseException e = assertThrows(QueryParseException.class, 
@@ -130,7 +144,9 @@ class QuerySemanticValidatorTest {
         Query query = new Query("wikipedia",
             Collections.emptyList(),
             Collections.emptyList(),
-            Optional.of(0)
+            Optional.of(0),
+            Optional.empty(),  // granularity
+            Optional.empty()   // granularitySize
         );
 
         QueryParseException e = assertThrows(QueryParseException.class, 

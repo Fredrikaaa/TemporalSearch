@@ -329,18 +329,23 @@
             <plugin>
                 <groupId>org.antlr</groupId>
                 <artifactId>antlr4-maven-plugin</artifactId>
-                <version>4.13.1</version>
+                <version>4.13.2</version>
                 <configuration>
                     <sourceDirectory>${basedir}/src/main/antlr4</sourceDirectory>
-                    <outputDirectory>${basedir}/src/main/java</outputDirectory>
+                    <outputDirectory>${project.build.directory}/generated-sources/antlr4</outputDirectory>
                     <visitor>true</visitor>
                     <listener>true</listener>
+                    <treatWarningsAsErrors>true</treatWarningsAsErrors>
+                    <includes>
+                        <include>**/*.g4</include>
+                    </includes>
                 </configuration>
                 <executions>
                     <execution>
                         <goals>
                             <goal>antlr4</goal>
                         </goals>
+                        <phase>generate-sources</phase>
                     </execution>
                 </executions>
             </plugin>

@@ -67,6 +67,8 @@ query
       FROM identifier
       whereClause?
       granularityClause?
+      orderByClause?
+      limitClause?
       EOF
     ;
 
@@ -75,10 +77,11 @@ selectList
     ;
 
 selectColumn
-    : variable
-    | snippetExpression
-    | metadataExpression
-    | identifier
+    : variable                    # VariableColumn
+    | snippetExpression           # SnippetColumn
+    | metadataExpression          # MetadataColumn
+    | countExpression             # CountColumn
+    | identifier                  # IdentifierColumn
     ;
 
 snippetExpression
@@ -87,6 +90,12 @@ snippetExpression
 
 metadataExpression
     : METADATA
+    ;
+
+countExpression
+    : COUNT LPAREN WILDCARD RPAREN                   # CountAllExpression
+    | COUNT LPAREN UNIQUE variable RPAREN            # CountUniqueExpression
+    | COUNT LPAREN DOCUMENTS RPAREN                  # CountDocumentsExpression
     ;
 
 whereClause
@@ -106,9 +115,9 @@ singleCondition
     ;
 
 dateExpression
-    : DATE LPAREN variable COMMA operator=dateOperator range=dateValue
-      (RADIUS radius=NUMBER unit=timeUnit)? RPAREN
-    | DATE LPAREN variable COMMA comparisonOp year=NUMBER RPAREN
+    : DATE LPAREN variable COMMA comparisonOp year=NUMBER RPAREN       # DateComparisonExpression
+    | DATE LPAREN variable COMMA dateOperator dateValue
+      (RADIUS radius=NUMBER unit=timeUnit)? RPAREN                     # DateOperatorExpression
     ;
 
 dateOperator
@@ -130,6 +139,18 @@ timeUnit
 
 granularityClause
     : GRANULARITY (DOCUMENT | SENTENCE NUMBER?)
+    ;
+
+orderByClause
+    : ORDER BY orderSpec (COMMA orderSpec)*
+    ;
+
+orderSpec
+    : field=identifier (ASC | DESC)?
+    ;
+
+limitClause
+    : LIMIT count=NUMBER
     ;
 
 nerExpression

@@ -36,6 +36,7 @@ class ContainsConditionTest {
     @Test
     @DisplayName("Constructor should not accept null value")
     void constructorShouldNotAcceptNull() {
-        assertThrows(NullPointerException.class, () -> new ContainsCondition(null));
+        String nullValue = null;
+        assertThrows(NullPointerException.class, () -> new ContainsCondition(nullValue));
     }
 } 
