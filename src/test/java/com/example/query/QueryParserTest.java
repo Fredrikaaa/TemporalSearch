@@ -145,9 +145,14 @@ class QueryParserTest {
                          "AND NER(\"PERSON\", \"Einstein\")";
         Query query = parser.parse(queryStr);
 
-        assertEquals(2, query.getConditions().size());
-        assertTrue(query.getConditions().get(0) instanceof ContainsCondition);
-        assertTrue(query.getConditions().get(1) instanceof NerCondition);
+        assertEquals(1, query.getConditions().size());
+        assertTrue(query.getConditions().get(0) instanceof LogicalCondition);
+        
+        LogicalCondition condition = (LogicalCondition) query.getConditions().get(0);
+        assertEquals(LogicalCondition.LogicalOperator.AND, condition.getOperator());
+        assertEquals(2, condition.getConditions().size());
+        assertTrue(condition.getConditions().get(0) instanceof ContainsCondition);
+        assertTrue(condition.getConditions().get(1) instanceof NerCondition);
     }
 
     @Test
@@ -185,14 +190,27 @@ class QueryParserTest {
         Query query = parser.parse(queryStr);
 
         assertEquals("wikipedia", query.getSource());
-        assertEquals(3, query.getConditions().size());
+        assertEquals(1, query.getConditions().size());
         assertEquals(1, query.getOrderBy().size());
         assertEquals(5, query.getLimit().get());
         
         // Verify the conditions in detail
-        assertTrue(query.getConditions().get(0) instanceof ContainsCondition);
-        assertTrue(query.getConditions().get(1) instanceof NerCondition);
-        assertTrue(query.getConditions().get(2) instanceof TemporalCondition);
+        assertTrue(query.getConditions().get(0) instanceof LogicalCondition);
+        LogicalCondition condition = (LogicalCondition) query.getConditions().get(0);
+        assertEquals(LogicalCondition.LogicalOperator.AND, condition.getOperator());
+        assertEquals(2, condition.getConditions().size());
+        
+        // First condition should be a nested logical condition with CONTAINS and NER
+        assertTrue(condition.getConditions().get(0) instanceof LogicalCondition);
+        // Second condition should be the temporal condition
+        assertTrue(condition.getConditions().get(1) instanceof TemporalCondition);
+        
+        // Check the nested logical condition
+        LogicalCondition nestedCondition = (LogicalCondition) condition.getConditions().get(0);
+        assertEquals(LogicalCondition.LogicalOperator.AND, nestedCondition.getOperator());
+        assertEquals(2, nestedCondition.getConditions().size());
+        assertTrue(nestedCondition.getConditions().get(0) instanceof ContainsCondition);
+        assertTrue(nestedCondition.getConditions().get(1) instanceof NerCondition);
     }
 
     @Test
@@ -202,7 +220,12 @@ class QueryParserTest {
                          "WHERE (CONTAINS(\"physics\") AND NER(\"PERSON\", \"Einstein\"))";
         Query query = parser.parse(queryStr);
 
-        assertEquals(2, query.getConditions().size());
+        assertEquals(1, query.getConditions().size());
+        assertTrue(query.getConditions().get(0) instanceof LogicalCondition);
+        
+        LogicalCondition condition = (LogicalCondition) query.getConditions().get(0);
+        assertEquals(LogicalCondition.LogicalOperator.AND, condition.getOperator());
+        assertEquals(2, condition.getConditions().size());
     }
 
     @Test
@@ -214,6 +237,73 @@ class QueryParserTest {
         
         // This isn't really a subquery test anymore, but a test of nested conditions
         assertDoesNotThrow(() -> parser.parse(queryStr));
+    }
+
+    @Test
+    @DisplayName("Parse query with OR condition")
+    void parseOrCondition() throws QueryParseException {
+        String queryStr = "SELECT documents FROM wikipedia WHERE CONTAINS(\"physics\") OR NER(\"PERSON\", \"Einstein\")";
+        Query query = parser.parse(queryStr);
+
+        assertEquals(1, query.getConditions().size());
+        assertTrue(query.getConditions().get(0) instanceof LogicalCondition);
+        
+        LogicalCondition condition = (LogicalCondition) query.getConditions().get(0);
+        assertEquals(LogicalCondition.LogicalOperator.OR, condition.getOperator());
+        assertEquals(2, condition.getConditions().size());
+        
+        assertTrue(condition.getConditions().get(0) instanceof ContainsCondition);
+        assertTrue(condition.getConditions().get(1) instanceof NerCondition);
+        
+        ContainsCondition containsCondition = (ContainsCondition) condition.getConditions().get(0);
+        assertEquals("physics", containsCondition.getValue());
+        
+        NerCondition nerCondition = (NerCondition) condition.getConditions().get(1);
+        assertEquals("PERSON", nerCondition.getEntityType());
+        assertEquals("Einstein", nerCondition.getTarget());
+    }
+    
+    @Test
+    @DisplayName("Parse query with NOT condition")
+    void parseNotCondition() throws QueryParseException {
+        String queryStr = "SELECT documents FROM wikipedia WHERE NOT CONTAINS(\"irrelevant\")";
+        Query query = parser.parse(queryStr);
+
+        assertEquals(1, query.getConditions().size());
+        assertTrue(query.getConditions().get(0) instanceof NotCondition);
+        
+        NotCondition condition = (NotCondition) query.getConditions().get(0);
+        assertTrue(condition.getCondition() instanceof ContainsCondition);
+        
+        ContainsCondition containsCondition = (ContainsCondition) condition.getCondition();
+        assertEquals("irrelevant", containsCondition.getValue());
+    }
+    
+    @Test
+    @DisplayName("Parse query with mixed logical operators")
+    void parseMixedLogicalOperators() throws QueryParseException {
+        String queryStr = "SELECT documents FROM wikipedia WHERE NER(\"PERSON\", \"Einstein\") AND (CONTAINS(\"physics\") OR NOT CONTAINS(\"biology\"))";
+        Query query = parser.parse(queryStr);
+
+        assertEquals(1, query.getConditions().size());
+        assertTrue(query.getConditions().get(0) instanceof LogicalCondition);
+        
+        LogicalCondition andCondition = (LogicalCondition) query.getConditions().get(0);
+        assertEquals(LogicalCondition.LogicalOperator.AND, andCondition.getOperator());
+        assertEquals(2, andCondition.getConditions().size());
+        
+        assertTrue(andCondition.getConditions().get(0) instanceof NerCondition);
+        assertTrue(andCondition.getConditions().get(1) instanceof LogicalCondition);
+        
+        LogicalCondition orCondition = (LogicalCondition) andCondition.getConditions().get(1);
+        assertEquals(LogicalCondition.LogicalOperator.OR, orCondition.getOperator());
+        assertEquals(2, orCondition.getConditions().size());
+        
+        assertTrue(orCondition.getConditions().get(0) instanceof ContainsCondition);
+        assertTrue(orCondition.getConditions().get(1) instanceof NotCondition);
+        
+        NotCondition notCondition = (NotCondition) orCondition.getConditions().get(1);
+        assertTrue(notCondition.getCondition() instanceof ContainsCondition);
     }
 
     @ParameterizedTest

@@ -127,29 +127,102 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public List<Condition> visitConditionList(QueryLangParser.ConditionListContext ctx) {
-        List<Condition> conditions = new ArrayList<>();
-        for (QueryLangParser.SingleConditionContext condCtx : ctx.singleCondition()) {
-            Object result = visit(condCtx);
+        if (ctx.condition().size() == 1) {
+            // If there's only one condition, return it without creating a logical condition
+            Object result = visit(ctx.condition(0));
             if (result instanceof List<?>) {
                 @SuppressWarnings("unchecked")
-                List<Condition> nestedConditions = (List<Condition>) result;
-                conditions.addAll(nestedConditions);
-            } else {
-                conditions.add((Condition) result);
+                List<Condition> conditions = (List<Condition>) result;
+                return conditions;
+            } else if (result instanceof Condition) {
+                return List.of((Condition) result);
             }
         }
-        return conditions;
+        
+        // Start with the first condition
+        Object firstResult = visit(ctx.condition(0));
+        Condition currentCondition;
+        
+        if (firstResult instanceof List<?>) {
+            @SuppressWarnings("unchecked")
+            List<Condition> firstConditions = (List<Condition>) firstResult;
+            if (firstConditions.size() == 1) {
+                currentCondition = firstConditions.get(0);
+            } else {
+                throw new IllegalStateException("Unexpected multiple conditions in first result");
+            }
+        } else {
+            currentCondition = (Condition) firstResult;
+        }
+        
+        // Process the logical operations
+        for (int i = 0; i < ctx.logicalOp().size(); i++) {
+            // Get the logical operator
+            String opText = ctx.logicalOp(i).getText();
+            LogicalCondition.LogicalOperator operator;
+            if (opText.equalsIgnoreCase("AND")) {
+                operator = LogicalCondition.LogicalOperator.AND;
+            } else if (opText.equalsIgnoreCase("OR")) {
+                operator = LogicalCondition.LogicalOperator.OR;
+            } else {
+                throw new IllegalStateException("Unexpected logical operator: " + opText);
+            }
+            
+            // Get the right operand
+            Object rightResult = visit(ctx.condition(i + 1));
+            Condition rightCondition;
+            
+            if (rightResult instanceof List<?>) {
+                @SuppressWarnings("unchecked")
+                List<Condition> rightConditions = (List<Condition>) rightResult;
+                if (rightConditions.size() == 1) {
+                    rightCondition = rightConditions.get(0);
+                } else {
+                    throw new IllegalStateException("Unexpected multiple conditions in right result");
+                }
+            } else {
+                rightCondition = (Condition) rightResult;
+            }
+            
+            // Create a logical condition
+            currentCondition = new LogicalCondition(operator, currentCondition, rightCondition);
+        }
+        
+        return List.of(currentCondition);
+    }
+    
+    @Override
+    public Object visitCondition(QueryLangParser.ConditionContext ctx) {
+        return visit(ctx.getChild(0));
+    }
+    
+    @Override
+    public Object visitNotCondition(QueryLangParser.NotConditionContext ctx) {
+        Object result = visit(ctx.atomicCondition());
+        if (result instanceof List<?>) {
+            @SuppressWarnings("unchecked")
+            List<Condition> conditions = (List<Condition>) result;
+            if (conditions.size() == 1) {
+                return new NotCondition(conditions.get(0));
+            }
+            throw new IllegalStateException("Unexpected multiple conditions in NOT result");
+        }
+        return new NotCondition((Condition) result);
+    }
+    
+    @Override
+    public Object visitAtomicCondition(QueryLangParser.AtomicConditionContext ctx) {
+        if (ctx.singleCondition() != null) {
+            return visit(ctx.singleCondition());
+        } else if (ctx.LPAREN() != null) {
+            return visit(ctx.conditionList());
+        }
+        throw new IllegalStateException("Unexpected atomic condition structure");
     }
 
     @Override
     public Object visitSingleCondition(QueryLangParser.SingleConditionContext ctx) {
-        if (ctx.getChildCount() > 1 && ctx.getChild(0).getText().equals("(")) {
-            // Handle nested conditions
-            QueryLangParser.ConditionListContext listCtx = ctx.conditionList();
-            if (listCtx != null) {
-                return visitConditionList(listCtx);
-            }
-        }
+        // The nesting logic is now handled in visitAtomicCondition
         return super.visitSingleCondition(ctx);
     }
 
