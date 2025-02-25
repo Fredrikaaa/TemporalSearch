@@ -6,36 +6,51 @@ import java.util.Objects;
  * Represents an ordering specification in a query.
  * Specifies the field to order by and the direction (ascending/descending).
  */
-public class OrderSpec {
+public record OrderSpec(String field, Direction direction) {
+    
     public enum Direction {
         ASC,
         DESC
     }
-
-    private final String field;
-    private final Direction direction;
 
     /**
      * Creates a new ordering specification with the specified field and direction.
      *
      * @param field The field to order by
      * @param direction The direction to order in (ASC or DESC)
-     * @throws IllegalArgumentException if the field is null or empty
      */
-    public OrderSpec(String field, Direction direction) {
-        validateField(field);
-        this.field = field;
-        this.direction = Objects.requireNonNull(direction, "Direction cannot be null");
+    public OrderSpec {
+        // Allow empty field - validation happens in QuerySemanticValidator
+        field = field == null ? "" : field;  // Convert null to empty string
+        Objects.requireNonNull(direction, "Direction cannot be null");
     }
 
     /**
      * Creates a new ordering specification with the specified field and ascending direction.
      *
      * @param field The field to order by
-     * @throws IllegalArgumentException if the field is null or empty
      */
     public OrderSpec(String field) {
         this(field, Direction.ASC);  // Default to ascending order
+    }
+
+    /**
+     * Checks if the field is valid.
+     * 
+     * @return true if the field is not empty and meets validation requirements
+     */
+    public boolean isValid() {
+        if (field == null || field.trim().isEmpty()) {
+            return false;
+        }
+        
+        // Check if the field is a variable reference (starts with ?)
+        if (field.startsWith("?")) {
+            // Variable references should be at least 2 characters long (? + at least one character)
+            return field.length() >= 2;
+        }
+        
+        return true;
     }
 
     /**
@@ -54,26 +69,6 @@ public class OrderSpec {
      */
     public Direction getDirection() {
         return direction;
-    }
-
-    /**
-     * Validates that the field is a valid column reference.
-     *
-     * @param field The field to validate
-     * @throws IllegalArgumentException if the field is null or empty
-     */
-    private void validateField(String field) {
-        if (field == null || field.trim().isEmpty()) {
-            throw new IllegalArgumentException("Order by field cannot be null or empty");
-        }
-        
-        // Check if the field is a variable reference (starts with ?)
-        if (field.startsWith("?")) {
-            // Variable references should be at least 2 characters long (? + at least one character)
-            if (field.length() < 2) {
-                throw new IllegalArgumentException("Variable reference must have a name after '?'");
-            }
-        }
     }
 
     /**

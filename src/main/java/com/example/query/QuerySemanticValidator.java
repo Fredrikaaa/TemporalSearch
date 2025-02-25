@@ -265,13 +265,13 @@ public class QuerySemanticValidator {
 
     private void validateOrderSpec(OrderSpec orderSpec) throws QueryParseException {
         // Add validation for valid ordering fields
-        if (orderSpec.getField().isEmpty()) {
+        if (!orderSpec.isValid()) {
             throw new QueryParseException("Order by field cannot be empty");
         }
         
         // If this is a variable, check that it's bound
-        if (orderSpec.getField().startsWith("?")) {
-            String varName = orderSpec.getField();
+        if (orderSpec.field().startsWith("?")) {
+            String varName = orderSpec.field();
             
             logger.debug("Validating ORDER BY variable: {} against bound variables: {}", varName, boundVariables);
             

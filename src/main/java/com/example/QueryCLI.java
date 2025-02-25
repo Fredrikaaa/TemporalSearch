@@ -2,6 +2,8 @@ package com.example;
 
 import com.example.query.*;
 import com.example.query.model.*;
+import com.example.query.model.column.ColumnSpec;
+import com.example.query.model.column.ColumnType;
 import com.example.core.*;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
@@ -138,9 +140,6 @@ public class QueryCLI {
                 }
             }
 
-            // Create a result processor for applying result control operations
-            ResultProcessor resultProcessor = new ResultProcessor();
-            
             // Convert document IDs to result rows
             List<Map<String, String>> resultRows = new ArrayList<>();
             for (Integer docId : results) {
@@ -151,31 +150,27 @@ public class QueryCLI {
             }
             
             // Create a result table
-            List<com.example.query.model.column.ColumnSpec> columns = new ArrayList<>();
-            columns.add(new com.example.query.model.column.ColumnSpec(
+            List<ColumnSpec> columns = new ArrayList<>();
+            columns.add(new ColumnSpec(
                 "document_id", 
-                com.example.query.model.column.ColumnType.TERM
+                ColumnType.TERM
             ));
             // TODO: Add more columns based on query select list
             
-            ResultTable resultTable = new ResultTable(
-                columns, 
-                resultRows, 
-                10, 
-                com.example.query.format.TableConfig.getDefault()
-            );
+            // Create a ResultTable
+            ResultTable resultTable = new ResultTable(columns, resultRows);
             
             // Apply ordering if specified
             if (!query.getOrderBy().isEmpty()) {
                 logger.debug("Applying ordering: {}", query.getOrderBy());
-                resultTable = resultProcessor.applyOrdering(resultTable, query.getOrderBy());
+                resultTable = resultTable.sort(query.getOrderBy());
             }
 
             // Apply limit if specified
             if (query.getLimit().isPresent()) {
                 int limit = query.getLimit().get();
                 logger.debug("Applying limit: {}", limit);
-                resultTable = resultProcessor.applyLimit(resultTable, limit);
+                resultTable = resultTable.limit(limit);
             }
 
             // Handle COUNT queries
@@ -185,25 +180,22 @@ public class QueryCLI {
                 
                 switch (countNode.type()) {
                     case ALL:
-                        count = resultProcessor.countAll(resultTable);
+                        count = resultTable.countAll();
                         break;
                     case UNIQUE:
                         columnName = countNode.variable().orElse("document_id");
-                        count = resultProcessor.countUnique(resultTable, columnName);
+                        count = resultTable.countUnique(columnName);
                         break;
                     case DOCUMENTS:
-                        count = resultProcessor.countDocuments(resultTable);
+                        count = resultTable.countUnique("document_id");
                         break;
                     default:
                         throw new IllegalStateException("Unknown count type: " + countNode.type());
                 }
                 
                 // Create a count result table
-                resultTable = resultProcessor.createCountResultTable(
-                    count, 
-                    countNode.type(), 
-                    columnName
-                );
+                String countColumnName = getCountColumnName(countNode.type(), columnName);
+                resultTable = ResultTable.createCountTable(count, countColumnName);
                 
                 // Display count result
                 System.out.printf("Count result: %d%n", count);
@@ -212,10 +204,7 @@ public class QueryCLI {
                 System.out.printf("Found %d matching documents%n", resultTable.getRowCount());
                 
                 // Format and display the result table
-                for (int i = 0; i < resultTable.getRowCount(); i++) {
-                    System.out.printf("Document ID: %s%n", resultTable.getValue(i, "document_id"));
-                    // TODO: Display more document details
-                }
+                System.out.println(resultTable.format());
             }
 
         } catch (QueryParseException e) {
@@ -226,6 +215,14 @@ public class QueryCLI {
             System.err.println("Error executing query: " + e.getMessage());
             logger.error("Query execution failed", e);
         }
+    }
+
+    private String getCountColumnName(CountNode.CountType countType, String columnName) {
+        return switch (countType) {
+            case ALL -> "COUNT(*)";
+            case UNIQUE -> "COUNT(UNIQUE " + columnName + ")";
+            case DOCUMENTS -> "COUNT(DOCUMENTS)";
+        };
     }
 
     private Set<Integer> executeCondition(Condition condition) throws IndexAccessException {

@@ -16,13 +16,10 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class ResultControlTest {
 
-    private ResultProcessor resultProcessor;
     private ResultTable sampleTable;
 
     @BeforeEach
     void setUp() {
-        resultProcessor = new ResultProcessor();
-        
         // Create a sample result table with test data
         List<ColumnSpec> columns = List.of(
             new ColumnSpec("person", ColumnType.PERSON),
@@ -55,7 +52,7 @@ public class ResultControlTest {
         // Order by person name ascending
         List<OrderSpec> orderSpecs = List.of(new OrderSpec("person", OrderSpec.Direction.ASC));
         
-        ResultTable sortedTable = resultProcessor.applyOrdering(sampleTable, orderSpecs);
+        ResultTable sortedTable = sampleTable.sort(orderSpecs);
         
         // Verify the order is correct
         List<String> personColumn = extractColumn(sortedTable, "person");
@@ -69,7 +66,7 @@ public class ResultControlTest {
         // Order by organization name descending
         List<OrderSpec> orderSpecs = List.of(new OrderSpec("org", OrderSpec.Direction.DESC));
         
-        ResultTable sortedTable = resultProcessor.applyOrdering(sampleTable, orderSpecs);
+        ResultTable sortedTable = sampleTable.sort(orderSpecs);
         
         // Verify the order is correct
         List<String> orgColumn = extractColumn(sortedTable, "org");
@@ -87,7 +84,7 @@ public class ResultControlTest {
         rows.add(createRow("Bob Brown", "Google", "2023-02-10"));
         rows.add(createRow("Zack Wilson", "Microsoft", "2023-01-05"));
         
-        ResultTable table = new ResultTable(sampleTable.columns(), rows, 10, TableConfig.getDefault());
+        ResultTable table = new ResultTable(sampleTable.getColumns(), rows, 10, TableConfig.getDefault());
         
         // Order by org ascending, then by person descending
         List<OrderSpec> orderSpecs = List.of(
@@ -95,7 +92,7 @@ public class ResultControlTest {
             new OrderSpec("person", OrderSpec.Direction.DESC)
         );
         
-        ResultTable sortedTable = resultProcessor.applyOrdering(table, orderSpecs);
+        ResultTable sortedTable = table.sort(orderSpecs);
         
         // Verify the order is correct
         List<String> orgColumn = extractColumn(sortedTable, "org");
@@ -112,7 +109,7 @@ public class ResultControlTest {
     @Test
     void testLimit() {
         // Apply a limit of 3 rows
-        ResultTable limitedTable = resultProcessor.applyLimit(sampleTable, 3);
+        ResultTable limitedTable = sampleTable.limit(3);
         
         // Verify the row count is limited
         assertEquals(3, limitedTable.getRowCount());
@@ -124,7 +121,7 @@ public class ResultControlTest {
     @Test
     void testLimitExceedingRowCount() {
         // Apply a limit larger than the row count
-        ResultTable limitedTable = resultProcessor.applyLimit(sampleTable, 10);
+        ResultTable limitedTable = sampleTable.limit(10);
         
         // Verify all rows are returned
         assertEquals(sampleTable.getRowCount(), limitedTable.getRowCount());
@@ -133,7 +130,7 @@ public class ResultControlTest {
     @Test
     void testCountAll() {
         // Count all rows
-        int count = resultProcessor.countAll(sampleTable);
+        int count = sampleTable.countAll();
         
         // Verify the count is correct
         assertEquals(5, count);
@@ -148,10 +145,10 @@ public class ResultControlTest {
         rows.add(createRow("Bob Brown", "Google", "2023-02-10"));
         rows.add(createRow("Zack Wilson", "Microsoft", "2023-01-05"));
         
-        ResultTable table = new ResultTable(sampleTable.columns(), rows, 10, TableConfig.getDefault());
+        ResultTable table = new ResultTable(sampleTable.getColumns(), rows, 10, TableConfig.getDefault());
         
         // Count unique org values
-        int count = resultProcessor.countUnique(table, "org");
+        int count = table.countUnique("org");
         
         // Verify the count is correct
         assertEquals(2, count);
@@ -162,8 +159,8 @@ public class ResultControlTest {
         // Order by person name ascending and limit to 2 rows
         List<OrderSpec> orderSpecs = List.of(new OrderSpec("person", OrderSpec.Direction.ASC));
         
-        ResultTable sortedTable = resultProcessor.applyOrdering(sampleTable, orderSpecs);
-        ResultTable limitedTable = resultProcessor.applyLimit(sortedTable, 2);
+        ResultTable sortedTable = sampleTable.sort(orderSpecs);
+        ResultTable limitedTable = sortedTable.limit(2);
         
         // Verify the order and limit are correct
         List<String> personColumn = extractColumn(limitedTable, "person");
