@@ -277,7 +277,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitVariable(QueryLangParser.VariableContext ctx) {
-        return ctx.IDENTIFIER().getText();
+        return "?" + ctx.IDENTIFIER().getText();
     }
 
     @Override

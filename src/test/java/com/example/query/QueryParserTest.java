@@ -86,7 +86,7 @@ class QueryParserTest {
 
         NerCondition condition = (NerCondition) query.getConditions().get(0);
         assertEquals("PERSON", condition.getEntityType());
-        assertEquals("scientist", condition.getTarget());
+        assertEquals("?scientist", condition.getTarget());
         assertTrue(condition.isVariable());
     }
 
@@ -105,7 +105,7 @@ class QueryParserTest {
             condition.getStartDate()
         );
         assertTrue(condition.getVariable().isPresent());
-        assertEquals("date", condition.getVariable().get());
+        assertEquals("?date", condition.getVariable().get());
     }
 
     @Test
@@ -117,7 +117,7 @@ class QueryParserTest {
         TemporalCondition condition = (TemporalCondition) query.getConditions().get(0);
         assertEquals(TemporalCondition.Type.NEAR, condition.getTemporalType());
         assertTrue(condition.getVariable().isPresent());
-        assertEquals("founding", condition.getVariable().get());
+        assertEquals("?founding", condition.getVariable().get());
         assertEquals(LocalDateTime.of(1980, 1, 1, 0, 0), condition.getStartDate());
         assertTrue(condition.getRange().isPresent());
         assertEquals("5y", condition.getRange().get());
