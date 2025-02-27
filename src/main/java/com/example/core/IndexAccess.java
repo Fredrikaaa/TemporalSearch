@@ -17,6 +17,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class IndexAccess implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(IndexAccess.class);
 
+    // Delimiter constants for different index types
+    public static final char NGRAM_DELIMITER = '\0';  // Null byte delimiter used for n-grams (bigrams, trigrams)
+    public static final String FIELD_DELIMITER = ":"; // Field delimiter used for structured data (NER, POS, dependencies)
+    
     private final DB db;
     private final String indexPath;
     private final String indexType;
