@@ -326,6 +326,8 @@ public class ResultTable {
             return "[Empty result table]";
         }
 
+        StringBuilder sb = new StringBuilder();
+        
         // Get column names and determine column widths
         List<String> columnNames = getColumnNames();
         Map<String, Integer> columnWidths = new HashMap<>();
@@ -344,8 +346,6 @@ public class ResultTable {
                 columnWidths.put(col, Math.max(columnWidths.get(col), displayLength));
             }
         }
-        
-        StringBuilder sb = new StringBuilder();
         
         // Format header
         if (config.showHeaders()) {

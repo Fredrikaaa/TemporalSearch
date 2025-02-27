@@ -2,6 +2,8 @@ package com.example.query.executor;
 
 import com.example.core.IndexAccess;
 import com.example.query.model.Condition;
+import com.example.query.model.DocSentenceMatch;
+import com.example.query.model.Query;
 
 import java.util.Map;
 import java.util.Set;
@@ -19,10 +21,11 @@ public interface ConditionExecutor<T extends Condition> {
      * @param condition The condition to execute
      * @param indexes Map of index name to IndexAccess
      * @param variableBindings Current variable bindings to update
-     * @return Set of document IDs matching the condition
+     * @param granularity Whether to return document or sentence level matches
+     * @return Set of matches at the specified granularity level
      * @throws QueryExecutionException if execution fails
      */
-    Set<Integer> execute(T condition, Map<String, IndexAccess> indexes,
-                         VariableBindings variableBindings)
+    Set<DocSentenceMatch> execute(T condition, Map<String, IndexAccess> indexes,
+                         VariableBindings variableBindings, Query.Granularity granularity)
         throws QueryExecutionException;
 } 

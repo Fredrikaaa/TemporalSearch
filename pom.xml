@@ -231,6 +231,7 @@
                 </configuration>
                 <executions>
                     <!-- Pipeline JAR -->
+                    <!--
                     <execution>
                         <id>pipeline-jar</id>
                         <phase>package</phase>
@@ -246,7 +247,9 @@
                             </transformers>
                         </configuration>
                     </execution>
+                    -->
                     <!-- LevelDB Browser JAR -->
+                    <!--
                     <execution>
                         <id>browser-jar</id>
                         <phase>package</phase>
@@ -262,7 +265,9 @@
                             </transformers>
                         </configuration>
                     </execution>
+                    -->
                     <!-- Index Runner JAR -->
+                    <!--
                     <execution>
                         <id>indexer-jar</id>
                         <phase>package</phase>
@@ -278,6 +283,7 @@
                             </transformers>
                         </configuration>
                     </execution>
+                    -->
                     <!-- Query CLI JAR -->
                     <execution>
                         <id>query-cli-jar</id>
@@ -303,7 +309,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.0</version>
                 <configuration>
-                    <mainClass>com.example.Pipeline</mainClass>
+                    <mainClass>com.example.QueryCLI</mainClass>
                     <vmArgs>-Xss16m -XX:MaxRAMPercentage=70</vmArgs>
                 </configuration>
             </plugin>

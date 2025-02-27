@@ -2,13 +2,18 @@ package com.example.query.executor;
 
 import com.example.core.IndexAccess;
 import com.example.query.model.Condition;
+import com.example.query.model.DocSentenceMatch;
+import com.example.query.model.LogicalCondition;
+import com.example.query.model.LogicalCondition.LogicalOperator;
 import com.example.query.model.Query;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Executes queries against the provided indexes.
@@ -36,41 +41,36 @@ public class QueryExecutor {
      *
      * @param query The query to execute
      * @param indexes Map of index name to IndexAccess
-     * @return Set of document IDs matching the query
+     * @return Set of matches (document or sentence level based on query granularity)
      * @throws QueryExecutionException if execution fails
      */
-    public Set<Integer> execute(Query query, Map<String, IndexAccess> indexes) 
+    public Set<DocSentenceMatch> execute(Query query, Map<String, IndexAccess> indexes) 
             throws QueryExecutionException {
         logger.debug("Executing query: {}", query);
         
         // Clear variable bindings from previous executions
         variableBindings.clear();
         
-        // Get all conditions from the query
-        Set<Integer> results = new HashSet<>();
-        boolean firstCondition = true;
+        // Determine granularity
+        Query.Granularity granularity = query.getGranularity().orElse(Query.Granularity.DOCUMENT);
+        logger.debug("Using granularity: {}", granularity);
         
-        // Execute each condition and combine results
-        for (Condition condition : query.getConditions()) {
-            Set<Integer> conditionResults = executeCondition(condition, indexes);
-            
-            if (firstCondition) {
-                results.addAll(conditionResults);
-                firstCondition = false;
-            } else {
-                // Implement AND semantics between conditions
-                results.retainAll(conditionResults);
-            }
-            
-            if (results.isEmpty()) {
-                // Short-circuit if no results
-                logger.debug("No results after condition {}, short-circuiting", condition);
-                break;
-            }
+        // Get all conditions from the query
+        List<Condition> conditions = query.getConditions();
+        
+        if (conditions.isEmpty()) {
+            logger.debug("Query has no conditions, returning empty result set");
+            return new HashSet<>();
         }
         
-        logger.debug("Query execution complete, found {} matching documents", results.size());
-        return results;
+        // If there's only one condition, execute it directly
+        if (conditions.size() == 1) {
+            return executeCondition(conditions.get(0), indexes, granularity);
+        }
+        
+        // If there are multiple conditions, create a logical AND condition and execute it
+        LogicalCondition andCondition = new LogicalCondition(LogicalOperator.AND, conditions);
+        return executeCondition(andCondition, indexes, granularity);
     }
     
     /**
@@ -78,21 +78,28 @@ public class QueryExecutor {
      *
      * @param condition The condition to execute
      * @param indexes Map of index name to IndexAccess
-     * @return Set of document IDs matching the condition
+     * @param granularity The query granularity
+     * @return Set of matches at the specified granularity level
      * @throws QueryExecutionException if execution fails
      */
     @SuppressWarnings("unchecked")
-    private Set<Integer> executeCondition(Condition condition, Map<String, IndexAccess> indexes) 
+    private Set<DocSentenceMatch> executeCondition(
+            Condition condition,
+            Map<String, IndexAccess> indexes,
+            Query.Granularity granularity) 
             throws QueryExecutionException {
-        logger.debug("Executing condition: {}", condition);
+        logger.debug("Executing condition: {} with granularity: {}", condition, granularity);
         
         try {
             // Get the appropriate executor for this condition type
             ConditionExecutor executor = executorFactory.getExecutor(condition);
             
             // Execute the condition
-            Set<Integer> results = executor.execute(condition, indexes, variableBindings);
-            logger.debug("Condition {} matched {} documents", condition, results.size());
+            Set<DocSentenceMatch> results = executor.execute(condition, indexes, variableBindings, granularity);
+            logger.debug("Condition {} matched {} {}", 
+                    condition, 
+                    results.size(),
+                    granularity == Query.Granularity.DOCUMENT ? "documents" : "sentences");
             
             return results;
         } catch (IllegalArgumentException e) {
@@ -118,5 +125,18 @@ public class QueryExecutor {
      */
     public VariableBindings getVariableBindings() {
         return variableBindings;
+    }
+    
+    /**
+     * Converts a set of DocSentenceMatch objects to a set of document IDs.
+     * This is used for backward compatibility with code that expects document IDs.
+     *
+     * @param matches Set of DocSentenceMatch objects
+     * @return Set of document IDs
+     */
+    public Set<Integer> getDocumentIds(Set<DocSentenceMatch> matches) {
+        return matches.stream()
+                .map(DocSentenceMatch::getDocumentId)
+                .collect(Collectors.toSet());
     }
 } 

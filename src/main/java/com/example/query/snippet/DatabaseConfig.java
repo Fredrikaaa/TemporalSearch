@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
  */
 public class DatabaseConfig {
     private static final Logger logger = LoggerFactory.getLogger(DatabaseConfig.class);
-    public static final String DEFAULT_DB_PATH = "dump/simplewiki-20240826-cirrussearch-content.db";
+    public static final String DEFAULT_DB_PATH = "dump/wikipedia-cirrussearch-content.db";
 
     /**
      * Gets a connection to the database

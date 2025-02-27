@@ -10,6 +10,8 @@ import java.util.List;
  */
 public class ContainsCondition implements Condition {
     private final List<String> terms;
+    private final String variableName;
+    private final boolean isVariable;
 
     /**
      * Creates a condition with a single term.
@@ -21,6 +23,8 @@ public class ContainsCondition implements Condition {
             throw new NullPointerException("term cannot be null");
         }
         this.terms = Collections.singletonList(term);
+        this.variableName = null;
+        this.isVariable = false;
     }
     
     /**
@@ -36,6 +40,26 @@ public class ContainsCondition implements Condition {
             throw new IllegalArgumentException("terms cannot be empty");
         }
         this.terms = new ArrayList<>(terms);
+        this.variableName = null;
+        this.isVariable = false;
+    }
+
+    /**
+     * Creates a condition with a variable binding and a term.
+     * 
+     * @param variableName The variable name to bind results to
+     * @param term The search term
+     */
+    public ContainsCondition(String variableName, String term) {
+        if (term == null) {
+            throw new NullPointerException("term cannot be null");
+        }
+        if (variableName == null) {
+            throw new NullPointerException("variableName cannot be null");
+        }
+        this.terms = Collections.singletonList(term);
+        this.variableName = variableName;
+        this.isVariable = true;
     }
 
     /**
@@ -56,6 +80,24 @@ public class ContainsCondition implements Condition {
         return terms.get(0);
     }
 
+    /**
+     * Returns whether this condition uses variable binding.
+     * 
+     * @return true if this condition binds to a variable, false otherwise
+     */
+    public boolean isVariable() {
+        return isVariable;
+    }
+
+    /**
+     * Returns the variable name if this is a variable binding condition.
+     * 
+     * @return The variable name, or null if this is not a variable binding condition
+     */
+    public String getVariableName() {
+        return variableName;
+    }
+
     @Override
     public String getType() {
         return "CONTAINS";
@@ -63,6 +105,9 @@ public class ContainsCondition implements Condition {
 
     @Override
     public String toString() {
+        if (isVariable) {
+            return "ContainsCondition{variable='" + variableName + "', term='" + terms.get(0) + "'}";
+        }
         if (terms.size() == 1) {
             return "ContainsCondition{value='" + terms.get(0) + "'}";
         }

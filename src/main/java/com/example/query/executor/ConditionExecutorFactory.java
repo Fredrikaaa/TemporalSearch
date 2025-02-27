@@ -6,6 +6,7 @@ import com.example.query.model.DependencyCondition;
 import com.example.query.model.LogicalCondition;
 import com.example.query.model.NerCondition;
 import com.example.query.model.NotCondition;
+import com.example.query.model.PosCondition;
 import com.example.query.model.TemporalCondition;
 
 import java.util.HashMap;
@@ -35,17 +36,18 @@ public class ConditionExecutorFactory {
      * Registers the default set of condition executors.
      */
     private void registerDefaultExecutors() {
-        // These will be implemented later
-        // For now, we just register the classes to establish the structure
         logger.debug("Registering default condition executors");
         
-        // TODO: Implement these executor classes
-        // executors.put(ContainsCondition.class, new ContainsConditionExecutor());
-        // executors.put(NerCondition.class, new NerConditionExecutor());
+        // Register the implemented condition executors
+        executors.put(ContainsCondition.class, new ContainsConditionExecutor());
+        executors.put(NerCondition.class, new NerConditionExecutor());
+        executors.put(LogicalCondition.class, new LogicalConditionExecutor(this));
+        executors.put(NotCondition.class, new NotConditionExecutor(this));
+        executors.put(PosCondition.class, new PosConditionExecutor());
+        executors.put(DependencyCondition.class, new DependencyConditionExecutor());
+        
+        // TODO: Implement these executors
         // executors.put(TemporalCondition.class, new TemporalConditionExecutor());
-        // executors.put(DependencyCondition.class, new DependencyConditionExecutor());
-        // executors.put(LogicalCondition.class, new LogicalConditionExecutor(this));
-        // executors.put(NotCondition.class, new NotConditionExecutor(this));
     }
 
     /**

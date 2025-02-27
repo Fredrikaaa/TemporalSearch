@@ -2,6 +2,7 @@ package com.example.query.result;
 
 import com.example.core.IndexAccess;
 import com.example.query.executor.VariableBindings;
+import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.OrderSpec;
 import com.example.query.model.Query;
 import com.example.query.model.ResultTable;
@@ -14,6 +15,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -32,7 +34,7 @@ class ResultGeneratorTest {
     private IndexAccess mockIndexAccess;
     
     private VariableBindings variableBindings;
-    private Set<Integer> documentIds;
+    private Set<DocSentenceMatch> documentMatches;
     private Map<String, IndexAccess> indexes;
     
     @BeforeEach
@@ -41,7 +43,11 @@ class ResultGeneratorTest {
         
         resultGenerator = new ResultGenerator();
         variableBindings = new VariableBindings();
-        documentIds = new HashSet<>(Arrays.asList(1, 2, 3));
+        documentMatches = new HashSet<>(Arrays.asList(
+            new DocSentenceMatch(1),
+            new DocSentenceMatch(2),
+            new DocSentenceMatch(3)
+        ));
         indexes = new HashMap<>();
         indexes.put("metadata", mockIndexAccess);
         
@@ -64,7 +70,7 @@ class ResultGeneratorTest {
     void shouldGenerateResultTable() throws ResultGenerationException {
         // When
         ResultTable resultTable = resultGenerator.generateResultTable(
-            query, documentIds, variableBindings, indexes);
+            query, documentMatches, variableBindings, indexes);
         
         // Then
         assertNotNull(resultTable, "Result table should not be null");
@@ -95,13 +101,13 @@ class ResultGeneratorTest {
         for (Map<String, String> row : rows) {
             String docId = row.get("document_id");
             if (docId.equals("1")) {
-                assertEquals("John Smith@1:5", row.get("?person"), "Row 1 should have correct person value");
-                assertEquals("New York@1:8", row.get("?location"), "Row 1 should have correct location value");
+                assertEquals("John Smith", row.get("?person"), "Row 1 should have correct person value");
+                assertEquals("New York", row.get("?location"), "Row 1 should have correct location value");
             } else if (docId.equals("2")) {
-                assertEquals("Jane Doe@2:3", row.get("?person"), "Row 2 should have correct person value");
-                assertEquals("London@2:6", row.get("?location"), "Row 2 should have correct location value");
+                assertEquals("Jane Doe", row.get("?person"), "Row 2 should have correct person value");
+                assertEquals("London", row.get("?location"), "Row 2 should have correct location value");
             } else if (docId.equals("3")) {
-                assertEquals("Bob Johnson@3:7", row.get("?person"), "Row 3 should have correct person value");
+                assertEquals("Bob Johnson", row.get("?person"), "Row 3 should have correct person value");
                 assertNull(row.get("?location"), "Row 3 should not have location value");
             }
         }
@@ -117,7 +123,7 @@ class ResultGeneratorTest {
         
         // When
         ResultTable resultTable = resultGenerator.generateResultTable(
-            query, documentIds, variableBindings, indexes);
+            query, documentMatches, variableBindings, indexes);
         
         // Then
         List<Map<String, String>> rows = resultTable.getRows();
@@ -137,7 +143,7 @@ class ResultGeneratorTest {
         
         // When
         ResultTable resultTable = resultGenerator.generateResultTable(
-            query, documentIds, variableBindings, indexes);
+            query, documentMatches, variableBindings, indexes);
         
         // Then
         List<Map<String, String>> rows = resultTable.getRows();
@@ -148,11 +154,11 @@ class ResultGeneratorTest {
     @DisplayName("Should handle empty result set")
     void shouldHandleEmptyResultSet() throws ResultGenerationException {
         // Given
-        Set<Integer> emptyDocumentIds = Collections.emptySet();
+        Set<DocSentenceMatch> emptyDocumentMatches = Collections.emptySet();
         
         // When
         ResultTable resultTable = resultGenerator.generateResultTable(
-            query, emptyDocumentIds, variableBindings, indexes);
+            query, emptyDocumentMatches, variableBindings, indexes);
         
         // Then
         assertNotNull(resultTable, "Result table should not be null");
@@ -163,11 +169,11 @@ class ResultGeneratorTest {
     @DisplayName("Should handle exceptions during result generation")
     void shouldHandleExceptions() {
         // Given
-        when(query.getSource()).thenThrow(new RuntimeException("Test exception"));
+        when(query.getSelectColumns()).thenThrow(new RuntimeException("Test exception"));
         
         // When/Then
         assertThrows(ResultGenerationException.class, () -> {
-            resultGenerator.generateResultTable(query, documentIds, variableBindings, indexes);
+            resultGenerator.generateResultTable(query, documentMatches, variableBindings, indexes);
         }, "Should throw ResultGenerationException");
     }
 } 

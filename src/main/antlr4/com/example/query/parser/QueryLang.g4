@@ -189,7 +189,8 @@ entityTarget
     ;
 
 containsExpression
-    : CONTAINS LPAREN terms+=STRING (COMMA terms+=STRING)* RPAREN
+    : CONTAINS LPAREN variable COMMA terms+=STRING RPAREN                        # ContainsWithVariableExpression
+    | CONTAINS LPAREN terms+=STRING (COMMA terms+=STRING)* RPAREN                # ContainsWithoutVariableExpression
     ;
 
 dependsExpression

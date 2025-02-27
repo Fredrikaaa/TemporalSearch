@@ -3,22 +3,27 @@ package com.example.query.executor;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
 /**
  * Tracks variable bindings captured during query execution.
- * Variables can be bound to different values in different documents.
+ * Variables can be bound to different values in different documents and sentences.
  */
 public class VariableBindings {
     // Map from document ID to a map of variable name to value
-    private final Map<Integer, Map<String, String>> bindings;
+    private final Map<Integer, Map<String, String>> documentBindings;
+    
+    // Map from SentenceKey to a map of variable name to value
+    private final Map<SentenceKey, Map<String, String>> sentenceBindings;
 
     /**
      * Creates a new empty VariableBindings object.
      */
     public VariableBindings() {
-        this.bindings = new HashMap<>();
+        this.documentBindings = new HashMap<>();
+        this.sentenceBindings = new HashMap<>();
     }
 
     /**
@@ -29,7 +34,21 @@ public class VariableBindings {
      * @param value The value to bind to the variable
      */
     public void addBinding(int documentId, String variableName, String value) {
-        bindings.computeIfAbsent(documentId, k -> new HashMap<>())
+        documentBindings.computeIfAbsent(documentId, k -> new HashMap<>())
+                .put(variableName, value);
+    }
+    
+    /**
+     * Adds a variable binding for a specific sentence.
+     *
+     * @param documentId The document ID
+     * @param sentenceId The sentence ID
+     * @param variableName The variable name
+     * @param value The value to bind to the variable
+     */
+    public void addBinding(int documentId, int sentenceId, String variableName, String value) {
+        SentenceKey key = new SentenceKey(documentId, sentenceId);
+        sentenceBindings.computeIfAbsent(key, k -> new HashMap<>())
                 .put(variableName, value);
     }
 
@@ -41,8 +60,42 @@ public class VariableBindings {
      * @return Optional containing the value if bound, empty otherwise
      */
     public Optional<String> getValue(int documentId, String variableName) {
-        return Optional.ofNullable(bindings.getOrDefault(documentId, Collections.emptyMap())
+        return Optional.ofNullable(documentBindings.getOrDefault(documentId, Collections.emptyMap())
                 .get(variableName));
+    }
+    
+    /**
+     * Gets the value of a variable for a specific sentence.
+     *
+     * @param documentId The document ID
+     * @param sentenceId The sentence ID
+     * @param variableName The variable name
+     * @return Optional containing the value if bound, empty otherwise
+     */
+    public Optional<String> getValue(int documentId, int sentenceId, String variableName) {
+        SentenceKey key = new SentenceKey(documentId, sentenceId);
+        return Optional.ofNullable(sentenceBindings.getOrDefault(key, Collections.emptyMap())
+                .get(variableName));
+    }
+    
+    /**
+     * Gets the value of a variable, checking both sentence and document level bindings.
+     * Sentence level bindings take precedence over document level bindings.
+     *
+     * @param documentId The document ID
+     * @param sentenceId The sentence ID
+     * @param variableName The variable name
+     * @return Optional containing the value if bound, empty otherwise
+     */
+    public Optional<String> getValueWithFallback(int documentId, int sentenceId, String variableName) {
+        // First check sentence level
+        Optional<String> sentenceValue = getValue(documentId, sentenceId, variableName);
+        if (sentenceValue.isPresent()) {
+            return sentenceValue;
+        }
+        
+        // Fall back to document level
+        return getValue(documentId, variableName);
     }
 
     /**
@@ -53,7 +106,34 @@ public class VariableBindings {
      */
     public Map<String, String> getBindingsForDocument(int documentId) {
         return Collections.unmodifiableMap(
-                bindings.getOrDefault(documentId, Collections.emptyMap()));
+                documentBindings.getOrDefault(documentId, Collections.emptyMap()));
+    }
+    
+    /**
+     * Gets all variable bindings for a specific sentence.
+     *
+     * @param documentId The document ID
+     * @param sentenceId The sentence ID
+     * @return Map of variable name to value
+     */
+    public Map<String, String> getBindingsForSentence(int documentId, int sentenceId) {
+        SentenceKey key = new SentenceKey(documentId, sentenceId);
+        return Collections.unmodifiableMap(
+                sentenceBindings.getOrDefault(key, Collections.emptyMap()));
+    }
+    
+    /**
+     * Gets all variable bindings for a specific sentence, including document-level bindings.
+     * Sentence-level bindings take precedence over document-level bindings.
+     *
+     * @param documentId The document ID
+     * @param sentenceId The sentence ID
+     * @return Map of variable name to value
+     */
+    public Map<String, String> getAllBindingsForSentence(int documentId, int sentenceId) {
+        Map<String, String> result = new HashMap<>(getBindingsForDocument(documentId));
+        result.putAll(getBindingsForSentence(documentId, sentenceId));
+        return Collections.unmodifiableMap(result);
     }
 
     /**
@@ -62,7 +142,16 @@ public class VariableBindings {
      * @return Set of document IDs
      */
     public Set<Integer> getDocumentIds() {
-        return Collections.unmodifiableSet(bindings.keySet());
+        return Collections.unmodifiableSet(documentBindings.keySet());
+    }
+    
+    /**
+     * Gets all sentence keys that have variable bindings.
+     *
+     * @return Set of sentence keys
+     */
+    public Set<SentenceKey> getSentenceKeys() {
+        return Collections.unmodifiableSet(sentenceBindings.keySet());
     }
 
     /**
@@ -72,12 +161,23 @@ public class VariableBindings {
      * @param other The other VariableBindings object
      */
     public void merge(VariableBindings other) {
-        for (Map.Entry<Integer, Map<String, String>> entry : other.bindings.entrySet()) {
+        // Merge document bindings
+        for (Map.Entry<Integer, Map<String, String>> entry : other.documentBindings.entrySet()) {
             int documentId = entry.getKey();
             Map<String, String> docBindings = entry.getValue();
             
             for (Map.Entry<String, String> binding : docBindings.entrySet()) {
                 addBinding(documentId, binding.getKey(), binding.getValue());
+            }
+        }
+        
+        // Merge sentence bindings
+        for (Map.Entry<SentenceKey, Map<String, String>> entry : other.sentenceBindings.entrySet()) {
+            SentenceKey key = entry.getKey();
+            Map<String, String> sentBindings = entry.getValue();
+            
+            for (Map.Entry<String, String> binding : sentBindings.entrySet()) {
+                addBinding(key.documentId, key.sentenceId, binding.getKey(), binding.getValue());
             }
         }
     }
@@ -86,13 +186,57 @@ public class VariableBindings {
      * Clears all variable bindings.
      */
     public void clear() {
-        bindings.clear();
+        documentBindings.clear();
+        sentenceBindings.clear();
     }
 
     @Override
     public String toString() {
         return "VariableBindings{" +
-                "bindings=" + bindings +
+                "documentBindings=" + documentBindings +
+                ", sentenceBindings=" + sentenceBindings +
                 '}';
+    }
+    
+    /**
+     * Helper class for sentence identification
+     */
+    public static class SentenceKey {
+        private final int documentId;
+        private final int sentenceId;
+
+        public SentenceKey(int documentId, int sentenceId) {
+            this.documentId = documentId;
+            this.sentenceId = sentenceId;
+        }
+        
+        public int getDocumentId() {
+            return documentId;
+        }
+        
+        public int getSentenceId() {
+            return sentenceId;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            SentenceKey that = (SentenceKey) o;
+            return documentId == that.documentId && sentenceId == that.sentenceId;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(documentId, sentenceId);
+        }
+        
+        @Override
+        public String toString() {
+            return "SentenceKey{" +
+                    "documentId=" + documentId +
+                    ", sentenceId=" + sentenceId +
+                    '}';
+        }
     }
 } 

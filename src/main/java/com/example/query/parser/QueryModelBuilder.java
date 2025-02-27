@@ -29,6 +29,12 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         Optional<Integer> limit = Optional.empty();
         Optional<Query.Granularity> granularity = Optional.empty();
         Optional<Integer> granularitySize = Optional.empty();
+        List<SelectColumn> selectColumns = new ArrayList<>();
+
+        // Extract select columns
+        if (ctx.selectList() != null) {
+            selectColumns = visitSelectList(ctx.selectList());
+        }
 
         if (ctx.whereClause() != null) {
             conditions.addAll(visitConditionList(ctx.whereClause().conditionList()));
@@ -55,7 +61,8 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             }
         }
 
-        return new Query(source, conditions, orderSpecs, limit, granularity, granularitySize);
+        Query query = new Query(source, conditions, orderSpecs, limit, granularity, granularitySize, selectColumns);
+        return query;
     }
 
     @Override
@@ -69,27 +76,32 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     
     @Override
     public Object visitVariableColumn(QueryLangParser.VariableColumnContext ctx) {
-        return visit(ctx.variable());
+        String variable = (String) visit(ctx.variable());
+        return new VariableColumn(variable);
     }
     
     @Override
     public Object visitSnippetColumn(QueryLangParser.SnippetColumnContext ctx) {
-        return visit(ctx.snippetExpression());
+        SnippetNode snippet = (SnippetNode) visit(ctx.snippetExpression());
+        return new SnippetColumn(snippet);
     }
     
     @Override
     public Object visitMetadataColumn(QueryLangParser.MetadataColumnContext ctx) {
-        return visit(ctx.metadataExpression());
+        // Create a metadata column that selects all fields
+        return new MetadataColumn("METADATA");
     }
     
     @Override
     public Object visitCountColumn(QueryLangParser.CountColumnContext ctx) {
-        return visit(ctx.countExpression());
+        CountNode countNode = (CountNode) visit(ctx.countExpression());
+        return new CountColumn(countNode);
     }
     
     @Override
     public Object visitIdentifierColumn(QueryLangParser.IdentifierColumnContext ctx) {
-        return visit(ctx.identifier());
+        String identifier = (String) visit(ctx.identifier());
+        return new VariableColumn(identifier);
     }
     
     @Override
@@ -106,6 +118,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     
     @Override
     public Object visitMetadataExpression(QueryLangParser.MetadataExpressionContext ctx) {
+        // The metadataExpression rule is just METADATA with no parameters
         return new MetadataNode();
     }
     
@@ -235,7 +248,20 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     }
 
     @Override
-    public Object visitContainsExpression(QueryLangParser.ContainsExpressionContext ctx) {
+    public Object visitContainsWithVariableExpression(QueryLangParser.ContainsWithVariableExpressionContext ctx) {
+        String variableName = (String) visit(ctx.variable());
+        String term = unquote(ctx.terms.get(0).getText());
+        
+        // Remove the ? prefix from variable name if present
+        if (variableName.startsWith("?")) {
+            variableName = variableName.substring(1);
+        }
+        
+        return new ContainsCondition(variableName, term);
+    }
+
+    @Override
+    public Object visitContainsWithoutVariableExpression(QueryLangParser.ContainsWithoutVariableExpressionContext ctx) {
         List<String> terms = new ArrayList<>();
         for (var termCtx : ctx.terms) {
             terms.add(unquote(termCtx.getText()));
