@@ -8,6 +8,8 @@ import com.example.query.model.column.ColumnSpec;
 import com.example.query.model.column.ColumnType;
 import com.example.query.result.*;
 import com.example.query.snippet.DatabaseConfig;
+import com.example.query.snippet.SnippetConfig;
+import com.example.query.snippet.DatabaseDiagnostic;
 import com.example.core.*;
 
 import net.sourceforge.argparse4j.ArgumentParsers;
@@ -36,6 +38,7 @@ public class QueryCLI {
     private final QueryExecutor executor;
     private final ResultGenerator resultGenerator;
     private final ResultFormatter resultFormatter;
+    private final SnippetConfig snippetConfig;
 
     /**
      * Creates a new QueryCLI instance.
@@ -58,7 +61,8 @@ public class QueryCLI {
         this.parser = new QueryParser();
         this.validator = new QuerySemanticValidator();
         this.executor = new QueryExecutor(new ConditionExecutorFactory());
-        this.resultGenerator = new ResultGenerator(dbPath);
+        this.snippetConfig = SnippetConfig.DEFAULT;
+        this.resultGenerator = new ResultGenerator(snippetConfig, dbPath);
         this.resultFormatter = new ResultFormatter();
         
         logger.info("Initialized QueryCLI with base directory: {} and database: {}", indexBaseDir, dbPath);
@@ -135,7 +139,7 @@ public class QueryCLI {
         // Set up argument parser
         ArgumentParser parser = ArgumentParsers.newFor("QueryCLI").build()
                 .defaultHelp(true)
-                .description("Execute queries against indexed corpus");
+                .description("Execute queries against indexed corpus. Supports extracting text snippets with SNIPPET(variableName) in SELECT clause.");
         
         parser.addArgument("-d", "--index-dir")
                 .setDefault("indexes")
@@ -143,7 +147,11 @@ public class QueryCLI {
         
         parser.addArgument("--db")
                 .setDefault(DatabaseConfig.DEFAULT_DB_PATH)
-                .help("Path to the SQLite database file");
+                .help("Path to the SQLite database file (required for snippet functionality)");
+        
+        parser.addArgument("--check-db")
+                .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
+                .help("Run diagnostics on the database to check snippet functionality");
         
         parser.addArgument("query")
                 .nargs("?")
@@ -155,6 +163,17 @@ public class QueryCLI {
             String indexDir = ns.getString("index_dir");
             String dbPath = ns.getString("db");
             String query = ns.getString("query");
+            boolean checkDb = ns.getBoolean("check_db");
+            
+            // Run database diagnostics if requested
+            if (checkDb) {
+                System.out.println("Running database diagnostics...");
+                DatabaseDiagnostic.checkDatabase(dbPath);
+                // If no query was provided, exit after diagnostics
+                if (query == null) {
+                    return;
+                }
+            }
             
             // Create and run CLI
             QueryCLI cli = new QueryCLI(Path.of(indexDir), dbPath);
@@ -168,6 +187,8 @@ public class QueryCLI {
                 System.out.println("Query CLI - Enter queries or 'exit' to quit");
                 System.out.println("Using index directory: " + indexDir);
                 System.out.println("Using database: " + dbPath);
+                System.out.println("Snippet support is enabled. Use SNIPPET(variable) in SELECT clause to show text context.");
+                System.out.println("For database diagnostics, enter: .check-db");
                 
                 while (true) {
                     System.out.print("\nQuery> ");
@@ -175,6 +196,12 @@ public class QueryCLI {
                     
                     if (input.equalsIgnoreCase("exit") || input.equalsIgnoreCase("quit")) {
                         break;
+                    }
+                    
+                    if (input.equalsIgnoreCase(".check-db")) {
+                        System.out.println("Running database diagnostics...");
+                        DatabaseDiagnostic.checkDatabase(dbPath);
+                        continue;
                     }
                     
                     if (!input.isEmpty()) {

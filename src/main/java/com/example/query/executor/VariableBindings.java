@@ -1,5 +1,7 @@
 package com.example.query.executor;
 
+import com.example.query.model.DocSentenceMatch;
+
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -188,6 +190,45 @@ public class VariableBindings {
     public void clear() {
         documentBindings.clear();
         sentenceBindings.clear();
+    }
+
+    /**
+     * Gets the token position for a variable in a specific match.
+     * This extracts the position from the variable binding's value format: term@sentenceId:position
+     *
+     * @param variableName The variable name
+     * @param match The document-sentence match
+     * @return The token position, or -1 if not found
+     */
+    public int getTokenPosition(String variableName, DocSentenceMatch match) {
+        // Remove leading ? from variable name if present
+        if (variableName.startsWith("?")) {
+            variableName = variableName.substring(1);
+        }
+        
+        // Check for variable binding
+        Optional<String> value = getValueWithFallback(match.getDocumentId(), match.getSentenceId(), variableName);
+        if (value.isEmpty()) {
+            return -1;
+        }
+        
+        // Parse the position from the value format: term@sentenceId:position
+        String valueStr = value.get();
+        int atPos = valueStr.lastIndexOf('@');
+        if (atPos == -1) {
+            return -1;
+        }
+        
+        int colonPos = valueStr.lastIndexOf(':');
+        if (colonPos == -1 || colonPos < atPos) {
+            return -1;
+        }
+        
+        try {
+            return Integer.parseInt(valueStr.substring(colonPos + 1));
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     @Override

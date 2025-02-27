@@ -13,11 +13,9 @@ import com.example.query.model.SnippetColumn;
 import com.example.query.model.SnippetNode;
 import com.example.query.model.column.ColumnSpec;
 import com.example.query.model.column.ColumnType;
-import com.example.query.snippet.ContextAnchor;
 import com.example.query.snippet.DatabaseConfig;
 import com.example.query.snippet.SnippetConfig;
 import com.example.query.snippet.SnippetGenerator;
-import com.example.query.snippet.TableSnippet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,6 +30,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -486,8 +485,96 @@ public class ResultGenerator {
         VariableBindings variableBindings,
         Map<String, String> row
     ) throws ResultGenerationException {
-        // Implementation depends on how snippets are generated
-        // This is a placeholder for the actual implementation
+        logger.debug("Adding snippets for documentId={}, sentenceId={}", match.getDocumentId(), match.getSentenceId());
+        
+        // Don't process snippets if we're beyond the LIMIT
+        Optional<Integer> limitOpt = query.getLimit();
+        
+        if (limitOpt.isPresent() && row.containsKey("_row_num")) {
+            int rowNum = Integer.parseInt(row.get("_row_num"));
+            if (rowNum > limitOpt.get()) {
+                logger.debug("Skipping snippet generation for row {} (beyond LIMIT {})", rowNum, limitOpt.get());
+                return;
+            }
+        }
+        
+        try {
+            // Initialize DB connection if needed
+            if (dbConnection == null || dbConnection.isClosed()) {
+                initDbConnection(dbPath);
+            }
+            
+            // Find SnippetNode instances in the query
+            List<SnippetNode> snippetNodes = new ArrayList<>();
+            
+            for (SelectColumn column : query.getSelectColumns()) {
+                if (column instanceof SnippetColumn) {
+                    SnippetNode snippetNode = ((SnippetColumn) column).getSnippetNode();
+                    snippetNodes.add(snippetNode);
+                } else if (column instanceof SnippetNode) {
+                    snippetNodes.add((SnippetNode) column);
+                }
+            }
+            
+            // Process snippets in batch
+            SnippetGenerator snippetGenerator = new SnippetGenerator(
+                dbConnection, 
+                snippetConfig.windowSize(),
+                snippetConfig.highlightStyle(),
+                snippetConfig.showSentenceBoundaries()
+            );
+            
+            // Process each snippet node
+            for (SnippetNode snippetNode : snippetNodes) {
+                String variableName = snippetNode.variable();
+                
+                // Remove leading ? if present
+                if (variableName.startsWith("?")) {
+                    variableName = variableName.substring(1);
+                }
+                
+                // Get column name for output
+                String columnName = "snippet_" + variableName;
+                
+                try {
+                    // Get the token position from variable bindings
+                    int tokenPosition = variableBindings.getTokenPosition(variableName, match);
+                    
+                    if (tokenPosition == -1) {
+                        logger.warn("Could not find token position for variable '{}'", variableName);
+                        row.put(columnName, "");
+                        continue;
+                    }
+                    
+                    // Generate the snippet
+                    String snippetText = snippetGenerator.generateSnippet(
+                        match.getDocumentId(),
+                        match.getSentenceId(),
+                        tokenPosition,
+                        variableName
+                    );
+                    
+                    row.put(columnName, snippetText);
+                    logger.debug("Added snippet for variable '{}': {}", variableName, 
+                        snippetText.length() > 50 ? snippetText.substring(0, 50) + "..." : snippetText);
+                    
+                } catch (Exception e) {
+                    logger.error("Error generating snippet for variable {}: {}", variableName, e.getMessage());
+                    row.put(columnName, "");
+                }
+            }
+            
+            // Clear snippet generator cache to save memory
+            snippetGenerator.clearCache();
+            
+        } catch (SQLException e) {
+            logger.error("Database error while generating snippets: {}", e.getMessage());
+            throw new ResultGenerationException(
+                "Error connecting to database for snippets: " + e.getMessage(),
+                "SnippetGenerator",
+                ResultGenerationException.ErrorType.SNIPPET_GENERATION_ERROR
+            );
+        }
     }
     
     /**

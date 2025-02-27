@@ -7,11 +7,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Configuration for database connections
+ * Configuration constants for database connections.
  */
 public class DatabaseConfig {
     private static final Logger logger = LoggerFactory.getLogger(DatabaseConfig.class);
+    /**
+     * Default path to the SQLite database file.
+     */
     public static final String DEFAULT_DB_PATH = "dump/wikipedia-cirrussearch-content.db";
+    
+    // Private constructor to prevent instantiation
+    private DatabaseConfig() {}
 
     /**
      * Gets a connection to the database
