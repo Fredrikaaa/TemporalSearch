@@ -129,7 +129,7 @@ public class QueryCLI {
             System.err.println("Error: " + e.getMessage());
         }
     }
-
+    
     /**
      * Main entry point for the CLI.
      *
@@ -149,10 +149,6 @@ public class QueryCLI {
                 .setDefault(DatabaseConfig.DEFAULT_DB_PATH)
                 .help("Path to the SQLite database file (required for snippet functionality)");
         
-        parser.addArgument("--check-db")
-                .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
-                .help("Run diagnostics on the database to check snippet functionality");
-        
         parser.addArgument("query")
                 .nargs("?")
                 .help("Query string to execute");
@@ -163,17 +159,6 @@ public class QueryCLI {
             String indexDir = ns.getString("index_dir");
             String dbPath = ns.getString("db");
             String query = ns.getString("query");
-            boolean checkDb = ns.getBoolean("check_db");
-            
-            // Run database diagnostics if requested
-            if (checkDb) {
-                System.out.println("Running database diagnostics...");
-                DatabaseDiagnostic.checkDatabase(dbPath);
-                // If no query was provided, exit after diagnostics
-                if (query == null) {
-                    return;
-                }
-            }
             
             // Create and run CLI
             QueryCLI cli = new QueryCLI(Path.of(indexDir), dbPath);
@@ -188,7 +173,6 @@ public class QueryCLI {
                 System.out.println("Using index directory: " + indexDir);
                 System.out.println("Using database: " + dbPath);
                 System.out.println("Snippet support is enabled. Use SNIPPET(variable) in SELECT clause to show text context.");
-                System.out.println("For database diagnostics, enter: .check-db");
                 
                 while (true) {
                     System.out.print("\nQuery> ");
@@ -196,12 +180,6 @@ public class QueryCLI {
                     
                     if (input.equalsIgnoreCase("exit") || input.equalsIgnoreCase("quit")) {
                         break;
-                    }
-                    
-                    if (input.equalsIgnoreCase(".check-db")) {
-                        System.out.println("Running database diagnostics...");
-                        DatabaseDiagnostic.checkDatabase(dbPath);
-                        continue;
                     }
                     
                     if (!input.isEmpty()) {

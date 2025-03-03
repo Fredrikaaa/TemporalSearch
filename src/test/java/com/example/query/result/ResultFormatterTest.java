@@ -82,7 +82,9 @@ class ResultFormatterTest {
             true,   // showHeaders
             true,   // showRowNumbers
             10,     // maxColumnWidth
-            true    // truncateLongValues
+            50,     // snippetColumnWidth
+            true,   // truncateLongValues
+            false   // useMultiLine - explicitly disable multi-line mode for this test
         );
         
         // When
@@ -97,6 +99,42 @@ class ResultFormatterTest {
             // If truncated to 10 chars
             assertFalse(formatted.contains("Bob Johnson"), "Long name should be truncated");
         }
+    }
+    
+    @Test
+    @DisplayName("Should handle multi-line formatting")
+    void shouldHandleMultiLineFormatting() {
+        // Given
+        ResultFormatter.FormattingOptions options = new ResultFormatter.FormattingOptions(
+            true,   // showHeaders
+            true,   // showRowNumbers
+            10,     // maxColumnWidth
+            10,     // snippetColumnWidth
+            false,  // truncateLongValues
+            true    // useMultiLine
+        );
+        
+        // Create a sample table with very long values
+        List<ColumnSpec> columns = new ArrayList<>();
+        columns.add(new ColumnSpec("id", ColumnType.TERM));
+        columns.add(new ColumnSpec("snippet_text", ColumnType.SNIPPET));
+        
+        List<Map<String, String>> rows = new ArrayList<>();
+        Map<String, String> row = new HashMap<>();
+        row.put("id", "1");
+        row.put("snippet_text", "This is a very long text that should be wrapped across multiple lines in the output.");
+        rows.add(row);
+        
+        ResultTable multiLineTable = new ResultTable(columns, rows);
+        
+        // When
+        String formatted = formatter.format(multiLineTable, options);
+        
+        // Then
+        assertNotNull(formatted, "Formatted output should not be null");
+        // Count number of lines - should be more than 2 (header + separator + at least one data line)
+        int lineCount = formatted.split("\n").length;
+        assertTrue(lineCount > 3, "Output should have multiple lines for wrapped content");
     }
     
     @Test

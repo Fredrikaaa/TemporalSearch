@@ -428,45 +428,21 @@ public class ResultGenerator {
         int documentId = match.getDocumentId();
         int sentenceId = match.getSentenceId();
         
-        // Get all variable bindings for this document
-        Map<String, String> docBindings = variableBindings.getBindingsForDocument(documentId);
+        // Process document and sentence level bindings
+        Map<String, String> allBindings = variableBindings.getAllBindingsForSentence(documentId, sentenceId);
         
-        for (Map.Entry<String, String> entry : docBindings.entrySet()) {
+        for (Map.Entry<String, String> entry : allBindings.entrySet()) {
             String variableName = entry.getKey();
-            String binding = entry.getValue();
+            String value = entry.getValue();
             
-            // For sentence granularity, check if the binding is from the current sentence
-            if (match.isSentenceLevel()) {
-                // Extract sentence ID from binding (format: term@sentenceId:startPos)
-                int bindingSentenceId = -1;
-                int atIndex = binding.indexOf('@');
-                if (atIndex >= 0) {
-                    int colonIndex = binding.indexOf(':', atIndex);
-                    if (colonIndex >= 0) {
-                        try {
-                            bindingSentenceId = Integer.parseInt(
-                                    binding.substring(atIndex + 1, colonIndex));
-                        } catch (NumberFormatException e) {
-                            // Ignore parsing errors
-                        }
-                    }
-                }
-                
-                // Skip bindings from other sentences
-                if (bindingSentenceId != sentenceId) {
-                    continue;
-                }
+            // Add debugging information to help identify issues with snippet generation
+            String debugInfo = variableBindings.getVariableDebugInfo(variableName, match);
+            if (!debugInfo.isEmpty()) {
+                // Append debug info to the value (variableName@sentence_id|begin_char)
+                value = debugInfo;
             }
             
-            // Extract just the term part (before the @)
-            String term = binding;
-            int atIndex = binding.indexOf('@');
-            if (atIndex >= 0) {
-                term = binding.substring(0, atIndex);
-            }
-            
-            // Add the term to the row
-            row.put(variableName, term);
+            row.put(variableName, value);
         }
     }
     

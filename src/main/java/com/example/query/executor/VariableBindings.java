@@ -231,6 +231,53 @@ public class VariableBindings {
         }
     }
 
+    /**
+     * Gets the variable binding details for debugging.
+     * Extracts the value format: term@sentenceId|begin_char
+     *
+     * @param variableName The variable name
+     * @param match The document-sentence match
+     * @return The variable binding details, or empty string if not found
+     */
+    public String getVariableDebugInfo(String variableName, DocSentenceMatch match) {
+        // Remove leading ? from variable name if present
+        if (variableName.startsWith("?")) {
+            variableName = variableName.substring(1);
+        }
+        
+        // Check for variable binding
+        Optional<String> value = getValueWithFallback(match.getDocumentId(), match.getSentenceId(), variableName);
+        if (value.isEmpty()) {
+            return "";
+        }
+        
+        // Parse from the value format: term@sentenceId:position
+        String valueStr = value.get();
+        int atPos = valueStr.lastIndexOf('@');
+        if (atPos == -1) {
+            return "";
+        }
+        
+        try {
+            // Extract the term and location info
+            String term = valueStr.substring(0, atPos);
+            String locationInfo = valueStr.substring(atPos + 1);
+            
+            // Format is sentenceId:position, we want sentenceId|position
+            int colonPos = locationInfo.indexOf(':');
+            if (colonPos == -1) {
+                return "";
+            }
+            
+            String sentenceId = locationInfo.substring(0, colonPos);
+            String position = locationInfo.substring(colonPos + 1);
+            
+            return term + "@" + sentenceId + "|" + position;
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     @Override
     public String toString() {
         return "VariableBindings{" +

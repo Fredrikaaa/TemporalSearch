@@ -103,13 +103,15 @@ public class SnippetGenerator {
         }
         
         // Generate snippet with the found token
-        return extractContextSnippet(
+        String snippet = extractContextSnippet(
             documentText, 
             matchInfo.beginPos, 
             matchInfo.endPos, 
             matchInfo.token,
             variableName
         );
+        
+        return snippet;
     }
     
     /**
@@ -137,7 +139,7 @@ public class SnippetGenerator {
         }
         
         // Extract context characters
-        int contextChars = 50;
+        int contextChars = 75;
         int snippetStart = Math.max(0, start - contextChars);
         int snippetEnd = Math.min(documentText.length(), end + contextChars);
         
@@ -297,14 +299,23 @@ public class SnippetGenerator {
         if (tokenBegin < 0 || tokenEnd > documentText.length() || tokenBegin >= tokenEnd) {
             logger.warn("Invalid token positions: begin={}, end={}, docLength={}", 
                 tokenBegin, tokenEnd, documentText.length());
+            // Use a fixed fallback size for invalid positions
+            int fallbackContextSize = 75;
             return documentText.substring(
-                Math.max(0, Math.min(documentText.length() - 1, tokenBegin) - 50),
-                Math.min(documentText.length(), Math.max(0, tokenEnd) + 50)
+                Math.max(0, Math.min(documentText.length() - 1, tokenBegin) - fallbackContextSize),
+                Math.min(documentText.length(), Math.max(0, tokenEnd) + fallbackContextSize)
             );
         }
         
-        // Calculate context window (character-based)
-        int contextSize = windowSize * 30; // Approximate characters per token
+        // Calculate context size based only on window size
+        // We delegate formatting concerns completely to ResultFormatter
+        int contextSize = windowSize * 25; // Characters per window size unit (reduced from 35)
+        
+        // For bigger window sizes, add extra characters to avoid truncation
+        if (windowSize >= 3) {
+            contextSize = windowSize * 30; // Reduced from 50
+        }
+        
         int snippetStart = Math.max(0, tokenBegin - contextSize);
         int snippetEnd = Math.min(documentText.length(), tokenEnd + contextSize);
         
@@ -327,8 +338,7 @@ public class SnippetGenerator {
         result.insert(highlightEnd, highlightStyle);
         result.insert(highlightStart, highlightStyle);
         
-        logger.debug("Created snippet for {}: {}", variableName, 
-            result.length() > 50 ? result.substring(0, 50) + "..." : result);
+        logger.debug("Created snippet for {}: {} chars", variableName, result.length());
         
         return result.toString();
     }
