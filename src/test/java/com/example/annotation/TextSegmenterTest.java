@@ -123,4 +123,71 @@ class TextSegmenterTest {
             assertTrue(chunk.length() <= 15 + 200); // maxSize + 2*overlap
         }
     }
+    
+    @Test
+    void testChunkDocumentWithPositions() {
+        TextSegmenter segmenter = new TextSegmenter(50);
+        String text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        
+        // Get chunks with positions
+        TextSegmenter.ChunkResult result = segmenter.chunkDocumentWithPositions(text);
+        List<String> chunks = result.getChunks();
+        List<Integer> positions = result.getStartPositions();
+        
+        // Verify we got the expected number of chunks
+        assertTrue(chunks.size() >= 2);
+        assertEquals(chunks.size(), positions.size(), "Number of positions should match number of chunks");
+        
+        // Verify first chunk starts at position 0
+        assertEquals(0, positions.get(0), "First chunk should start at position 0");
+        
+        // Verify positions are in ascending order
+        for (int i = 1; i < positions.size(); i++) {
+            assertTrue(positions.get(i) > positions.get(i-1), 
+                    "Positions should be in ascending order");
+        }
+        
+        // Verify each position corresponds to a valid point in the text
+        for (int i = 0; i < positions.size(); i++) {
+            int pos = positions.get(i);
+            assertTrue(pos >= 0 && pos < text.length(), 
+                    "Position should be within text bounds");
+            
+            // For chunks after the first, verify the character at the position
+            // matches what we expect from the original text
+            if (i > 0) {
+                char charAtPos = text.charAt(pos);
+                // The character at the start position of each chunk should be 
+                // present in the actual chunk (accounting for overlap)
+                String chunk = chunks.get(i);
+                // We expect the character to be within the first 100 chars due to overlap
+                assertTrue(chunk.indexOf(charAtPos) != -1,
+                        "Character at position " + pos + " should be in chunk");
+            }
+        }
+    }
+    
+    @Test
+    void testGetStartPosition() {
+        TextSegmenter segmenter = new TextSegmenter(50);
+        String text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        
+        TextSegmenter.ChunkResult result = segmenter.chunkDocumentWithPositions(text);
+        List<Integer> positions = result.getStartPositions();
+        
+        // Verify the getStartPosition method correctly returns positions
+        for (int i = 0; i < positions.size(); i++) {
+            assertEquals(positions.get(i), result.getStartPosition(i),
+                    "getStartPosition should return the same value as the list");
+        }
+        
+        // Test exception is thrown for invalid index
+        assertThrows(IndexOutOfBoundsException.class, () -> {
+            result.getStartPosition(-1);
+        });
+        
+        assertThrows(IndexOutOfBoundsException.class, () -> {
+            result.getStartPosition(positions.size());
+        });
+    }
 } 

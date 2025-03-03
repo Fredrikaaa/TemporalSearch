@@ -29,13 +29,21 @@ public class WikiJsonToSqlite {
         }
     }
 
-    public static ExtractionResult extractToSqlite(Path inputFile, boolean recreate) throws Exception {
-        return extractToSqlite(inputFile, recreate, null);
-    }
-
-    public static ExtractionResult extractToSqlite(Path inputFile, boolean recreate, Integer limit) throws Exception {
-        // Generate output database name based on input file
-        Path outputDb = inputFile.resolveSibling(inputFile.getFileName().toString().replaceFirst("[.][^.]+$", ".db"));
+    /**
+     * Extract Wikipedia JSON dump to SQLite database
+     * @param inputFile Path to input JSON file
+     * @param outputDbPath Output database path
+     * @param recreate Whether to recreate the table
+     * @param limit Maximum number of entries to extract
+     * @return Extraction result with output path and count
+     * @throws Exception If extraction fails
+     */
+    public static ExtractionResult extractToSqlite(Path inputFile, Path outputDbPath, boolean recreate, Integer limit) throws Exception {
+        // Generate output database name based on input file if not specified
+        Path outputDb = outputDbPath;
+        if (outputDb == null) {
+            outputDb = inputFile.resolveSibling(inputFile.getFileName().toString().replaceFirst("[.][^.]+$", ".db"));
+        }
         
         // Count total lines first
         long totalLines = 0;
@@ -148,32 +156,42 @@ public class WikiJsonToSqlite {
     }
 
     public static void main(String[] args) {
+        // Parse command line arguments
         ArgumentParser parser = ArgumentParsers.newFor("WikiJsonToSqlite").build()
                 .defaultHelp(true)
-                .description("Extract text from Wikipedia JSON dump to SQLite");
+                .description("Convert Wikipedia JSON dump to SQLite database");
 
         parser.addArgument("-f", "--file")
                 .required(true)
                 .help("Input JSON file path");
 
-        parser.addArgument("--recreate")
+        parser.addArgument("-d", "--db")
+                .help("Output database file path");
+
+        parser.addArgument("-r", "--recreate")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Drop and recreate the documents table if it exists");
+
+        parser.addArgument("-l", "--limit")
+                .type(Integer.class)
+                .help("Maximum number of entries to extract");
 
         try {
             Namespace ns = parser.parseArgs(args);
             Path inputFile = Path.of(ns.getString("file"));
+            Path outputDb = ns.getString("db") != null ? Path.of(ns.getString("db")) : null;
             boolean recreate = ns.getBoolean("recreate");
+            Integer limit = ns.getInt("limit");
 
-            ExtractionResult result = extractToSqlite(inputFile, recreate);
+            ExtractionResult result = extractToSqlite(inputFile, outputDb, recreate, limit);
             System.out.printf("Extraction complete. %d entries added to database: %s%n",
                     result.totalEntries, result.outputDb);
-
         } catch (ArgumentParserException e) {
             parser.handleError(e);
             System.exit(1);
         } catch (Exception e) {
-            logger.error("Error during extraction: {}", e.getMessage(), e);
+            System.err.println("Error extracting data: " + e.getMessage());
+            e.printStackTrace();
             System.exit(1);
         }
     }

@@ -217,11 +217,16 @@ class AnnotationsTest {
     
     @Test
     void testLongDocument() throws Exception {
-        // Create a moderately sized document
+        clearDatabase();
+        
+        // Create a moderately sized document with better sentence structure
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 50; i++) {  // Reduced from previous size
-            sb.append("This is sentence ").append(i)
-              .append(" of the test document with some text. ");
+        for (int i = 0; i < 100; i++) {
+            // Add more varied sentences to ensure CoreNLP detects them properly
+            sb.append("This is sentence number ").append(i)
+              .append(" of the test document. ");
+            sb.append("It has multiple clauses and proper structure. ");
+            sb.append("The parser should recognize this as separate sentences. ");
         }
         
         // Insert the test document
@@ -239,23 +244,126 @@ class AnnotationsTest {
                 assertTrue(rs.next());
                 int sentenceCount = rs.getInt(1);
                 assertTrue(sentenceCount > 1, "Expected multiple sentences");
-                assertTrue(sentenceCount <= 50, "Expected fewer sentences than input");
                 
-                // Verify sentence boundaries don't overlap
+                // Each input sentence block has 3 sentences, so we'd expect around 300 sentences
+                // With our implementation that correctly handles sentence boundaries across chunks,
+                // we should get close to that number but not exceed it significantly
+                assertTrue(sentenceCount <= 350, "Expected fewer sentences than 350");
+                
+                // With our implementation that handles overlaps correctly, we should have 
+                // no overlapping sentence boundaries
                 rs = stmt.executeQuery("""
-                    SELECT a1.sentence_id 
-                    FROM annotations a1 
-                    JOIN annotations a2 
-                        ON a1.document_id = a2.document_id 
-                        AND a1.sentence_id != a2.sentence_id
-                    WHERE a1.begin_char < a2.end_char 
-                        AND a1.end_char > a2.begin_char
+                    SELECT COUNT(*) FROM (
+                        SELECT a1.sentence_id 
+                        FROM annotations a1
+                        JOIN annotations a2 ON a1.document_id = a2.document_id
+                            AND a1.sentence_id != a2.sentence_id
+                            AND a1.begin_char < a2.end_char
+                            AND a1.end_char > a2.begin_char
+                        GROUP BY a1.sentence_id
+                    )
                 """);
-                assertFalse(rs.next(), "Found overlapping sentence boundaries");
+                assertTrue(rs.next());
+                int overlappingSentences = rs.getInt(1);
+                assertEquals(0, overlappingSentences, "There should be no overlapping sentences");
             }
-        } catch (StackOverflowError e) {
-            // If we still get a StackOverflowError, fail gracefully with a meaningful message
-            fail("Document is too complex for current parser configuration. Consider adjusting parser settings or reducing document size.");
+        } finally {
+            clearDatabase();
+        }
+    }
+    
+    /**
+     * This test verifies that character positions are correctly mapped in a large document
+     * that spans multiple chunks. The goal is to ensure that tokens are retrievable using
+     * their character positions, regardless of which chunk they appear in.
+     */
+    @Test
+    void testLargeDocumentCharacterPositions() throws Exception {
+        clearDatabase();
+        
+        // Create a large document with some consistent patterns
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 500; i++) {
+            sb.append("Sentence ").append(i).append(": This tests character positions. ");
+        }
+        String documentText = sb.toString();
+        
+        // Insert the test document
+        insertTestDocument(documentText);
+        
+        // Run annotation process
+        runAnnotations();
+        
+        // Instead of trying to extract exact strings, we'll verify two things:
+        // 1. Character positions are monotonically increasing
+        // 2. beginChar is always less than endChar
+        // 3. No overlaps between tokens in the same sentence
+        try (Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("""
+                SELECT sentence_id, token, begin_char, end_char
+                FROM annotations
+                ORDER BY begin_char, sentence_id
+            """);
+            
+            int prevEnd = -1;
+            int prevSentence = -1;
+            int tokenCount = 0;
+            
+            while (rs.next()) {
+                int sentenceId = rs.getInt("sentence_id");
+                int beginChar = rs.getInt("begin_char");
+                int endChar = rs.getInt("end_char");
+                
+                // Verify begin position is less than end position
+                assertTrue(beginChar < endChar, 
+                        "Begin position should be less than end position");
+                
+                // Only compare against previous token if in the same sentence
+                if (sentenceId == prevSentence && prevEnd != -1) {
+                    // Verify no overlapping positions within the same sentence
+                    assertTrue(beginChar >= prevEnd,
+                            "Token positions should not overlap within the same sentence");
+                }
+                
+                prevEnd = endChar;
+                prevSentence = sentenceId;
+                tokenCount++;
+            }
+            
+            // Make sure we have a good number of tokens processed
+            assertTrue(tokenCount > 1000, "Should have processed at least 1000 tokens");
+            
+            // Now check that sentences have reasonable character spans
+            rs = stmt.executeQuery("""
+                SELECT sentence_id, MIN(begin_char) as sent_begin, MAX(end_char) as sent_end
+                FROM annotations
+                GROUP BY sentence_id
+                ORDER BY sent_begin
+            """);
+            
+            int lastSentEnd = -1;
+            while (rs.next()) {
+                int sentBegin = rs.getInt("sent_begin");
+                int sentEnd = rs.getInt("sent_end");
+                
+                // Verify sentence character spans make sense
+                assertTrue(sentBegin < sentEnd, 
+                        "Sentence begin should be less than sentence end");
+                
+                // We can't strictly check for no sentence overlaps because of chunking
+                // But we can verify that sentence positions generally increase
+                if (lastSentEnd != -1) {
+                    // Some overlap is allowed due to chunking, but too much is suspicious
+                    if (sentBegin < lastSentEnd) {
+                        // If we have overlap, it should be relatively small
+                        int overlap = lastSentEnd - sentBegin;
+                        assertTrue(overlap < 100, 
+                                "Sentence overlap should be small if it exists: " + overlap);
+                    }
+                }
+                
+                lastSentEnd = sentEnd;
+            }
         }
     }
     
@@ -348,5 +456,13 @@ class AnnotationsTest {
     
     private void runAnnotations() throws Exception {
         annotations.processDocuments();
+    }
+    
+    private void clearDatabase() throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("DELETE FROM annotations");
+            stmt.execute("DELETE FROM dependencies");
+            stmt.execute("DELETE FROM documents");
+        }
     }
 } 

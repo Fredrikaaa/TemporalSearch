@@ -19,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.SQLException;
+import java.io.FileNotFoundException;
 
 
 public class IndexRunner {
@@ -99,6 +100,23 @@ public class IndexRunner {
 
     public static void runIndexing(String dbPath, String indexDir, String stopwordsPath,
             int batchSize, String indexType, boolean preserveIndex, Integer limit) throws Exception {
+        logger.info("Starting indexing process");
+        logger.info("Database: {}", dbPath);
+        logger.info("Index directory: {}", indexDir);
+        
+        // Verify the database exists and is not empty
+        Path dbFilePath = Path.of(dbPath);
+        if (!Files.exists(dbFilePath)) {
+            throw new FileNotFoundException("Database file not found: " + dbPath);
+        }
+        
+        // Check if the database file has content
+        if (Files.size(dbFilePath) == 0) {
+            throw new IOException("Database file is empty. Please run the conversion and annotation stages first.");
+        }
+        
+        // Create all index subdirectories
+        setupIndexDirectories(indexDir, indexType);
         
         IndexingMetrics metrics = new IndexingMetrics();
         ProgressTracker progress = new ProgressTracker();
@@ -111,18 +129,35 @@ public class IndexRunner {
 
         // Ensure index directory exists
         Path indexPath = Paths.get(indexDir);
-        if (!preserveIndex && Files.exists(indexPath)) {
-            logger.debug("Cleaning existing index directory: {}", indexPath);
-            Files.walk(indexPath)
-                 .sorted((a, b) -> b.compareTo(a))
-                 .forEach(path -> {
-                     try {
-                         Files.deleteIfExists(path);
-                     } catch (IOException e) {
-                         logger.warn("Could not delete: {} ({})", path, e.getMessage());
-                     }
-                 });
+        if (!preserveIndex) {
+            // Only clean up the index directories, not the database file
+            Path[] indexDirectories = {
+                indexPath.resolve("unigram"),
+                indexPath.resolve("bigram"),
+                indexPath.resolve("entity"),
+                indexPath.resolve("dependency"),
+                indexPath.resolve("nerdate"),
+                indexPath.resolve("pos"),
+                indexPath.resolve("hypernym")
+            };
+            
+            for (Path dir : indexDirectories) {
+                if (Files.exists(dir)) {
+                    logger.debug("Cleaning existing index directory: {}", dir);
+                    Files.walk(dir)
+                         .sorted((a, b) -> b.compareTo(a))
+                         .forEach(path -> {
+                             try {
+                                 Files.deleteIfExists(path);
+                             } catch (IOException e) {
+                                 logger.warn("Could not delete: {} ({})", path, e.getMessage());
+                             }
+                         });
+                }
+            }
         }
+        
+        // Make sure only the index directories are created, not overwriting the database
         Files.createDirectories(indexPath);
         
         // Connect to database and process indexes
@@ -139,8 +174,11 @@ public class IndexRunner {
                     metrics.startBatch(batchSize, "unigram");
                     long count = getAnnotationCount(conn, limit);
                     progress.startIndex("Unigram Index", count);
+                    
+                    // Get path with proper directory structure
+                    Path unigramPath = Path.of(indexDir).resolve("unigram");
                     try (UnigramIndexGenerator gen = new UnigramIndexGenerator(
-                            indexDir + "/unigram", stopwordsPath, conn, progress, indexConfig)) {
+                            unigramPath.toString(), stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
@@ -156,8 +194,11 @@ public class IndexRunner {
                     metrics.startBatch(batchSize, "bigram");
                     long count = getAnnotationCount(conn, limit);
                     progress.startIndex("Bigram Index", count);
+                    
+                    // Get path with proper directory structure
+                    Path bigramPath = Path.of(indexDir).resolve("bigram");
                     try (BigramIndexGenerator gen = new BigramIndexGenerator(
-                            indexDir + "/bigram", stopwordsPath, conn, progress, indexConfig)) {
+                            bigramPath.toString(), stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
@@ -173,8 +214,11 @@ public class IndexRunner {
                     metrics.startBatch(batchSize, "trigram");
                     long count = getAnnotationCount(conn, limit);
                     progress.startIndex("Trigram Index", count);
+                    
+                    // Get path with proper directory structure
+                    Path trigramPath = Path.of(indexDir).resolve("trigram");
                     try (TrigramIndexGenerator gen = new TrigramIndexGenerator(
-                            indexDir + "/trigram", stopwordsPath, conn, progress, indexConfig)) {
+                            trigramPath.toString(), stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
@@ -190,8 +234,11 @@ public class IndexRunner {
                     metrics.startBatch(batchSize, "dependency");
                     long count = getDependencyCount(conn, limit);
                     progress.startIndex("Dependency Index", count);
+                    
+                    // Get path with proper directory structure
+                    Path dependencyPath = Path.of(indexDir).resolve("dependency");
                     try (DependencyIndexGenerator gen = new DependencyIndexGenerator(
-                            indexDir + "/dependency", stopwordsPath, conn, progress, indexConfig)) {
+                            dependencyPath.toString(), stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
@@ -207,8 +254,11 @@ public class IndexRunner {
                     metrics.startBatch(batchSize, "ner_date");
                     long count = getNerDateCount(conn, limit);
                     progress.startIndex("NER Date Index", count);
+                    
+                    // Get path with proper directory structure
+                    Path nerDatePath = Path.of(indexDir).resolve("ner_date");
                     try (NerDateIndexGenerator gen = new NerDateIndexGenerator(
-                            indexDir + "/ner_date", stopwordsPath, conn, progress, indexConfig)) {
+                            nerDatePath.toString(), stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
@@ -223,9 +273,12 @@ public class IndexRunner {
                     System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
                     metrics.startBatch(batchSize, "pos");
                     long count = getAnnotationCount(conn, limit);
-                    progress.startIndex("POS Index", count);
+                    progress.startIndex("POS Tag Index", count);
+                    
+                    // Get path with proper directory structure
+                    Path posPath = Path.of(indexDir).resolve("pos");
                     try (POSIndexGenerator gen = new POSIndexGenerator(
-                            indexDir + "/pos", stopwordsPath, conn, progress, indexConfig)) {
+                            posPath.toString(), stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
@@ -239,10 +292,13 @@ public class IndexRunner {
                     currentIndex++;
                     System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
                     metrics.startBatch(batchSize, "hypernym");
-                    long count = getDependencyCount(conn, limit);
+                    long count = getAnnotationCount(conn, limit);
                     progress.startIndex("Hypernym Index", count);
+                    
+                    // Get path with proper directory structure
+                    Path hypernymPath = Path.of(indexDir).resolve("hypernym");
                     try (HypernymIndexGenerator gen = new HypernymIndexGenerator(
-                            indexDir + "/hypernym", stopwordsPath, conn, progress, indexConfig)) {
+                            hypernymPath.toString(), stopwordsPath, conn, progress, indexConfig)) {
                         gen.generateIndex();
                         metrics.recordBatchSuccess((int)count);
                     } catch (Exception e) {
@@ -262,6 +318,17 @@ public class IndexRunner {
     }
 
     private static long getAnnotationCount(Connection conn, Integer limit) throws SQLException {
+        // First check if the annotations table exists
+        try (Statement checkStmt = conn.createStatement();
+             ResultSet checkRs = checkStmt.executeQuery(
+                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='annotations'")) {
+            if (checkRs.next() && checkRs.getInt(1) == 0) {
+                // Table doesn't exist
+                logger.error("Annotations table does not exist. Please run annotation stage first.");
+                throw new SQLException("Annotations table does not exist. Please run annotation stage first.");
+            }
+        }
+        
         String sql = "SELECT COUNT(*) FROM annotations";
         if (limit != null) {
             sql += " LIMIT " + limit;
@@ -272,10 +339,24 @@ public class IndexRunner {
                 return rs.getLong(1);
             }
             return 0;
+        } catch (SQLException e) {
+            logger.error("Error counting annotations: {}", e.getMessage());
+            return 0;
         }
     }
 
     private static long getDependencyCount(Connection conn, Integer limit) throws SQLException {
+        // First check if the dependencies table exists
+        try (Statement checkStmt = conn.createStatement();
+             ResultSet checkRs = checkStmt.executeQuery(
+                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='dependencies'")) {
+            if (checkRs.next() && checkRs.getInt(1) == 0) {
+                // Table doesn't exist
+                logger.error("Dependencies table does not exist. Please run annotation stage first.");
+                throw new SQLException("Dependencies table does not exist. Please run annotation stage first.");
+            }
+        }
+        
         String sql = "SELECT COUNT(*) FROM dependencies";
         if (limit != null) {
             sql += " LIMIT " + limit;
@@ -286,10 +367,24 @@ public class IndexRunner {
                 return rs.getLong(1);
             }
             return 0;
+        } catch (SQLException e) {
+            logger.error("Error counting dependencies: {}", e.getMessage());
+            return 0;
         }
     }
 
     private static long getNerDateCount(Connection conn, Integer limit) throws SQLException {
+        // First check if the annotations table exists
+        try (Statement checkStmt = conn.createStatement();
+             ResultSet checkRs = checkStmt.executeQuery(
+                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='annotations'")) {
+            if (checkRs.next() && checkRs.getInt(1) == 0) {
+                // Table doesn't exist
+                logger.error("Annotations table does not exist. Please run annotation stage first.");
+                throw new SQLException("Annotations table does not exist. Please run annotation stage first.");
+            }
+        }
+        
         String sql = "SELECT COUNT(*) FROM annotations WHERE ner = 'DATE'";
         if (limit != null) {
             sql += " LIMIT " + limit;
@@ -300,6 +395,42 @@ public class IndexRunner {
                 return rs.getLong(1);
             }
             return 0;
+        } catch (SQLException e) {
+            logger.error("Error counting NER dates: {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Setup index directories for the given project
+     * @param indexDir Base directory for indexes
+     * @param indexType Type of index to create (or "all")
+     * @throws IOException If directory creation fails
+     */
+    private static void setupIndexDirectories(String indexDir, String indexType) throws IOException {
+        Path indexDirPath = Path.of(indexDir);
+        
+        // Make sure the base directory exists
+        if (!Files.exists(indexDirPath)) {
+            Files.createDirectories(indexDirPath);
+            logger.info("Created index directory: {}", indexDirPath);
+        }
+        
+        // Determine which index types to create
+        String[] typesToCreate;
+        if ("all".equals(indexType)) {
+            typesToCreate = new String[]{"unigram", "bigram", "trigram", "dependency", "ner_date", "pos", "hypernym"};
+        } else {
+            typesToCreate = new String[]{indexType};
+        }
+        
+        // Create subdirectories for each index type
+        for (String type : typesToCreate) {
+            Path indexTypeDir = indexDirPath.resolve(type);
+            if (!Files.exists(indexTypeDir)) {
+                Files.createDirectories(indexTypeDir);
+                logger.info("Created index subdirectory: {}", indexTypeDir);
+            }
         }
     }
 }

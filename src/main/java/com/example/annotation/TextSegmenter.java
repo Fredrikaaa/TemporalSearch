@@ -18,7 +18,7 @@ public class TextSegmenter {
     private static final int DEFAULT_CHUNK_SIZE = 10_000;
     
     // Overlap buffer to prevent cutting sentences/entities
-    private static final int OVERLAP_SIZE = 100;
+    public static final int OVERLAP_SIZE = 100;
     
     // Pattern for finding natural break points (paragraphs, sections)
     private static final Pattern BREAK_PATTERN = Pattern.compile("\\n\\n+|(?<=[.!?])\\s+(?=[A-Z])");
@@ -55,52 +55,98 @@ public class TextSegmenter {
         int startPos = 0;
         
         while (startPos < text.length()) {
-            // Calculate the maximum possible end position for this chunk
-            int maxEnd = Math.min(startPos + maxChunkSize, text.length());
-            int endPos = maxEnd;
+            // Find end position ensuring we don't exceed maxChunkSize
+            int endPos = Math.min(startPos + maxChunkSize, text.length());
             
-            // If we're not at the end, find a natural break point
+            // If we're not at the end of the text, find a better break point
             if (endPos < text.length()) {
-                int breakPoint = findBreakPoint(text, startPos, endPos);
-                // Only use break point if it would create a reasonable chunk
-                if (breakPoint > startPos && breakPoint < maxEnd) {
-                    endPos = breakPoint;
-                }
+                endPos = findBreakPoint(text, startPos, endPos);
             }
             
-            // Extract the chunk with overlap
+            // Extract the chunk with proper handling of overlap
             String chunk = extractChunkWithOverlap(text, startPos, endPos);
-            
-            // Verify the chunk size is within limits
-            if (chunk.length() > maxChunkSize + OVERLAP_SIZE) {
-                // If too large, force a break at maxSize - overlap
-                endPos = startPos + maxChunkSize - OVERLAP_SIZE;
-                chunk = extractChunkWithOverlap(text, startPos, endPos);
-            }
-            
             chunks.add(chunk);
             
-            // Move to next chunk, ensuring we make progress
-            int newStartPos = endPos;
-            if (newStartPos <= startPos) {
-                // Force progress if we're stuck
-                newStartPos = Math.min(startPos + maxChunkSize / 2, text.length());
-            }
-            startPos = newStartPos;
-            
-            logger.trace("Created chunk {} of {} chars", chunks.size(), chunk.length());
+            // Move start position for next chunk, accounting for overlap
+            startPos = endPos;
         }
         
-        logger.debug("Split document of {} chars into {} chunks", text.length(), chunks.size());
+        logger.debug("Split text of length {} into {} chunks", text.length(), chunks.size());
         return chunks;
     }
     
     /**
-     * Finds a natural break point in the text near the target position
-     * @param text The text to search in
-     * @param start Start position of the current chunk
-     * @param target Target position to find break point near
-     * @return Position of the best break point
+     * Splits a document into chunks suitable for parallel processing
+     * and tracks the starting position of each chunk in the original document
+     * 
+     * @param text The document text to split
+     * @return ChunkResult containing text chunks and their starting positions
+     */
+    public ChunkResult chunkDocumentWithPositions(String text) {
+        if (text == null || text.isEmpty()) {
+            return new ChunkResult(List.of(), List.of());
+        }
+        
+        List<String> chunks = new ArrayList<>();
+        List<Integer> startPositions = new ArrayList<>();
+        int startPos = 0;
+        
+        while (startPos < text.length()) {
+            // Record the starting position of this chunk
+            startPositions.add(startPos);
+            
+            // Find end position ensuring we don't exceed maxChunkSize
+            int endPos = Math.min(startPos + maxChunkSize, text.length());
+            
+            // If we're not at the end of the text, find a better break point
+            if (endPos < text.length()) {
+                endPos = findBreakPoint(text, startPos, endPos);
+            }
+            
+            // Extract the chunk with proper handling of overlap
+            String chunk = extractChunkWithOverlap(text, startPos, endPos);
+            chunks.add(chunk);
+            
+            // Move start position for next chunk, accounting for overlap
+            startPos = endPos;
+        }
+        
+        logger.debug("Split text of length {} into {} chunks with position tracking", 
+                text.length(), chunks.size());
+        return new ChunkResult(chunks, startPositions);
+    }
+    
+    /**
+     * Result class containing chunks and their starting positions in the original document
+     */
+    public static class ChunkResult {
+        private final List<String> chunks;
+        private final List<Integer> startPositions;
+        
+        public ChunkResult(List<String> chunks, List<Integer> startPositions) {
+            this.chunks = chunks;
+            this.startPositions = startPositions;
+        }
+        
+        public List<String> getChunks() {
+            return chunks;
+        }
+        
+        public List<Integer> getStartPositions() {
+            return startPositions;
+        }
+        
+        public int getStartPosition(int chunkIndex) {
+            if (chunkIndex < 0 || chunkIndex >= startPositions.size()) {
+                throw new IndexOutOfBoundsException("Invalid chunk index: " + chunkIndex);
+            }
+            return startPositions.get(chunkIndex);
+        }
+    }
+    
+    /**
+     * Finds a suitable breakpoint in text near the target position,
+     * preferring natural boundaries like sentence or paragraph breaks
      */
     private int findBreakPoint(String text, int start, int target) {
         // Look for break points in a window around the target

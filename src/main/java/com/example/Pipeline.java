@@ -8,12 +8,16 @@ import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 public class Pipeline {
+    private static final String DEFAULT_PROJECT = "default";
+
     public static void main(String[] args) {
         try {
             runPipeline(args);
@@ -34,11 +38,11 @@ public class Pipeline {
                 .description("Process and index text data through multiple pipeline stages: conversion, annotation, indexing, and analysis.")
                 .usage("${prog} [-h] <stage-specific-arguments>\n\n" +
                        "Example usage for each stage:\n" +
-                       "  Convert:   ${prog} -s convert -f wiki.json -d output.db\n" +
-                       "  Annotate:  ${prog} -s annotate -d input.db -b 1000 -t 8\n" +
-                       "  Index:     ${prog} -s index -d input.db -i indexes -y all\n" +
+                       "  Convert:   ${prog} -s convert -f wiki.json -p project_name\n" +
+                       "  Annotate:  ${prog} -s annotate -p project_name -b 1000 -t 8\n" +
+                       "  Index:     ${prog} -s index -p project_name -y all\n" +
                        "  Analyze:   ${prog} -s analyze -g pipeline.log -o reports\n" +
-                       "  All:       ${prog} -s all -f wiki.json -d output.db -i indexes");
+                       "  All:       ${prog} -s all -f wiki.json -p project_name");
 
         // Common arguments group
         var commonGroup = parser.addArgumentGroup("Common arguments");
@@ -52,10 +56,13 @@ public class Pipeline {
                       "  index    - Generate searchable indexes\n" +
                       "  analyze  - Analyze processing logs");
 
+        commonGroup.addArgument("-p", "--project")
+                .setDefault(DEFAULT_PROJECT)
+                .help("Project name for organizing indexes and database (default: '" + DEFAULT_PROJECT + "')");
+
         commonGroup.addArgument("-d", "--db")
                 .required(false)
-                .help("Path to SQLite database file (required for annotation/indexing,\n" +
-                      "auto-generated from input file name during conversion)");
+                .help("Path to SQLite database file (optional: auto-generated within project directory)");
 
         commonGroup.addArgument("--debug")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
@@ -89,8 +96,7 @@ public class Pipeline {
         // Index stage group
         var indexGroup = parser.addArgumentGroup("Index stage arguments (used in 'index' stage)");
         indexGroup.addArgument("-i", "--index-dir")
-                .setDefault("indexes")
-                .help("Directory for storing generated indexes (default: 'indexes')");
+                .help("Directory for storing generated indexes (optional: auto-generated within project directory)");
 
         indexGroup.addArgument("-w", "--stopwords")
                 .setDefault("stopwords.txt")
@@ -137,24 +143,29 @@ public class Pipeline {
         }
 
         String stage = ns.getString("stage");
+        String projectName = ns.getString("project");
         String dbPath = ns.getString("db");
         String wikiDumpPath = ns.getString("file");
+        String indexDir = ns.getString("index_dir");
+        
+        // Create project directories and resolve paths
+        Path projectBasePath = setupProjectDirectories(projectName);
+        
+        // If db path not explicitly provided, use the project directory
+        if (dbPath == null) {
+            dbPath = projectBasePath.resolve(projectName + ".db").toString();
+        }
+        
+        // If index directory not explicitly provided, use the project directory
+        if (indexDir == null) {
+            indexDir = projectBasePath.toString();
+        }
 
         // Validate required arguments based on stage
         if (stage.equals("convert") || stage.equals("all")) {
             if (wikiDumpPath == null) {
                 throw new ArgumentParserException("--file is required for conversion stage", parser);
             }
-            // If dbPath not provided, generate it from wiki dump path
-            if (dbPath == null) {
-                dbPath = Path.of(wikiDumpPath).resolveSibling(
-                    Path.of(wikiDumpPath).getFileName().toString().replaceFirst("[.][^.]+$", ".db")
-                ).toString();
-            }
-        }
-        
-        if ((stage.equals("annotate") || stage.equals("index")) && dbPath == null) {
-            throw new ArgumentParserException("--db is required for annotation and indexing stages", parser);
         }
 
         if (stage.equals("analyze") && ns.getString("log_file") == null) {
@@ -164,19 +175,20 @@ public class Pipeline {
         // Run selected pipeline stages
         if (stage.equals("all") || stage.equals("convert")) {
             System.out.println("Running conversion stage...");
+            System.out.println("Using database path: " + dbPath);
             WikiJsonToSqlite.ExtractionResult result = WikiJsonToSqlite.extractToSqlite(
                 Path.of(wikiDumpPath),
+                Path.of(dbPath),
                 ns.getBoolean("recreate"),
                 ns.getInt("limit")
             );
             System.out.printf("Conversion complete. %d entries added to database: %s%n",
                 result.totalEntries, result.outputDb);
-            // Update dbPath to use the output from conversion
-            dbPath = result.outputDb.toString();
         }
 
         if (stage.equals("all") || stage.equals("annotate")) {
             System.out.println("Running annotation stage...");
+            System.out.println("Using database path: " + dbPath);
             // Build command arguments list
             List<String> annotationArgs = new ArrayList<>();
             annotationArgs.add("-d");
@@ -193,14 +205,21 @@ public class Pipeline {
                 annotationArgs.add(limit.toString());
             }
             
+            // Add overwrite flag if specified or if we're running the 'all' stage
+            if (ns.getBoolean("recreate") || stage.equals("all")) {
+                annotationArgs.add("-o");
+            }
+            
             Annotations.main(annotationArgs.toArray(new String[0]));
         }
 
         if (stage.equals("all") || stage.equals("index")) {
             System.out.println("Running indexing stage...");
+            System.out.println("Using database path: " + dbPath);
+            System.out.println("Using index directory: " + indexDir);
             IndexRunner.runIndexing(
                     dbPath,
-                    ns.getString("index_dir"),
+                    indexDir,
                     ns.getString("stopwords"),
                     ns.getInt("batch_size"),
                     ns.getString("index_type"),
@@ -259,5 +278,30 @@ public class Pipeline {
         @SuppressWarnings("unchecked")
         Map<String, Object> errors = (Map<String, Object>) results.get("error_patterns");
         System.out.printf("Total Errors: %d%n", errors.get("total_errors"));
+    }
+
+    /**
+     * Sets up the project directory structure and returns the base path
+     * @param projectName Name of the project
+     * @return Path to the project directory
+     * @throws IOException If directory creation fails
+     */
+    private static Path setupProjectDirectories(String projectName) throws IOException {
+        // Create main project structure
+        Path currentDir = Path.of(System.getProperty("user.dir"));
+        Path indexesDir = currentDir.resolve("indexes");
+        Path projectDir = indexesDir.resolve(projectName);
+        
+        // Ensure indexes directory exists
+        if (!Files.exists(indexesDir)) {
+            Files.createDirectories(indexesDir);
+        }
+        
+        // Ensure project directory exists
+        if (!Files.exists(projectDir)) {
+            Files.createDirectories(projectDir);
+        }
+        
+        return projectDir;
     }
 }

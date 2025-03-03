@@ -105,95 +105,123 @@ public class Annotations {
         }
     }
 
+    /**
+     * Get default properties for CoreNLP pipeline
+     * 
+     * @return Properties configured for our NLP processing requirements
+     */
+    private static Properties getDefaultCoreNLPProperties() {
+        Properties props = new Properties();
+        props.setProperty("annotators", "tokenize,ssplit,pos,lemma,ner,depparse");
+        props.setProperty("ner.applyNumericClassifiers", "true");
+        props.setProperty("ner.useSUTime", "true");
+        return props;
+    }
+
+    /**
+     * Processes text with CoreNLP pipeline, chunking if needed, and returns annotations.
+     * 
+     * @param pipeline The CoreNLP pipeline to use for processing
+     * @param text The text to process
+     * @param documentId The ID of the document being processed
+     * @return The AnnotationResult containing annotations and dependencies
+     */
     private static AnnotationResult processTextWithCoreNLP(StanfordCoreNLP pipeline, String text, int documentId) {
         List<Map<String, Object>> annotations = new ArrayList<>();
         List<Map<String, Object>> dependencies = new ArrayList<>();
-
-        try {
-            logger.debug("Processing document {} with length {}", documentId, text.length());
+        
+        // Split text into manageable chunks and track their positions
+        TextSegmenter segmenter = new TextSegmenter();
+        TextSegmenter.ChunkResult chunkResult = segmenter.chunkDocumentWithPositions(text);
+        List<String> chunks = chunkResult.getChunks();
+        
+        logger.debug("Processing document {} with {} chunks", documentId, chunks.size());
+        
+        // Keep track of the global sentence ID across all chunks
+        AtomicInteger globalSentenceId = new AtomicInteger(0);
+        
+        // Process each chunk
+        for (int chunkIndex = 0; chunkIndex < chunks.size(); chunkIndex++) {
+            String chunk = chunks.get(chunkIndex);
+            CoreDocument document = new CoreDocument(chunk);
+            pipeline.annotate(document);
             
-            // Create text segmenter for chunking
-            TextSegmenter segmenter = new TextSegmenter();
-            List<String> chunks = segmenter.chunkDocument(text);
-            logger.debug("Split document {} into {} chunks", documentId, chunks.size());
+            // Get the precise character offset for this chunk in the original document
+            int chunkStartOffset = chunkResult.getStartPosition(chunkIndex);
             
-            // Track sentence IDs across chunks
-            AtomicInteger globalSentenceId = new AtomicInteger(0);
-            
-            // Process each chunk
-            for (String chunk : chunks) {
-                CoreDocument document = new CoreDocument(chunk);
-                pipeline.annotate(document);
+            int sentenceId = globalSentenceId.get();
+            for (CoreSentence sentence : document.sentences()) {
+                List<CoreLabel> tokens = sentence.tokens();
                 
-                int sentenceId = globalSentenceId.get();
-                for (CoreSentence sentence : document.sentences()) {
-                    List<CoreLabel> tokens = sentence.tokens();
-                    
-                    // Skip sentences that are likely duplicates from overlap regions
-                    if (isOverlapSentence(chunk, sentence)) {
-                        continue;
-                    }
-                    
-                    // Process tokens
-                    for (CoreLabel token : tokens) {
-                        Map<String, Object> annotation = new HashMap<>();
-                        annotation.put("document_id", documentId);
-                        annotation.put("sentence_id", sentenceId);
-                        annotation.put("begin_char", token.beginPosition());
-                        annotation.put("end_char", token.endPosition());
-                        annotation.put("token", token.word());
-                        annotation.put("lemma", token.lemma());
-                        annotation.put("pos", token.tag());
-                        annotation.put("ner", token.ner());
-                        annotation.put("normalized_ner",
-                                token.get(CoreAnnotations.NormalizedNamedEntityTagAnnotation.class));
-
-                        annotations.add(annotation);
-                    }
-
-                    // Process dependencies
-                    SemanticGraph dependencies_graph = sentence.dependencyParse();
-                    if (dependencies_graph != null) {
-                        for (SemanticGraphEdge edge : dependencies_graph.edgeIterable()) {
-                            IndexedWord source = edge.getSource();
-                            IndexedWord target = edge.getTarget();
-
-                            int beginChar = Math.min(source.beginPosition(), target.beginPosition());
-                            int endChar = Math.max(source.endPosition(), target.endPosition());
-
-                            Map<String, Object> dependency = new HashMap<>();
-                            dependency.put("document_id", documentId);
-                            dependency.put("sentence_id", sentenceId);
-                            dependency.put("begin_char", beginChar);
-                            dependency.put("end_char", endChar);
-                            dependency.put("head_token", source.word());
-                            dependency.put("dependent_token", target.word());
-                            dependency.put("relation", edge.getRelation().toString());
-
-                            dependencies.add(dependency);
-                        }
-                    }
-                    
-                    sentenceId++;
+                // Skip sentences that are likely duplicates from overlap regions
+                if (isOverlapSentence(chunk, sentence, chunkIndex, chunkIndex == chunks.size() - 1)) {
+                    continue;
                 }
-                globalSentenceId.set(sentenceId);
+                
+                // Process tokens
+                for (CoreLabel token : tokens) {
+                    Map<String, Object> annotation = new HashMap<>();
+                    annotation.put("document_id", documentId);
+                    annotation.put("sentence_id", sentenceId);
+                    annotation.put("begin_char", token.beginPosition() + chunkStartOffset);
+                    annotation.put("end_char", token.endPosition() + chunkStartOffset);
+                    annotation.put("token", token.word());
+                    annotation.put("lemma", token.lemma());
+                    annotation.put("pos", token.tag());
+                    annotation.put("ner", token.ner());
+                    annotation.put("normalized_ner",
+                            token.get(CoreAnnotations.NormalizedNamedEntityTagAnnotation.class));
+
+                    annotations.add(annotation);
+                }
+
+                // Process dependencies
+                SemanticGraph dependencies_graph = sentence.dependencyParse();
+                if (dependencies_graph != null) {
+                    for (SemanticGraphEdge edge : dependencies_graph.edgeIterable()) {
+                        IndexedWord source = edge.getSource();
+                        IndexedWord target = edge.getTarget();
+
+                        int beginChar = Math.min(source.beginPosition(), target.beginPosition()) + chunkStartOffset;
+                        int endChar = Math.max(source.endPosition(), target.endPosition()) + chunkStartOffset;
+
+                        Map<String, Object> dependency = new HashMap<>();
+                        dependency.put("document_id", documentId);
+                        dependency.put("sentence_id", sentenceId);
+                        dependency.put("begin_char", beginChar);
+                        dependency.put("end_char", endChar);
+                        dependency.put("source_token", source.word());
+                        dependency.put("source_begin", source.beginPosition() + chunkStartOffset);
+                        dependency.put("source_end", source.endPosition() + chunkStartOffset);
+                        dependency.put("target_token", target.word());
+                        dependency.put("target_begin", target.beginPosition() + chunkStartOffset);
+                        dependency.put("target_end", target.endPosition() + chunkStartOffset);
+                        dependency.put("dep_type", edge.getRelation().toString());
+
+                        dependencies.add(dependency);
+                    }
+                }
+                sentenceId++;
             }
             
-            logger.debug("Processed document {} with {} sentences", 
-                      documentId, globalSentenceId.get());
-
-        } catch (Exception e) {
-            logger.error("Error processing document {}: {}", documentId, e.getMessage(), e);
+            globalSentenceId.set(sentenceId);
         }
-
+        
         return new AnnotationResult(annotations, dependencies);
     }
     
     /**
      * Checks if a sentence is likely from an overlap region by checking if it starts
      * near the beginning of a non-first chunk or ends near the end of a non-last chunk.
+     * 
+     * @param chunk The current text chunk being processed
+     * @param sentence The CoreNLP sentence being considered
+     * @param chunkIndex The index of the current chunk in the sequence of chunks
+     * @param isLastChunk Whether this is the last chunk in the document
+     * @return true if the sentence appears to be from an overlap region
      */
-    private static boolean isOverlapSentence(String chunk, CoreSentence sentence) {
+    private static boolean isOverlapSentence(String chunk, CoreSentence sentence, 
+                                            int chunkIndex, boolean isLastChunk) {
         List<CoreLabel> tokens = sentence.tokens();
         if (tokens.isEmpty()) {
             return false;
@@ -202,10 +230,17 @@ public class Annotations {
         int sentenceStart = tokens.get(0).beginPosition();
         int sentenceEnd = tokens.get(tokens.size() - 1).endPosition();
         
-        // If sentence starts in first 100 chars of chunk (overlap size) and isn't at start
-        // or ends in last 100 chars and isn't at end, it's likely an overlap sentence
-        return (sentenceStart < 100 && sentenceStart > 0) || 
-               (sentenceEnd > chunk.length() - 100 && sentenceEnd < chunk.length());
+        // For non-first chunks, check if the sentence starts in the overlap region
+        // Since we add overlap at the beginning of chunks, sentences that start in
+        // the first OVERLAP_SIZE characters are likely from the previous chunk
+        if (chunkIndex > 0 && sentenceStart < TextSegmenter.OVERLAP_SIZE) {
+            return true;
+        }
+        
+        // For non-last chunks, we don't need to check the end because the next chunk
+        // will contain the complete sentence in its overlap region
+        
+        return false;
     }
 
     private static void insertData(Connection conn, List<Map<String, Object>> annotations,
