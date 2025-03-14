@@ -97,26 +97,39 @@ public final class LogicalExecutor implements ConditionExecutor<Logical> {
             
             // Modified intersection handling for document granularity
             if (granularity == Query.Granularity.DOCUMENT) {
-                // Group matches by document ID
-                Map<Long, DocSentenceMatch> docMatches = result.stream()
-                    .collect(Collectors.toMap(
-                        m -> (long) m.documentId(),
-                        m -> m,
-                        (existing, replacement) -> {
-                            existing.mergePositions(replacement);
-                            return existing;
-                        }
-                    ));
-
-                Set<Long> matchingDocs = nextResult.stream()
-                    .map(m -> (long) m.documentId())
-                    .collect(Collectors.toSet());
-
-                // Retain only documents present in both sets
-                docMatches.keySet().retainAll(matchingDocs);
+                // Create maps to track matches by document ID
+                Map<Integer, DocSentenceMatch> resultMap = new HashMap<>();
+                Set<Integer> nextResultDocIds = new HashSet<>();
                 
-                // Rebuild result with merged positions
-                result = new HashSet<>(docMatches.values());
+                // Index the current results by document ID
+                for (DocSentenceMatch match : result) {
+                    resultMap.put(match.documentId(), match);
+                }
+                
+                // Collect document IDs from the next result set
+                for (DocSentenceMatch match : nextResult) {
+                    nextResultDocIds.add(match.documentId());
+                }
+                
+                // Create a new result set with only documents that appear in both sets
+                Set<DocSentenceMatch> intersectionResult = new HashSet<>();
+                for (Map.Entry<Integer, DocSentenceMatch> entry : resultMap.entrySet()) {
+                    int docId = entry.getKey();
+                    if (nextResultDocIds.contains(docId)) {
+                        // This document is in both sets, so include it in the result
+                        // Find the corresponding match in nextResult to merge positions
+                        DocSentenceMatch currentMatch = entry.getValue();
+                        for (DocSentenceMatch nextMatch : nextResult) {
+                            if (nextMatch.documentId() == docId) {
+                                currentMatch.mergePositions(nextMatch);
+                                break;
+                            }
+                        }
+                        intersectionResult.add(currentMatch);
+                    }
+                }
+                
+                result = intersectionResult;
             } else {
                 // Existing sentence-level intersection logic
                 result = intersectMatches(result, nextResult, granularitySize);
@@ -147,7 +160,7 @@ public final class LogicalExecutor implements ConditionExecutor<Logical> {
         
         Set<DocSentenceMatch> result = new HashSet<>();
         
-        // Process all conditions FIRST
+        // Process all conditions
         for (Condition subCondition : conditions) {
             ConditionExecutor<Condition> executor = executorFactory.getExecutor(subCondition);
             Set<DocSentenceMatch> subResult = executor.execute(subCondition, indexes, variableBindings, granularity, granularitySize);
@@ -156,23 +169,34 @@ public final class LogicalExecutor implements ConditionExecutor<Logical> {
                 if (result.isEmpty()) {
                     // First non-empty result, just add all
                     result.addAll(subResult);
+                } else if (granularity == Query.Granularity.DOCUMENT) {
+                    // For document granularity, merge matches by document ID
+                    Map<Integer, DocSentenceMatch> docMatches = new HashMap<>();
+                    
+                    // Add existing results to the map
+                    for (DocSentenceMatch match : result) {
+                        docMatches.put(match.documentId(), match);
+                    }
+                    
+                    // Merge in new results
+                    for (DocSentenceMatch match : subResult) {
+                        int docId = match.documentId();
+                        if (docMatches.containsKey(docId)) {
+                            // Document already exists, merge positions
+                            docMatches.get(docId).mergePositions(match);
+                        } else {
+                            // New document, add to map
+                            docMatches.put(docId, match);
+                        }
+                    }
+                    
+                    // Update result with merged matches
+                    result = new HashSet<>(docMatches.values());
                 } else {
-                    // Union with existing results
+                    // For sentence granularity, use the existing union logic
                     result = unionMatches(result, subResult);
                 }
             }
-        }
-        
-        // THEN handle document-level deduplication
-        if (granularity == Query.Granularity.DOCUMENT) {
-            Map<Long, DocSentenceMatch> merged = new HashMap<>();
-            for (DocSentenceMatch match : result) {
-                merged.merge((long) match.documentId(), match, (existing, newMatch) -> {
-                    existing.mergePositions(newMatch);
-                    return existing;
-                });
-            }
-            return new HashSet<>(merged.values());
         }
         
         logger.debug("OR operation completed with {} matching {}", 

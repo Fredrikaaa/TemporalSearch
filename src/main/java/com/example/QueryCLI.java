@@ -17,6 +17,7 @@ import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tech.tablesaw.api.Table;
 
 import java.nio.file.Path;
 import java.util.*;
@@ -35,7 +36,6 @@ public class QueryCLI {
     private final QueryParser parser;
     private final QuerySemanticValidator validator;
     private final QueryExecutor executor;
-    private final ResultFormatter resultFormatter;
     private final SnippetConfig snippetConfig;
 
     /**
@@ -49,7 +49,6 @@ public class QueryCLI {
         this.validator = new QuerySemanticValidator();
         this.executor = new QueryExecutor(new ConditionExecutorFactory());
         this.snippetConfig = SnippetConfig.DEFAULT;
-        this.resultFormatter = new ResultFormatter();
         
         logger.info("Initialized QueryCLI with base directory: {}", indexBaseDir);
         logger.info("Using database structure: {}/[CORPUS_NAME]/[CORPUS_NAME].db", indexBaseDir);
@@ -59,8 +58,10 @@ public class QueryCLI {
      * Executes a query string.
      *
      * @param queryStr The query string to execute
+     * @param exportFormat Optional export format (csv, json, html)
+     * @param exportFilename Optional export filename
      */
-    public void executeQuery(String queryStr) {
+    public void executeQuery(String queryStr, Optional<String> exportFormat, Optional<String> exportFilename) {
         try {
             // 1. Parse query string into Query object
             logger.debug("Parsing query: {}", queryStr);
@@ -88,8 +89,8 @@ public class QueryCLI {
                 return; // Early return to avoid further processing
             }
             
-            // Create a new ResultGenerator with the corpus-specific database path
-            ResultGenerator queryResultGenerator = new ResultGenerator(snippetConfig, corpusDbPath);
+            // Create a new TableResultService with the corpus-specific database path
+            TableResultService tableResultService = new TableResultService(snippetConfig, corpusDbPath);
             logger.info("Using corpus-specific database at: {}", corpusDbPath);
             
             // 4. Create IndexManager for the resolved path
@@ -114,17 +115,32 @@ public class QueryCLI {
                     System.out.println("Total matches: " + matches.size() + " sentences");
                 }
                 
-                // 6. Generate results using ResultGenerator with corpus-specific database path
+                // 6. Generate results using TableResultService with corpus-specific database path
                 logger.debug("Generating result table");
-                ResultTable resultTable = queryResultGenerator.generateResultTable(
+                Table resultTable = tableResultService.generateTable(
                     query, matches, variableBindings, indexManager.getAllIndexes());
                 
-                // 7. Format and display results
-                logger.debug("Formatting results");
-                String formattedResults = resultFormatter.format(resultTable);
-                
-                // Output the formatted results
-                System.out.println(formattedResults);
+                // 7. Handle export if requested
+                if (exportFormat.isPresent() && exportFilename.isPresent()) {
+                    String format = exportFormat.get();
+                    String filename = exportFilename.get();
+                    logger.info("Exporting results to {} format in file: {}", format, filename);
+                    
+                    try {
+                        tableResultService.exportTable(resultTable, format, filename);
+                        System.out.println("Results exported to " + filename);
+                    } catch (IOException e) {
+                        logger.error("Error exporting results: {}", e.getMessage());
+                        System.err.println("Error exporting results: " + e.getMessage());
+                    }
+                } else {
+                    // 8. Format and display results
+                    logger.debug("Formatting results for display");
+                    String formattedResults = tableResultService.formatTable(resultTable);
+                    
+                    // Output the formatted results
+                    System.out.println(formattedResults);
+                }
             }
             
         } catch (QueryParseException e) {
@@ -152,6 +168,9 @@ public class QueryCLI {
                 .setDefault("indexes")
                 .help("Base directory for index sets");
         
+        parser.addArgument("--export")
+                .help("Export results to a file in the specified format: csv:filename.csv, json:filename.json, or html:filename.html");
+        
         parser.addArgument("query")
                 .nargs("?")
                 .help("Query string to execute");
@@ -161,13 +180,29 @@ public class QueryCLI {
             Namespace ns = parser.parseArgs(args);
             String indexDir = ns.getString("index_dir");
             String query = ns.getString("query");
+            String exportArg = ns.getString("export");
+            
+            // Parse export argument if provided
+            Optional<String> exportFormat = Optional.empty();
+            Optional<String> exportFilename = Optional.empty();
+            
+            if (exportArg != null && !exportArg.isEmpty()) {
+                String[] parts = exportArg.split(":", 2);
+                if (parts.length == 2) {
+                    exportFormat = Optional.of(parts[0]);
+                    exportFilename = Optional.of(parts[1]);
+                } else {
+                    System.err.println("Invalid export format. Use format:filename (e.g., csv:results.csv)");
+                    System.exit(1);
+                }
+            }
             
             // Create and run CLI
             QueryCLI cli = new QueryCLI(Path.of(indexDir));
             
             if (query != null) {
                 // Execute the provided query
-                cli.executeQuery(query);
+                cli.executeQuery(query, exportFormat, exportFilename);
             } else {
                 // Interactive mode
                 Scanner scanner = new Scanner(System.in);
@@ -175,6 +210,7 @@ public class QueryCLI {
                 System.out.println("Using index directory: " + indexDir);
                 System.out.println("Database structure: " + indexDir + "/[CORPUS_NAME]/[CORPUS_NAME].db");
                 System.out.println("Snippet support is enabled. Use SNIPPET(variable) in SELECT clause to show text context.");
+                System.out.println("Export support: Add --export=format:filename to export results (formats: csv, json, html)");
                 
                 while (true) {
                     System.out.print("\nQuery> ");
@@ -185,7 +221,7 @@ public class QueryCLI {
                     }
                     
                     if (!input.isEmpty()) {
-                        cli.executeQuery(input);
+                        cli.executeQuery(input, exportFormat, exportFilename);
                     }
                 }
                 

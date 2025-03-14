@@ -169,6 +169,23 @@
             <artifactId>antlr4-runtime</artifactId>
             <version>4.13.2</version>
         </dependency>
+
+        <!-- Tablesaw - for data tables and visualization -->
+        <dependency>
+            <groupId>tech.tablesaw</groupId>
+            <artifactId>tablesaw-core</artifactId>
+            <version>0.43.1</version>
+        </dependency>
+        <dependency>
+            <groupId>tech.tablesaw</groupId>
+            <artifactId>tablesaw-html</artifactId>
+            <version>0.43.1</version>
+        </dependency>
+        <dependency>
+            <groupId>tech.tablesaw</groupId>
+            <artifactId>tablesaw-json</artifactId>
+            <version>0.43.1</version>
+        </dependency>
     </dependencies>
 
     <build>
