@@ -7,12 +7,25 @@ import java.util.Objects;
 /**
  * Specification for a column in query results.
  */
-public class ColumnSpec {
-    private final String name;
-    private final ColumnType type;
-    private final String alias;
-    private final Map<String, String> options;
-    
+public record ColumnSpec(
+    String name,
+    ColumnType type,
+    String alias,
+    Map<String, String> options
+) {
+    /**
+     * Creates a new column specification with validation.
+     */
+    public ColumnSpec {
+        Objects.requireNonNull(name, "name must not be null");
+        Objects.requireNonNull(type, "type must not be null");
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("name must not be blank");
+        }
+        // Make defensive copy of options if not null
+        options = options != null ? Map.copyOf(options) : null;
+    }
+
     /**
      * Creates a new column specification.
      * @param name The column name
@@ -30,35 +43,6 @@ public class ColumnSpec {
      */
     public ColumnSpec(String name, ColumnType type, Map<String, String> options) {
         this(name, type, null, options);
-    }
-    
-    /**
-     * Creates a new column specification with alias and options.
-     * @param name The column name
-     * @param type The column type
-     * @param alias Optional display name for the column
-     * @param options Additional options for the column
-     * @throws NullPointerException if name or type is null
-     */
-    public ColumnSpec(String name, ColumnType type, String alias, Map<String, String> options) {
-        this.name = Objects.requireNonNull(name, "name must not be null");
-        this.type = Objects.requireNonNull(type, "type must not be null");
-        this.alias = alias;
-        this.options = options != null ? new HashMap<>(options) : null;
-    }
-    
-    /**
-     * Gets the column name.
-     */
-    public String name() {
-        return name;
-    }
-    
-    /**
-     * Gets the column type.
-     */
-    public ColumnType type() {
-        return type;
     }
     
     /**

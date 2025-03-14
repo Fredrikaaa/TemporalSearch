@@ -1,149 +1,106 @@
 package com.example.query.model;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
+import com.example.query.model.condition.Condition;
+
 /**
- * Represents a parsed query in our query language.
- * This is the root class that holds all components of a query.
+ * Represents a query in the query language.
+ * A query consists of:
+ * - A source (e.g. "wikipedia")
+ * - A list of conditions
+ * - Optional order by specifications
+ * - Optional limit
+ * - Granularity settings
+ * - Optional granularity size
+ * - List of columns to select
  */
-public class Query {
-    /**
-     * Enum for the different granularity levels.
-     */
+public record Query(
+    String source,
+    List<Condition> conditions,
+    List<OrderSpec> orderBy,
+    Optional<Integer> limit,
+    Granularity granularity,
+    Optional<Integer> granularitySize,
+    List<SelectColumn> selectColumns
+) {
     public enum Granularity {
         DOCUMENT,
         SENTENCE
     }
 
-    private final String source;
-    private final List<Condition> conditions;
-    private final List<OrderSpec> orderBy;
-    private final Optional<Integer> limit;
-    private final Optional<Granularity> granularity;
-    private final Optional<Integer> granularitySize;
-    private List<SelectColumn> selectColumns;
+    /**
+     * Creates a query with validation.
+     */
+    public Query {
+        Objects.requireNonNull(source, "Source cannot be null");
+        Objects.requireNonNull(conditions, "Conditions cannot be null");
+        Objects.requireNonNull(orderBy, "Order by specifications cannot be null");
+        Objects.requireNonNull(limit, "Limit cannot be null");
+        Objects.requireNonNull(granularity, "Granularity cannot be null");
+        Objects.requireNonNull(granularitySize, "Granularity size cannot be null");
+        Objects.requireNonNull(selectColumns, "Select columns cannot be null");
 
+        // Make defensive copies
+        conditions = List.copyOf(conditions);
+        orderBy = List.copyOf(orderBy);
+        selectColumns = List.copyOf(selectColumns);
+    }
+
+    /**
+     * Creates a query with just a source.
+     */
     public Query(String source) {
-        this.source = source;
-        this.conditions = new ArrayList<>();
-        this.orderBy = new ArrayList<>();
-        this.limit = Optional.empty();
-        this.granularity = Optional.empty();
-        this.granularitySize = Optional.empty();
-        this.selectColumns = new ArrayList<>();
+        this(source, List.of(), List.of(), Optional.empty(), Granularity.DOCUMENT, Optional.empty(), List.of());
     }
 
-    public Query(String source, List<Condition> conditions, List<OrderSpec> orderBy, 
-                 Optional<Integer> limit, Optional<Granularity> granularity, 
-                 Optional<Integer> granularitySize) {
-        this.source = source;
-        this.conditions = conditions;
-        this.orderBy = orderBy;
-        this.limit = limit;
-        this.granularity = granularity;
-        this.granularitySize = granularitySize;
-        this.selectColumns = new ArrayList<>();
-    }
-    
     /**
-     * Creates a new Query with all parameters including select columns.
+     * Creates a query with source and conditions.
      */
-    public Query(String source, List<Condition> conditions, List<OrderSpec> orderBy, 
-                 Optional<Integer> limit, Optional<Granularity> granularity, 
-                 Optional<Integer> granularitySize, List<SelectColumn> selectColumns) {
-        this.source = source;
-        this.conditions = conditions;
-        this.orderBy = orderBy;
-        this.limit = limit;
-        this.granularity = granularity;
-        this.granularitySize = granularitySize;
-        this.selectColumns = selectColumns != null ? selectColumns : new ArrayList<>();
+    public Query(String source, List<Condition> conditions) {
+        this(source, conditions, List.of(), Optional.empty(), Granularity.DOCUMENT, Optional.empty(), List.of());
     }
 
-    public String getSource() {
-        return source;
-    }
-
-    public List<Condition> getConditions() {
-        return conditions;
-    }
-
-    public List<OrderSpec> getOrderBy() {
-        return orderBy;
-    }
-
-    public Optional<Integer> getLimit() {
-        return limit;
-    }
-    
-    public Optional<Granularity> getGranularity() {
-        return granularity;
-    }
-    
-    public Optional<Integer> getGranularitySize() {
-        return granularitySize;
-    }
-    
     /**
-     * Gets the list of select columns from the SELECT clause.
-     * 
-     * @return List of select columns
+     * Creates a query with source, conditions, and granularity.
      */
-    public List<SelectColumn> getSelectColumns() {
-        return selectColumns;
-    }
-    
-    /**
-     * Sets the list of select columns from the SELECT clause.
-     * 
-     * @param selectColumns The list of select columns
-     */
-    public void setSelectColumns(List<SelectColumn> selectColumns) {
-        this.selectColumns = selectColumns != null ? selectColumns : new ArrayList<>();
-    }
-
-    public void addCondition(Condition condition) {
-        conditions.add(condition);
-    }
-
-    public void addOrderSpec(OrderSpec spec) {
-        orderBy.add(spec);
-    }
-    
-    /**
-     * Adds a single select column to the query.
-     * 
-     * @param column The select column to add
-     */
-    public void addSelectColumn(SelectColumn column) {
-        if (column != null) {
-            this.selectColumns.add(column);
-        }
+    public Query(String source, List<Condition> conditions, Granularity granularity) {
+        this(source, conditions, List.of(), Optional.empty(), granularity, Optional.empty(), List.of());
     }
 
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append("Query{source='").append(source).append('\'');
+        sb.append("FROM ").append(source);
+        
+        if (!selectColumns.isEmpty()) {
+            sb.append(" SELECT ");
+            for (int i = 0; i < selectColumns.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(selectColumns.get(i));
+            }
+        }
         
         if (!conditions.isEmpty()) {
-            sb.append(", conditions=").append(conditions);
+            sb.append(" WHERE ");
+            for (int i = 0; i < conditions.size(); i++) {
+                if (i > 0) sb.append(" AND ");
+                sb.append(conditions.get(i));
+            }
         }
         
         if (!orderBy.isEmpty()) {
-            sb.append(", orderBy=").append(orderBy);
+            sb.append(" ORDER BY ");
+            for (int i = 0; i < orderBy.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(orderBy.get(i));
+            }
         }
         
-        limit.ifPresent(l -> sb.append(", limit=").append(l));
+        limit.ifPresent(l -> sb.append(" LIMIT ").append(l));
         
-        granularity.ifPresent(g -> {
-            sb.append(", granularity=").append(g);
-            granularitySize.ifPresent(s -> sb.append("(").append(s).append(")"));
-        });
-        
-        sb.append('}');
         return sb.toString();
     }
 } 

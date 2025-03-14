@@ -2,8 +2,10 @@ package com.example.query.executor;
 
 import com.example.query.model.DocSentenceMatch;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -11,14 +13,14 @@ import java.util.Set;
 
 /**
  * Tracks variable bindings captured during query execution.
- * Variables can be bound to different values in different documents and sentences.
+ * Variables can be bound to multiple values in different documents and sentences.
  */
 public class VariableBindings {
-    // Map from document ID to a map of variable name to value
-    private final Map<Integer, Map<String, String>> documentBindings;
+    // Map from document ID to a map of variable name to list of values
+    private final Map<Integer, Map<String, List<String>>> documentBindings;
     
-    // Map from SentenceKey to a map of variable name to value
-    private final Map<SentenceKey, Map<String, String>> sentenceBindings;
+    // Map from SentenceKey to a map of variable name to list of values
+    private final Map<SentenceKey, Map<String, List<String>>> sentenceBindings;
 
     /**
      * Creates a new empty VariableBindings object.
@@ -36,8 +38,9 @@ public class VariableBindings {
      * @param value The value to bind to the variable
      */
     public void addBinding(int documentId, String variableName, String value) {
-        documentBindings.computeIfAbsent(documentId, k -> new HashMap<>())
-                .put(variableName, value);
+        Map<String, List<String>> docVars = documentBindings.computeIfAbsent(documentId, k -> new HashMap<>());
+        List<String> values = docVars.computeIfAbsent(variableName, k -> new ArrayList<>());
+        values.add(value);
     }
     
     /**
@@ -50,91 +53,126 @@ public class VariableBindings {
      */
     public void addBinding(int documentId, int sentenceId, String variableName, String value) {
         SentenceKey key = new SentenceKey(documentId, sentenceId);
-        sentenceBindings.computeIfAbsent(key, k -> new HashMap<>())
-                .put(variableName, value);
+        Map<String, List<String>> sentVars = sentenceBindings.computeIfAbsent(key, k -> new HashMap<>());
+        List<String> values = sentVars.computeIfAbsent(variableName, k -> new ArrayList<>());
+        values.add(value);
     }
 
     /**
-     * Gets the value of a variable for a document.
+     * Gets all values of a variable for a document.
      *
      * @param documentId The document ID
      * @param variableName The variable name
-     * @return Optional containing the value if bound, empty otherwise
+     * @return List of values (empty if no bindings)
      */
-    public Optional<String> getValue(int documentId, String variableName) {
-        return Optional.ofNullable(documentBindings.getOrDefault(documentId, Collections.emptyMap())
-                .get(variableName));
+    public List<String> getValues(int documentId, String variableName) {
+        Map<String, List<String>> docVars = documentBindings.getOrDefault(documentId, Collections.emptyMap());
+        return new ArrayList<>(docVars.getOrDefault(variableName, Collections.emptyList()));
     }
     
     /**
-     * Gets the value of a variable for a specific sentence.
+     * Gets all values of a variable for a specific sentence.
      *
      * @param documentId The document ID
      * @param sentenceId The sentence ID
      * @param variableName The variable name
-     * @return Optional containing the value if bound, empty otherwise
+     * @return List of values (empty if no bindings)
      */
-    public Optional<String> getValue(int documentId, int sentenceId, String variableName) {
+    public List<String> getValues(int documentId, int sentenceId, String variableName) {
         SentenceKey key = new SentenceKey(documentId, sentenceId);
-        return Optional.ofNullable(sentenceBindings.getOrDefault(key, Collections.emptyMap())
-                .get(variableName));
+        Map<String, List<String>> sentVars = sentenceBindings.getOrDefault(key, Collections.emptyMap());
+        return new ArrayList<>(sentVars.getOrDefault(variableName, Collections.emptyList()));
     }
     
     /**
-     * Gets the value of a variable, checking both sentence and document level bindings.
+     * Gets the first value of a variable, checking both sentence and document level bindings.
      * Sentence level bindings take precedence over document level bindings.
      *
      * @param documentId The document ID
      * @param sentenceId The sentence ID
      * @param variableName The variable name
-     * @return Optional containing the value if bound, empty otherwise
+     * @return Optional containing the first value if bound, empty otherwise
      */
     public Optional<String> getValueWithFallback(int documentId, int sentenceId, String variableName) {
         // First check sentence level
-        Optional<String> sentenceValue = getValue(documentId, sentenceId, variableName);
-        if (sentenceValue.isPresent()) {
-            return sentenceValue;
+        List<String> sentValues = getValues(documentId, sentenceId, variableName);
+        if (!sentValues.isEmpty()) {
+            return Optional.of(sentValues.get(0));
         }
         
         // Fall back to document level
-        return getValue(documentId, variableName);
+        List<String> docValues = getValues(documentId, variableName);
+        return docValues.isEmpty() ? Optional.empty() : Optional.of(docValues.get(0));
     }
 
     /**
-     * Gets all variable bindings for a document.
+     * Gets all variable values for a document.
      *
      * @param documentId The document ID
-     * @return Map of variable name to value
+     * @return Map of variable name to list of values
      */
-    public Map<String, String> getBindingsForDocument(int documentId) {
-        return Collections.unmodifiableMap(
-                documentBindings.getOrDefault(documentId, Collections.emptyMap()));
+    public Map<String, List<String>> getValuesForDocument(int documentId) {
+        Map<String, List<String>> result = new HashMap<>();
+        Map<String, List<String>> docVars = documentBindings.getOrDefault(documentId, Collections.emptyMap());
+        
+        for (Map.Entry<String, List<String>> entry : docVars.entrySet()) {
+            result.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+        }
+        
+        return Collections.unmodifiableMap(result);
     }
     
     /**
-     * Gets all variable bindings for a specific sentence.
+     * Gets all variable values for a specific sentence.
      *
      * @param documentId The document ID
      * @param sentenceId The sentence ID
-     * @return Map of variable name to value
+     * @return Map of variable name to list of values
      */
-    public Map<String, String> getBindingsForSentence(int documentId, int sentenceId) {
+    public Map<String, List<String>> getValuesForSentence(int documentId, int sentenceId) {
+        Map<String, List<String>> result = new HashMap<>();
         SentenceKey key = new SentenceKey(documentId, sentenceId);
-        return Collections.unmodifiableMap(
-                sentenceBindings.getOrDefault(key, Collections.emptyMap()));
+        Map<String, List<String>> sentVars = sentenceBindings.getOrDefault(key, Collections.emptyMap());
+        
+        for (Map.Entry<String, List<String>> entry : sentVars.entrySet()) {
+            result.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+        }
+        
+        return Collections.unmodifiableMap(result);
     }
     
     /**
-     * Gets all variable bindings for a specific sentence, including document-level bindings.
-     * Sentence-level bindings take precedence over document-level bindings.
+     * Gets all variable values for a specific sentence, including document-level values.
+     * This combines document and sentence level bindings.
      *
      * @param documentId The document ID
      * @param sentenceId The sentence ID
-     * @return Map of variable name to value
+     * @return Map of variable name to list of values
      */
-    public Map<String, String> getAllBindingsForSentence(int documentId, int sentenceId) {
-        Map<String, String> result = new HashMap<>(getBindingsForDocument(documentId));
-        result.putAll(getBindingsForSentence(documentId, sentenceId));
+    public Map<String, List<String>> getAllValuesForSentence(int documentId, int sentenceId) {
+        Map<String, List<String>> result = new HashMap<>();
+        
+        // Add document level bindings
+        Map<String, List<String>> docBindings = getValuesForDocument(documentId);
+        for (Map.Entry<String, List<String>> entry : docBindings.entrySet()) {
+            result.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+        }
+        
+        // Add sentence level bindings
+        Map<String, List<String>> sentBindings = getValuesForSentence(documentId, sentenceId);
+        for (Map.Entry<String, List<String>> entry : sentBindings.entrySet()) {
+            String varName = entry.getKey();
+            List<String> values = entry.getValue();
+            
+            if (result.containsKey(varName)) {
+                // Append to existing list
+                result.get(varName).addAll(values);
+            } else {
+                // Create new list
+                result.put(varName, new ArrayList<>(values));
+            }
+        }
+        
         return Collections.unmodifiableMap(result);
     }
 
@@ -158,28 +196,38 @@ public class VariableBindings {
 
     /**
      * Merges another VariableBindings object into this one.
-     * If there are conflicts, the values from the other object take precedence.
+     * All values from both objects are preserved.
      *
      * @param other The other VariableBindings object
      */
     public void merge(VariableBindings other) {
         // Merge document bindings
-        for (Map.Entry<Integer, Map<String, String>> entry : other.documentBindings.entrySet()) {
+        for (Map.Entry<Integer, Map<String, List<String>>> entry : other.documentBindings.entrySet()) {
             int documentId = entry.getKey();
-            Map<String, String> docBindings = entry.getValue();
+            Map<String, List<String>> docBindings = entry.getValue();
             
-            for (Map.Entry<String, String> binding : docBindings.entrySet()) {
-                addBinding(documentId, binding.getKey(), binding.getValue());
+            for (Map.Entry<String, List<String>> binding : docBindings.entrySet()) {
+                String varName = binding.getKey();
+                List<String> values = binding.getValue();
+                
+                for (String value : values) {
+                    addBinding(documentId, varName, value);
+                }
             }
         }
         
         // Merge sentence bindings
-        for (Map.Entry<SentenceKey, Map<String, String>> entry : other.sentenceBindings.entrySet()) {
+        for (Map.Entry<SentenceKey, Map<String, List<String>>> entry : other.sentenceBindings.entrySet()) {
             SentenceKey key = entry.getKey();
-            Map<String, String> sentBindings = entry.getValue();
+            Map<String, List<String>> sentBindings = entry.getValue();
             
-            for (Map.Entry<String, String> binding : sentBindings.entrySet()) {
-                addBinding(key.documentId, key.sentenceId, binding.getKey(), binding.getValue());
+            for (Map.Entry<String, List<String>> binding : sentBindings.entrySet()) {
+                String varName = binding.getKey();
+                List<String> values = binding.getValue();
+                
+                for (String value : values) {
+                    addBinding(key.documentId, key.sentenceId, varName, value);
+                }
             }
         }
     }
@@ -193,27 +241,66 @@ public class VariableBindings {
     }
 
     /**
-     * Gets the token position for a variable in a specific match.
-     * This extracts the position from the variable binding's value format: term@sentenceId:position
+     * Gets the begin character position for a variable in a specific match.
+     * This extracts the begin position from the variable binding's value format: term@beginPos:endPos
      *
      * @param variableName The variable name
      * @param match The document-sentence match
-     * @return The token position, or -1 if not found
+     * @return The begin character position, or -1 if not found
      */
-    public int getTokenPosition(String variableName, DocSentenceMatch match) {
+    public int getBeginCharPosition(String variableName, DocSentenceMatch match) {
         // Remove leading ? from variable name if present
         if (variableName.startsWith("?")) {
             variableName = variableName.substring(1);
         }
         
-        // Check for variable binding
-        Optional<String> value = getValueWithFallback(match.getDocumentId(), match.getSentenceId(), variableName);
-        if (value.isEmpty()) {
+        // Get the first value for this variable (for backward compatibility)
+        Optional<String> valueOpt = getValueWithFallback(match.documentId(), match.sentenceId(), variableName);
+        if (valueOpt.isEmpty()) {
             return -1;
         }
         
-        // Parse the position from the value format: term@sentenceId:position
-        String valueStr = value.get();
+        // Parse the position from the value format: term@beginPos:endPos
+        String valueStr = valueOpt.get();
+        int atPos = valueStr.lastIndexOf('@');
+        if (atPos == -1) {
+            return -1;
+        }
+        
+        int colonPos = valueStr.lastIndexOf(':');
+        if (colonPos == -1 || colonPos < atPos) {
+            return -1;
+        }
+        
+        try {
+            return Integer.parseInt(valueStr.substring(atPos + 1, colonPos));
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    /**
+     * Gets the end character position for a variable in a specific match.
+     * This extracts the end position from the variable binding's value format: term@beginPos:endPos
+     *
+     * @param variableName The variable name
+     * @param match The document-sentence match
+     * @return The end character position, or -1 if not found
+     */
+    public int getEndCharPosition(String variableName, DocSentenceMatch match) {
+        // Remove leading ? from variable name if present
+        if (variableName.startsWith("?")) {
+            variableName = variableName.substring(1);
+        }
+        
+        // Get the first value for this variable (for backward compatibility)
+        Optional<String> valueOpt = getValueWithFallback(match.documentId(), match.sentenceId(), variableName);
+        if (valueOpt.isEmpty()) {
+            return -1;
+        }
+        
+        // Parse the position from the value format: term@beginPos:endPos
+        String valueStr = valueOpt.get();
         int atPos = valueStr.lastIndexOf('@');
         if (atPos == -1) {
             return -1;
@@ -232,12 +319,11 @@ public class VariableBindings {
     }
 
     /**
-     * Gets the variable binding details for debugging.
-     * Extracts the value format: term@sentenceId|begin_char
+     * Gets debugging information for a variable binding.
      *
      * @param variableName The variable name
      * @param match The document-sentence match
-     * @return The variable binding details, or empty string if not found
+     * @return The debug information string, or empty string if not available
      */
     public String getVariableDebugInfo(String variableName, DocSentenceMatch match) {
         // Remove leading ? from variable name if present
@@ -245,54 +331,47 @@ public class VariableBindings {
             variableName = variableName.substring(1);
         }
         
-        // Check for variable binding
-        Optional<String> value = getValueWithFallback(match.getDocumentId(), match.getSentenceId(), variableName);
-        if (value.isEmpty()) {
+        // Get the first value for this variable
+        Optional<String> valueOpt = getValueWithFallback(match.documentId(), match.sentenceId(), variableName);
+        if (valueOpt.isEmpty()) {
             return "";
         }
         
-        // Parse from the value format: term@sentenceId:position
-        String valueStr = value.get();
-        int atPos = valueStr.lastIndexOf('@');
-        if (atPos == -1) {
-            return "";
-        }
-        
-        try {
-            // Extract the term and location info
-            String term = valueStr.substring(0, atPos);
-            String locationInfo = valueStr.substring(atPos + 1);
-            
-            // Format is sentenceId:position, we want sentenceId|position
-            int colonPos = locationInfo.indexOf(':');
-            if (colonPos == -1) {
-                return "";
-            }
-            
-            String sentenceId = locationInfo.substring(0, colonPos);
-            String position = locationInfo.substring(colonPos + 1);
-            
-            return term + "@" + sentenceId + "|" + position;
-        } catch (Exception e) {
-            return "";
-        }
+        return valueOpt.get();
     }
 
     @Override
     public String toString() {
-        return "VariableBindings{" +
-                "documentBindings=" + documentBindings +
-                ", sentenceBindings=" + sentenceBindings +
-                '}';
+        StringBuilder sb = new StringBuilder();
+        sb.append("VariableBindings:\n");
+        
+        sb.append("Document bindings:\n");
+        for (Map.Entry<Integer, Map<String, List<String>>> entry : documentBindings.entrySet()) {
+            sb.append("  Doc ").append(entry.getKey()).append(":\n");
+            for (Map.Entry<String, List<String>> varEntry : entry.getValue().entrySet()) {
+                sb.append("    ").append(varEntry.getKey()).append(" = ").append(varEntry.getValue()).append("\n");
+            }
+        }
+        
+        sb.append("Sentence bindings:\n");
+        for (Map.Entry<SentenceKey, Map<String, List<String>>> entry : sentenceBindings.entrySet()) {
+            sb.append("  Doc ").append(entry.getKey().documentId)
+              .append(", Sent ").append(entry.getKey().sentenceId).append(":\n");
+            for (Map.Entry<String, List<String>> varEntry : entry.getValue().entrySet()) {
+                sb.append("    ").append(varEntry.getKey()).append(" = ").append(varEntry.getValue()).append("\n");
+            }
+        }
+        
+        return sb.toString();
     }
-    
+
     /**
-     * Helper class for sentence identification
+     * Key class for sentence-level bindings.
      */
     public static class SentenceKey {
         private final int documentId;
         private final int sentenceId;
-
+        
         public SentenceKey(int documentId, int sentenceId) {
             this.documentId = documentId;
             this.sentenceId = sentenceId;
@@ -305,7 +384,7 @@ public class VariableBindings {
         public int getSentenceId() {
             return sentenceId;
         }
-
+        
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -313,7 +392,7 @@ public class VariableBindings {
             SentenceKey that = (SentenceKey) o;
             return documentId == that.documentId && sentenceId == that.sentenceId;
         }
-
+        
         @Override
         public int hashCode() {
             return Objects.hash(documentId, sentenceId);

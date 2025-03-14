@@ -7,6 +7,7 @@ import java.time.LocalDate;
  * Contains information about a token's lemma and part-of-speech tag.
  */
 public final class AnnotationEntry implements IndexEntry {
+    private final int annotationId;
     private final int documentId;
     private final int sentenceId;
     private final int beginChar;
@@ -15,8 +16,9 @@ public final class AnnotationEntry implements IndexEntry {
     private final String pos;
     private final LocalDate timestamp;
 
-    public AnnotationEntry(int documentId, int sentenceId, int beginChar, int endChar,
+    public AnnotationEntry(int annotationId, int documentId, int sentenceId, int beginChar, int endChar,
             String lemma, String pos, LocalDate timestamp) {
+        this.annotationId = annotationId;
         this.documentId = documentId;
         this.sentenceId = sentenceId;
         this.beginChar = beginChar;
@@ -24,6 +26,13 @@ public final class AnnotationEntry implements IndexEntry {
         this.lemma = lemma;
         this.pos = pos;
         this.timestamp = timestamp;
+    }
+
+    /**
+     * @return The unique identifier for this annotation
+     */
+    public int getAnnotationId() {
+        return annotationId;
     }
 
     @Override

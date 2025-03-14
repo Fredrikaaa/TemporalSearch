@@ -3,12 +3,14 @@ package com.example.query.executor;
 import com.example.core.IndexAccess;
 import com.example.core.Position;
 import com.example.core.PositionList;
-import com.example.query.model.DependencyCondition;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
+import com.example.query.model.condition.Dependency;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -17,22 +19,40 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Executor for DependencyCondition.
- * Searches for syntactic dependencies between words in the dependency index.
+ * Executor for dependency conditions.
+ * Handles syntactic dependency pattern matching and variable binding.
  */
-public class DependencyConditionExecutor implements ConditionExecutor<DependencyCondition> {
-    private static final Logger logger = LoggerFactory.getLogger(DependencyConditionExecutor.class);
+public final class DependencyExecutor implements ConditionExecutor<Dependency> {
+    private static final Logger logger = LoggerFactory.getLogger(DependencyExecutor.class);
     
     private static final String DEPENDENCY_INDEX = "dependency";
+    private final String variableName;
+
+    public DependencyExecutor(String variableName) {
+        this.variableName = variableName;
+    }
 
     @Override
-    public Set<DocSentenceMatch> execute(DependencyCondition condition, Map<String, IndexAccess> indexes,
-                               VariableBindings variableBindings, Query.Granularity granularity)
+    public Set<DocSentenceMatch> execute(Dependency condition, Map<String, IndexAccess> indexes,
+                               VariableBindings variableBindings, Query.Granularity granularity,
+                               int granularitySize)
         throws QueryExecutionException {
         
-        String governor = condition.getGovernor();
-        String relation = condition.getRelation();
-        String dependent = condition.getDependent();
+        logger.debug("Executing dependency condition for relation {} at {} granularity with size {}", 
+                condition.relation(), granularity, granularitySize);
+        
+        // Validate required indexes
+        if (!indexes.containsKey(DEPENDENCY_INDEX)) {
+            throw new QueryExecutionException(
+                "Missing required dependency index",
+                condition.toString(),
+                QueryExecutionException.ErrorType.MISSING_INDEX
+            );
+        }
+        
+        String governor = condition.governor();
+        String relation = condition.relation();
+        String dependent = condition.dependent();
         
         // Normalize all terms to lowercase
         String normalizedGovernor = governor.toLowerCase();
@@ -77,34 +97,16 @@ public class DependencyConditionExecutor implements ConditionExecutor<Dependency
                 Map<Integer, DocSentenceMatch> docMatches = new HashMap<>();
                 
                 for (Position position : positionList.getPositions()) {
-                    int docId = position.getDocumentId();
-                    
-                    // Get or create the document match
-                    DocSentenceMatch match = docMatches.computeIfAbsent(docId, 
-                            id -> new DocSentenceMatch(id));
-                    
-                    // Add the position to the match - use original terms for display
-                    String originalKey = governor + ":" + relation + ":" + dependent;
-                    match.addPosition(originalKey, position);
+                    addDocumentMatch(position, docMatches, variableName);
                 }
                 
                 matches.addAll(docMatches.values());
             } else {
                 // Sentence granularity - group by document ID and sentence ID
-                Map<String, DocSentenceMatch> sentMatches = new HashMap<>();
+                Map<SentenceKey, DocSentenceMatch> sentMatches = new HashMap<>();
                 
                 for (Position position : positionList.getPositions()) {
-                    int docId = position.getDocumentId();
-                    int sentId = position.getSentenceId();
-                    String key = docId + ":" + sentId;
-                    
-                    // Get or create the sentence match
-                    DocSentenceMatch match = sentMatches.computeIfAbsent(key, 
-                            k -> new DocSentenceMatch(docId, sentId));
-                    
-                    // Add the position to the match - use original terms for display
-                    String originalKey = governor + ":" + relation + ":" + dependent;
-                    match.addPosition(originalKey, position);
+                    addSentenceMatch(position, sentMatches, variableName);
                 }
                 
                 matches.addAll(sentMatches.values());

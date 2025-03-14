@@ -3,9 +3,10 @@ package com.example.query.executor;
 import com.example.core.IndexAccess;
 import com.example.core.Position;
 import com.example.core.PositionList;
-import com.example.query.model.DependencyCondition;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
+import com.example.query.model.condition.Dependency;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,7 +27,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 public class DependencyConditionExecutorTest {
 
-    private DependencyConditionExecutor executor;
+    private DependencyExecutor executor;
     
     @Mock
     private IndexAccess dependencyIndex;
@@ -36,7 +37,7 @@ public class DependencyConditionExecutorTest {
 
     @BeforeEach
     public void setUp() {
-        executor = new DependencyConditionExecutor();
+        executor = new DependencyExecutor("testVar");
         indexes = new HashMap<>();
         indexes.put("dependency", dependencyIndex);
         variableBindings = new VariableBindings();
@@ -45,7 +46,7 @@ public class DependencyConditionExecutorTest {
     @Test
     public void testExecuteDependencySearch() throws Exception {
         // Create a dependency condition
-        DependencyCondition condition = new DependencyCondition("president", "nsubj", "spoke");
+        Dependency condition = new Dependency("president", "nsubj", "spoke");
         
         // Create a position list with some document positions
         PositionList positionList = new PositionList();
@@ -58,11 +59,11 @@ public class DependencyConditionExecutorTest {
         when(dependencyIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute the condition
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify the results
         assertEquals(3, result.size());
-        Set<Integer> docIds = result.stream().map(DocSentenceMatch::getDocumentId).collect(Collectors.toSet());
+        Set<Integer> docIds = result.stream().map(DocSentenceMatch::documentId).collect(Collectors.toSet());
         assertTrue(docIds.contains(1));
         assertTrue(docIds.contains(2));
         assertTrue(docIds.contains(3));
@@ -78,13 +79,13 @@ public class DependencyConditionExecutorTest {
     @Test
     public void testExecuteDependencyNotFound() throws Exception {
         // Create a dependency condition for a pattern that doesn't exist
-        DependencyCondition condition = new DependencyCondition("nonexistent", "relation", "term");
+        Dependency condition = new Dependency("nonexistent", "relation", "term");
         
         // Mock the index response for a pattern that doesn't exist
         when(dependencyIndex.get(any())).thenReturn(Optional.empty());
         
         // Execute the condition
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify the results are empty
         assertTrue(result.isEmpty());
@@ -93,17 +94,17 @@ public class DependencyConditionExecutorTest {
     @Test
     public void testExecuteWithMissingIndex() {
         // Create a dependency condition
-        DependencyCondition condition = new DependencyCondition("governor", "relation", "dependent");
+        Dependency condition = new Dependency("governor", "relation", "dependent");
         
         // Remove the dependency index
         indexes.remove("dependency");
         
         // Execute the condition and expect an exception
         QueryExecutionException exception = assertThrows(QueryExecutionException.class, 
-            () -> executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT));
+            () -> executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0));
         
         // Verify the exception details
-        assertEquals(QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR, exception.getErrorType());
-        assertTrue(exception.getMessage().contains("Required index not found: dependency"));
+        assertEquals(QueryExecutionException.ErrorType.MISSING_INDEX, exception.getErrorType());
+        assertTrue(exception.getMessage().contains("Missing required dependency index"));
     }
 } 

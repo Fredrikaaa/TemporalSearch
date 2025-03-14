@@ -179,4 +179,56 @@ public class QuerySpecExamplesTest {
             "LIMIT 20"
         );
     }
+
+    @Test
+    @DisplayName("Basic variable binding examples should be valid")
+    void basicVariableBindingExamplesShouldBeValid() {
+        assertSpecExampleValid("SELECT ?person FROM corpus WHERE NER(\"PERSON\", ?person)");
+    }
+
+    @Test
+    @DisplayName("Snippet examples should be valid")
+    void snippetExamplesShouldBeValid() {
+        assertSpecExampleValid("SELECT ?person, SNIPPET(?person) FROM corpus WHERE NER(\"PERSON\", ?person)");
+        assertSpecExampleValid("SELECT ?person, SNIPPET(?person, WINDOW=10) FROM corpus WHERE NER(\"PERSON\", ?person)");
+    }
+
+    @Test
+    @DisplayName("Aggregation examples should be valid")
+    void aggregationExamplesShouldBeValid() {
+        assertSpecExampleValid("SELECT COUNT(UNIQUE ?person) FROM corpus WHERE NER(\"PERSON\", ?person)");
+    }
+
+    @Test
+    @DisplayName("Granularity examples should be valid")
+    void granularityExamplesShouldBeValid() {
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY DOCUMENT");
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY SENTENCE");
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY SENTENCE 3");
+    }
+
+    @Test
+    @DisplayName("Order by examples should be valid")
+    void orderByExamplesShouldBeValid() {
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company");
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company ASC");
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company DESC");
+        assertSpecExampleValid("SELECT ?company, ?date FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company ASC, ?date DESC");
+    }
+
+    @Test
+    @DisplayName("Limit examples should be valid")
+    void limitExamplesShouldBeValid() {
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) LIMIT 10");
+    }
+
+    @Test
+    @DisplayName("Complex query examples should be valid")
+    void complexQueryExamplesShouldBeValid() {
+        assertSpecExampleValid(
+            "SELECT ?person, ?org FROM corpus " +
+            "WHERE NER(\"PERSON\", ?person) AND NER(\"ORGANIZATION\", ?org) AND CONTAINS(\"founded\") " +
+            "ORDER BY ?person"
+        );
+    }
 } 

@@ -1,6 +1,15 @@
 package com.example.query.parser;
 
 import com.example.query.model.*;
+import com.example.query.model.condition.Condition;
+import com.example.query.model.condition.Contains;
+import com.example.query.model.condition.Dependency;
+import com.example.query.model.condition.Logical;
+import com.example.query.model.condition.Ner;
+import com.example.query.model.condition.Not;
+import com.example.query.model.condition.Pos;
+import com.example.query.model.condition.Temporal;
+
 import org.antlr.v4.runtime.tree.ParseTree;
 
 import java.time.LocalDateTime;
@@ -27,7 +36,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         List<Condition> conditions = new ArrayList<>();
         List<OrderSpec> orderSpecs = new ArrayList<>();
         Optional<Integer> limit = Optional.empty();
-        Optional<Query.Granularity> granularity = Optional.empty();
+        Query.Granularity granularity = Query.Granularity.DOCUMENT;
         Optional<Integer> granularitySize = Optional.empty();
         List<SelectColumn> selectColumns = new ArrayList<>();
 
@@ -52,9 +61,9 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         
         if (ctx.granularityClause() != null) {
             if (ctx.granularityClause().DOCUMENT() != null) {
-                granularity = Optional.of(Query.Granularity.DOCUMENT);
+                granularity = Query.Granularity.DOCUMENT;
             } else if (ctx.granularityClause().SENTENCE() != null) {
-                granularity = Optional.of(Query.Granularity.SENTENCE);
+                granularity = Query.Granularity.SENTENCE;
                 if (ctx.granularityClause().NUMBER() != null) {
                     granularitySize = Optional.of(Integer.parseInt(ctx.granularityClause().NUMBER().getText()));
                 }
@@ -172,11 +181,11 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         for (int i = 0; i < ctx.logicalOp().size(); i++) {
             // Get the logical operator
             String opText = ctx.logicalOp(i).getText();
-            LogicalCondition.LogicalOperator operator;
+            Logical.LogicalOperator operator;
             if (opText.equalsIgnoreCase("AND")) {
-                operator = LogicalCondition.LogicalOperator.AND;
+                operator = Logical.LogicalOperator.AND;
             } else if (opText.equalsIgnoreCase("OR")) {
-                operator = LogicalCondition.LogicalOperator.OR;
+                operator = Logical.LogicalOperator.OR;
             } else {
                 throw new IllegalStateException("Unexpected logical operator: " + opText);
             }
@@ -198,7 +207,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             }
             
             // Create a logical condition
-            currentCondition = new LogicalCondition(operator, currentCondition, rightCondition);
+            currentCondition = new Logical(operator, currentCondition, rightCondition);
         }
         
         return List.of(currentCondition);
@@ -216,11 +225,11 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             @SuppressWarnings("unchecked")
             List<Condition> conditions = (List<Condition>) result;
             if (conditions.size() == 1) {
-                return new NotCondition(conditions.get(0));
+                return new Not(conditions.get(0));
             }
             throw new IllegalStateException("Unexpected multiple conditions in NOT result");
         }
-        return new NotCondition((Condition) result);
+        return new Not((Condition) result);
     }
     
     @Override
@@ -257,7 +266,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             variableName = variableName.substring(1);
         }
         
-        return new ContainsCondition(variableName, term);
+        return new Contains(variableName, term);
     }
 
     @Override
@@ -266,20 +275,30 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         for (var termCtx : ctx.terms) {
             terms.add(unquote(termCtx.getText()));
         }
-        return new ContainsCondition(terms);
+        return new Contains(terms);
     }
 
     @Override
     public Object visitNerExpression(QueryLangParser.NerExpressionContext ctx) {
         String type = (String) visit(ctx.entityType());
-        String target = (String) visit(ctx.entityTarget());
-        boolean isVariable = ctx.entityTarget().variable() != null;
         
-        if (type == null || target == null) {
-            throw new IllegalStateException("NER type and target cannot be null");
+        if (type == null) {
+            throw new IllegalStateException("NER type cannot be null");
         }
+
+        // Handle optional target
+        if (ctx.entityTarget() == null) {
+            return Ner.of(type);
+        }
+
+        String target = (String) visit(ctx.entityTarget());
         
-        return new NerCondition(type, target, isVariable);
+        // If target is a variable, it's a variable binding condition
+        if (ctx.entityTarget().variable() != null) {
+            return Ner.withVariable(type, target);
+        } else {
+            return Ner.of(type);
+        }
     }
 
     @Override
@@ -290,7 +309,18 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         if (ctx.STRING() != null) {
             return unquote(ctx.STRING().getText());
         }
-        return visitIdentifier(ctx.identifier());
+        if (ctx.IDENTIFIER() != null) {
+            return ctx.IDENTIFIER().getText();
+        }
+        // Handle NER type tokens
+        if (ctx.PERSON() != null) return "PERSON";
+        if (ctx.LOCATION() != null) return "LOCATION";
+        if (ctx.ORGANIZATION() != null) return "ORGANIZATION";
+        if (ctx.TIME() != null) return "TIME";
+        if (ctx.MONEY() != null) return "MONEY";
+        if (ctx.PERCENT() != null) return "PERCENT";
+        
+        throw new IllegalStateException("Invalid entity type");
     }
 
     @Override
@@ -310,15 +340,15 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     public Object visitDateComparisonExpression(QueryLangParser.DateComparisonExpressionContext ctx) {
         String variable = (String) visit(ctx.variable());
         int year = Integer.parseInt(ctx.year.getText());
-        TemporalCondition.ComparisonType compType = mapComparisonOp(ctx.comparisonOp().getText());
+        Temporal.ComparisonType compType = mapComparisonOp(ctx.comparisonOp().getText());
         
-        return new TemporalCondition(compType, variable, year);
+        return new Temporal(compType, variable, year);
     }
     
     @Override
     public Object visitDateOperatorExpression(QueryLangParser.DateOperatorExpressionContext ctx) {
         String variable = (String) visit(ctx.variable());
-        TemporalCondition.Type type = mapDateOperator(ctx.dateOperator().getText());
+        Temporal.Type type = mapDateOperator(ctx.dateOperator().getText());
         
         // Process the date value
         Object dateValueResult = visit(ctx.dateValue());
@@ -335,14 +365,14 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         // Handle radius if present
         if (ctx.radius != null) {
             String radiusValue = ctx.radius.getText() + ctx.unit.getText();
-            return new TemporalCondition(type, variable, startDate, radiusValue);
+            return new Temporal(type, variable, startDate, radiusValue);
         }
         
         if (endDate.isPresent()) {
             // TODO: Properly handle date ranges
-            return new TemporalCondition(type, variable, startDate);
+            return new Temporal(type, variable, startDate);
         } else {
-            return new TemporalCondition(type, variable, startDate);
+            return new Temporal(type, variable, startDate);
         }
     }
     
@@ -361,23 +391,23 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         return LocalDateTime.of(year, 1, 1, 0, 0);
     }
 
-    private TemporalCondition.ComparisonType mapComparisonOp(String operator) {
+    private Temporal.ComparisonType mapComparisonOp(String operator) {
         return switch (operator) {
-            case "<" -> TemporalCondition.ComparisonType.LT;
-            case ">" -> TemporalCondition.ComparisonType.GT;
-            case "<=" -> TemporalCondition.ComparisonType.LE;
-            case ">=" -> TemporalCondition.ComparisonType.GE;
-            case "==" -> TemporalCondition.ComparisonType.EQ;
+            case "<" -> Temporal.ComparisonType.LT;
+            case ">" -> Temporal.ComparisonType.GT;
+            case "<=" -> Temporal.ComparisonType.LE;
+            case ">=" -> Temporal.ComparisonType.GE;
+            case "==" -> Temporal.ComparisonType.EQ;
             default -> throw new IllegalStateException("Invalid comparison operator: " + operator);
         };
     }
     
-    private TemporalCondition.Type mapDateOperator(String operator) {
+    private Temporal.Type mapDateOperator(String operator) {
         return switch (operator) {
-            case "CONTAINS" -> TemporalCondition.Type.CONTAINS;
-            case "CONTAINED_BY" -> TemporalCondition.Type.CONTAINED_BY;
-            case "INTERSECT" -> TemporalCondition.Type.INTERSECT;
-            case "NEAR" -> TemporalCondition.Type.NEAR;
+            case "CONTAINS" -> Temporal.Type.CONTAINS;
+            case "CONTAINED_BY" -> Temporal.Type.CONTAINED_BY;
+            case "INTERSECT" -> Temporal.Type.INTERSECT;
+            case "NEAR" -> Temporal.Type.NEAR;
             default -> throw new IllegalStateException("Invalid date operator: " + operator);
         };
     }
@@ -391,8 +421,22 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         if (governor == null || relation == null || dependent == null) {
             throw new IllegalStateException("DEPENDS components cannot be null");
         }
-        
-        return new DependencyCondition(governor, relation, dependent);
+
+        // Check if any of the components is a variable
+        boolean hasVariable = ctx.governor().variable() != null || 
+                            ctx.dependent().variable() != null;
+
+        if (hasVariable) {
+            String variableName;
+            if (ctx.governor().variable() != null) {
+                variableName = governor.substring(1); // Remove the ? prefix
+            } else {
+                variableName = dependent.substring(1); // Remove the ? prefix
+            }
+            return new Dependency(variableName, governor, relation, dependent);
+        } else {
+            return new Dependency(governor, relation, dependent);
+        }
     }
 
     @Override
@@ -465,5 +509,41 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     
     public Query buildQuery(ParseTree tree) {
         return (Query) visit(tree);
+    }
+
+    @Override
+    public Object visitPosExpression(QueryLangParser.PosExpressionContext ctx) {
+        String posTag = (String) visit(ctx.posTag());
+        String term = (String) visit(ctx.term());
+        
+        if (posTag == null || term == null) {
+            throw new IllegalStateException("POS tag and term cannot be null");
+        }
+
+        // Check if term is a variable
+        if (ctx.term().variable() != null) {
+            String variableName = term.substring(1); // Remove the ? prefix
+            return new Pos(variableName, posTag, term);
+        } else {
+            return new Pos(posTag, term);
+        }
+    }
+
+    @Override
+    public Object visitPosTag(QueryLangParser.PosTagContext ctx) {
+        if (ctx.STRING() != null) {
+            return unquote(ctx.STRING().getText());
+        }
+        return visitIdentifier(ctx.identifier());
+    }
+
+    @Override
+    public Object visitTerm(QueryLangParser.TermContext ctx) {
+        if (ctx.STRING() != null) {
+            return unquote(ctx.STRING().getText());
+        } else if (ctx.variable() != null) {
+            return visit(ctx.variable());
+        }
+        return visitIdentifier(ctx.identifier());
     }
 } 

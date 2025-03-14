@@ -171,13 +171,9 @@ public class Annotations {
                     dependency.put("sentence_id", sentenceId);
                     dependency.put("begin_char", beginChar);
                     dependency.put("end_char", endChar);
-                    dependency.put("source_token", source.word());
-                    dependency.put("source_begin", source.beginPosition());
-                    dependency.put("source_end", source.endPosition());
-                    dependency.put("target_token", target.word());
-                    dependency.put("target_begin", target.beginPosition());
-                    dependency.put("target_end", target.endPosition());
-                    dependency.put("dep_type", edge.getRelation().toString());
+                    dependency.put("head_token", source.word());
+                    dependency.put("dependent_token", target.word());
+                    dependency.put("relation", edge.getRelation().toString());
 
                     dependencies.add(dependency);
                 }

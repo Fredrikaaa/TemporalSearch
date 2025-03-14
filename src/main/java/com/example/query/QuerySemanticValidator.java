@@ -1,6 +1,14 @@
 package com.example.query;
 
 import com.example.query.model.*;
+import com.example.query.model.condition.Condition;
+import com.example.query.model.condition.Contains;
+import com.example.query.model.condition.Dependency;
+import com.example.query.model.condition.Logical;
+import com.example.query.model.condition.Ner;
+import com.example.query.model.condition.Not;
+import com.example.query.model.condition.Temporal;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,25 +69,29 @@ public class QuerySemanticValidator {
             boundVariables.clear();
             
             // First pass: collect bound variables from conditions
-            for (Condition condition : query.getConditions()) {
+            for (Condition condition : query.conditions()) {
                 collectBoundVariables(condition);
             }
             
             // Second pass: validate conditions
-            for (Condition condition : query.getConditions()) {
+            for (Condition condition : query.conditions()) {
                 validateCondition(condition);
             }
             
             // Validate select list (especially snippets)
-            validateSelectColumns(query);
+            for (SelectColumn column : query.selectColumns()) {
+                if (column instanceof SnippetNode snippetNode) {
+                    validateSnippetNode(snippetNode);
+                }
+            }
             
             // Validate order by
-            for (OrderSpec orderSpec : query.getOrderBy()) {
+            for (OrderSpec orderSpec : query.orderBy()) {
                 validateOrderSpec(orderSpec);
             }
             
             // Validate limit
-            query.getLimit().ifPresent(handleChecked(this::validateLimit));
+            query.limit().ifPresent(handleChecked(this::validateLimit));
             
             logger.debug("Semantic validation completed successfully");
         } catch (QueryValidationException e) {
@@ -92,24 +104,17 @@ public class QuerySemanticValidator {
      * First pass to collect all bound variables for later validation.
      */
     private void collectBoundVariables(Condition condition) {
-        if (condition instanceof NerCondition nerCondition) {
+        if (condition instanceof Ner nerCondition) {
             if (nerCondition.isVariable()) {
-                // Strip the '?' prefix if it exists
-                String varName = nerCondition.getTarget();
-                if (varName.startsWith("?")) {
-                    // The target already includes the ? prefix in test code
-                    boundVariables.add(varName);
-                } else {
-                    // Add with ? prefix for consistency
-                    boundVariables.add("?" + varName);
-                }
+                // Add with ? prefix for consistency
+                boundVariables.add("?" + nerCondition.variableName());
             }
-        } else if (condition instanceof LogicalCondition logicalCondition) {
-            for (Condition subCondition : logicalCondition.getConditions()) {
+        } else if (condition instanceof Logical logicalCondition) {
+            for (Condition subCondition : logicalCondition.conditions()) {
                 collectBoundVariables(subCondition);
             }
-        } else if (condition instanceof NotCondition notCondition) {
-            collectBoundVariables(notCondition.getCondition());
+        } else if (condition instanceof Not notCondition) {
+            collectBoundVariables(notCondition.condition());
         }
         // Other condition types that might bind variables can be added here
     }
@@ -156,80 +161,80 @@ public class QuerySemanticValidator {
     }
 
     private void validateCondition(Condition condition) throws QueryParseException {
-        if (condition instanceof ContainsCondition) {
-            validateContainsCondition((ContainsCondition) condition);
-        } else if (condition instanceof NerCondition) {
-            validateNerCondition((NerCondition) condition);
-        } else if (condition instanceof TemporalCondition) {
-            validateTemporalCondition((TemporalCondition) condition);
-        } else if (condition instanceof DependencyCondition) {
-            validateDependencyCondition((DependencyCondition) condition);
-        } else if (condition instanceof LogicalCondition) {
-            for (Condition subCondition : ((LogicalCondition) condition).getConditions()) {
+        if (condition instanceof Contains) {
+            validateContainsCondition((Contains) condition);
+        } else if (condition instanceof Ner) {
+            validateNerCondition((Ner) condition);
+        } else if (condition instanceof Temporal) {
+            validateTemporalCondition((Temporal) condition);
+        } else if (condition instanceof Dependency) {
+            validateDependencyCondition((Dependency) condition);
+        } else if (condition instanceof Logical) {
+            for (Condition subCondition : ((Logical) condition).conditions()) {
                 validateCondition(subCondition);
             }
-        } else if (condition instanceof NotCondition) {
-            validateCondition(((NotCondition) condition).getCondition());
+        } else if (condition instanceof Not) {
+            validateCondition(((Not) condition).condition());
         }
     }
 
-    private void validateContainsCondition(ContainsCondition condition) throws QueryParseException {
-        if (condition.getValue().isEmpty()) {
+    private void validateContainsCondition(Contains condition) throws QueryParseException {
+        if (condition.value().isEmpty()) {
             throw new QueryParseException("CONTAINS condition cannot have an empty value");
         }
     }
 
-    private void validateNerCondition(NerCondition condition) throws QueryParseException {
+    private void validateNerCondition(Ner condition) throws QueryParseException {
         // Validate NER type
-        if (!VALID_NER_TYPES.contains(condition.getEntityType().toUpperCase())) {
+        if (!VALID_NER_TYPES.contains(condition.entityType().toUpperCase())) {
             throw new QueryParseException(String.format(
                 "Invalid NER type: %s. Valid types are: %s",
-                condition.getEntityType(),
+                condition.entityType(),
                 String.join(", ", VALID_NER_TYPES)
             ));
         }
 
         // Handle variable scoping
         if (condition.isVariable()) {
-            String varName = condition.getTarget();
+            String varName = condition.variableName();
             if (variableTypes.containsKey(varName)) {
                 // Variable already exists, check type compatibility
                 String existingType = variableTypes.get(varName);
-                if (!existingType.equals(condition.getEntityType())) {
+                if (!existingType.equals(condition.entityType())) {
                     throw new QueryParseException(String.format(
                         "Type mismatch for variable %s: previously defined as %s, now used as %s",
-                        varName, existingType, condition.getEntityType()
+                        varName, existingType, condition.entityType()
                     ));
                 }
             } else {
                 // New variable, register its type
-                variableTypes.put(varName, condition.getEntityType());
+                variableTypes.put(varName, condition.entityType());
             }
         }
     }
 
-    private void validateTemporalCondition(TemporalCondition condition) throws QueryParseException {
+    private void validateTemporalCondition(Temporal condition) throws QueryParseException {
         try {
-            validateDateTime(condition.getStartDate());
-            condition.getEndDate().ifPresent(handleChecked(this::validateDateTime));
+            validateDateTime(condition.startDate());
+            condition.endDate().ifPresent(handleChecked(this::validateDateTime));
 
-            // For BETWEEN, ensure start is before end
-            if (condition.getTemporalType() == TemporalCondition.Type.BETWEEN) {
-                if (!condition.getEndDate().isPresent()) {
-                    throw new QueryParseException("BETWEEN requires both start and end dates");
-                }
-                if (condition.getStartDate().isAfter(condition.getEndDate().get())) {
-                    throw new QueryParseException("Start date must be before end date in BETWEEN condition");
-                }
+            // Always validate start/end dates if both are present
+            if (condition.endDate().isPresent() && condition.startDate().isAfter(condition.endDate().get())) {
+                throw new QueryParseException("End date must be after start date");
+            }
+
+            // For BETWEEN, ensure both dates are present
+            if (condition.temporalType() == Temporal.Type.BETWEEN && !condition.endDate().isPresent()) {
+                throw new QueryParseException("BETWEEN requires both start and end dates");
             }
             
             // Validate year values for date comparison
-            if (condition.getTemporalType() == TemporalCondition.Type.BEFORE || 
-                condition.getTemporalType() == TemporalCondition.Type.AFTER || 
-                condition.getTemporalType() == TemporalCondition.Type.BEFORE_EQUAL || 
-                condition.getTemporalType() == TemporalCondition.Type.AFTER_EQUAL || 
-                condition.getTemporalType() == TemporalCondition.Type.EQUAL) {
-                int year = extractYearFromDate(condition.getStartDate());
+            if (condition.temporalType() == Temporal.Type.BEFORE || 
+                condition.temporalType() == Temporal.Type.AFTER || 
+                condition.temporalType() == Temporal.Type.BEFORE_EQUAL || 
+                condition.temporalType() == Temporal.Type.AFTER_EQUAL || 
+                condition.temporalType() == Temporal.Type.EQUAL) {
+                int year = extractYearFromDate(condition.startDate());
                 if (year < 0) {
                     throw new QueryParseException("Year values must be non-negative");
                 }
@@ -256,17 +261,19 @@ public class QuerySemanticValidator {
         }
     }
 
-    private void validateDependencyCondition(DependencyCondition condition) throws QueryParseException {
+    private void validateDependencyCondition(Dependency condition) throws QueryParseException {
         // Could add validation of known dependency relations here
-        if (condition.getGovernor().isEmpty() || condition.getRelation().isEmpty() || condition.getDependent().isEmpty()) {
-            throw new QueryParseException("Dependency condition cannot have empty components");
+        if (condition.governor() == null || condition.governor().isEmpty() ||
+            condition.relation() == null || condition.relation().isEmpty() ||
+            condition.dependent() == null || condition.dependent().isEmpty()) {
+            throw new QueryParseException("Empty dependency component");
         }
     }
 
     private void validateOrderSpec(OrderSpec orderSpec) throws QueryParseException {
         // Add validation for valid ordering fields
-        if (!orderSpec.isValid()) {
-            throw new QueryParseException("Order by field cannot be empty");
+        if (orderSpec.field() == null || orderSpec.field().isEmpty()) {
+            throw new QueryParseException("Empty order by field");
         }
         
         // If this is a variable, check that it's bound
@@ -285,8 +292,8 @@ public class QuerySemanticValidator {
     }
 
     private void validateLimit(int limit) throws QueryParseException {
-        if (limit <= 0) {
-            throw new QueryParseException("Limit must be greater than 0");
+        if (limit < 0) {
+            throw new QueryParseException("Invalid limit");
         }
     }
 

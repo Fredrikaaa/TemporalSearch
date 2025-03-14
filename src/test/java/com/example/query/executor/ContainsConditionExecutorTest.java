@@ -6,9 +6,10 @@ import static org.mockito.Mockito.*;
 import com.example.core.IndexAccess;
 import com.example.core.Position;
 import com.example.core.PositionList;
-import com.example.query.model.ContainsCondition;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
+import com.example.query.model.condition.Contains;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,13 +31,13 @@ public class ContainsConditionExecutorTest {
     @Mock private IndexAccess mockBigramIndex;
     @Mock private IndexAccess mockTrigramIndex;
     
-    private ContainsConditionExecutor executor;
+    private ContainsExecutor executor;
     private Map<String, IndexAccess> indexes;
     private VariableBindings variableBindings;
     
     @BeforeEach
     void setUp() {
-        executor = new ContainsConditionExecutor();
+        executor = new ContainsExecutor("testVar");
         
         indexes = new HashMap<>();
         indexes.put("unigram", mockUnigramIndex);
@@ -49,7 +50,7 @@ public class ContainsConditionExecutorTest {
     @Test
     void testExecuteSingleTerm() throws Exception {
         // Setup
-        ContainsCondition condition = new ContainsCondition("test");
+        Contains condition = new Contains("test");
         PositionList positionList = new PositionList();
         positionList.add(new Position(1, 1, 0, 4, LocalDate.now()));
         positionList.add(new Position(2, 1, 5, 9, LocalDate.now()));
@@ -58,7 +59,7 @@ public class ContainsConditionExecutorTest {
         when(mockUnigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         verify(mockUnigramIndex).get(any());
@@ -66,7 +67,7 @@ public class ContainsConditionExecutorTest {
         
         // Extract document IDs for verification
         Set<Integer> docIds = result.stream()
-                .map(DocSentenceMatch::getDocumentId)
+                .map(DocSentenceMatch::documentId)
                 .collect(Collectors.toSet());
         
         assertTrue(docIds.contains(1));
@@ -76,7 +77,7 @@ public class ContainsConditionExecutorTest {
     @Test
     void testExecuteMultipleTerms() throws Exception {
         // Setup - now we expect a bigram search with two terms
-        ContainsCondition condition = new ContainsCondition(Arrays.asList("test", "example"));
+        Contains condition = new Contains(Arrays.asList("test", "example"));
         
         PositionList positionList = new PositionList();
         positionList.add(new Position(1, 1, 0, 12, LocalDate.now()));
@@ -86,7 +87,7 @@ public class ContainsConditionExecutorTest {
         when(mockBigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         verify(mockBigramIndex).get(any());
@@ -95,7 +96,7 @@ public class ContainsConditionExecutorTest {
         
         // Extract document IDs for verification
         Set<Integer> docIds = result.stream()
-                .map(DocSentenceMatch::getDocumentId)
+                .map(DocSentenceMatch::documentId)
                 .collect(Collectors.toSet());
         
         assertTrue(docIds.contains(1));
@@ -108,7 +109,7 @@ public class ContainsConditionExecutorTest {
         // But we'll keep it with a different condition to test the same functionality
         
         // Setup - using a list of terms instead of a space-separated string
-        ContainsCondition condition = new ContainsCondition(Arrays.asList("another", "test"));
+        Contains condition = new Contains(Arrays.asList("another", "test"));
         PositionList positionList = new PositionList();
         positionList.add(new Position(1, 1, 0, 12, LocalDate.now()));
         positionList.add(new Position(2, 1, 5, 17, LocalDate.now()));
@@ -117,7 +118,7 @@ public class ContainsConditionExecutorTest {
         when(mockBigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         verify(mockBigramIndex).get(any());
@@ -126,7 +127,7 @@ public class ContainsConditionExecutorTest {
         
         // Extract document IDs for verification
         Set<Integer> docIds = result.stream()
-                .map(DocSentenceMatch::getDocumentId)
+                .map(DocSentenceMatch::documentId)
                 .collect(Collectors.toSet());
         
         assertTrue(docIds.contains(1));
@@ -136,7 +137,7 @@ public class ContainsConditionExecutorTest {
     @Test
     void testExecuteWithTrigramIndex() throws Exception {
         // Setup - using a list of three terms
-        ContainsCondition condition = new ContainsCondition(Arrays.asList("test", "example", "phrase"));
+        Contains condition = new Contains(Arrays.asList("test", "example", "phrase"));
         PositionList positionList = new PositionList();
         positionList.add(new Position(1, 1, 0, 19, LocalDate.now()));
         positionList.add(new Position(2, 1, 5, 24, LocalDate.now()));
@@ -145,7 +146,7 @@ public class ContainsConditionExecutorTest {
         when(mockTrigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         verify(mockTrigramIndex).get(any());
@@ -154,7 +155,7 @@ public class ContainsConditionExecutorTest {
         
         // Extract document IDs for verification
         Set<Integer> docIds = result.stream()
-                .map(DocSentenceMatch::getDocumentId)
+                .map(DocSentenceMatch::documentId)
                 .collect(Collectors.toSet());
         
         assertTrue(docIds.contains(1));
@@ -164,13 +165,13 @@ public class ContainsConditionExecutorTest {
     @Test
     void testExecuteWithWildcard() throws Exception {
         // Setup - using a wildcard in a bigram
-        ContainsCondition condition = new ContainsCondition(Arrays.asList("test", "*"));
+        Contains condition = new Contains(Arrays.asList("test", "*"));
         
         // Since wildcards aren't fully implemented, we expect an empty result
         // This test will need to be updated when wildcard support is implemented
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         assertTrue(result.isEmpty());
@@ -179,13 +180,13 @@ public class ContainsConditionExecutorTest {
     @Test
     void testExecuteTermNotFound() throws Exception {
         // Setup
-        ContainsCondition condition = new ContainsCondition("nonexistent");
+        Contains condition = new Contains("nonexistent");
         
         // Term not found in index
         when(mockUnigramIndex.get(any())).thenReturn(Optional.empty());
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         verify(mockUnigramIndex).get(any());
@@ -195,36 +196,38 @@ public class ContainsConditionExecutorTest {
     @Test
     void testExecuteTooManyTerms() {
         // Setup - more than 3 terms should throw an exception
-        ContainsCondition condition = new ContainsCondition(Arrays.asList("one", "two", "three", "four"));
+        Contains condition = new Contains(Arrays.asList("one", "two", "three", "four"));
         
         // Execute and verify exception
         QueryExecutionException exception = assertThrows(
             QueryExecutionException.class,
-            () -> executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT)
+            () -> executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0)
         );
         
         assertEquals(QueryExecutionException.ErrorType.INVALID_CONDITION, exception.getErrorType());
     }
     
     @Test
-    void testExecuteMissingIndex() {
+    void testExecuteMissingIndex() throws QueryExecutionException {
         // Setup
-        ContainsCondition condition = new ContainsCondition("test");
+        Contains condition = new Contains("test");
         Map<String, IndexAccess> emptyIndexes = new HashMap<>();
         
         // Execute and verify exception
         QueryExecutionException exception = assertThrows(
             QueryExecutionException.class,
-            () -> executor.execute(condition, emptyIndexes, variableBindings, Query.Granularity.DOCUMENT)
+            () -> executor.execute(condition, emptyIndexes, variableBindings, Query.Granularity.DOCUMENT, 1)
         );
         
-        assertEquals(QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR, exception.getErrorType());
+        // Verify the exception details
+        assertEquals(QueryExecutionException.ErrorType.MISSING_INDEX, exception.getErrorType());
+        assertTrue(exception.getMessage().contains("Missing required unigram index"));
     }
     
     @Test
     void testDebugExecuteMultipleTerms() throws Exception {
         // Setup - now we expect a bigram search with two terms
-        ContainsCondition condition = new ContainsCondition(Arrays.asList("test", "example"));
+        Contains condition = new Contains(Arrays.asList("test", "example"));
         
         PositionList positionList = new PositionList();
         positionList.add(new Position(1, 1, 0, 12, LocalDate.now()));
@@ -236,7 +239,7 @@ public class ContainsConditionExecutorTest {
         lenient().when(mockTrigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify interactions with all indexes
         System.out.println("Unigram interactions: " + mockingDetails(mockUnigramIndex).getInvocations().size());

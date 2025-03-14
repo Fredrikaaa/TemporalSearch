@@ -13,6 +13,8 @@ import com.example.query.model.SnippetColumn;
 import com.example.query.model.SnippetNode;
 import com.example.query.model.column.ColumnSpec;
 import com.example.query.model.column.ColumnType;
+import com.example.query.model.condition.Condition;
+import com.example.query.model.condition.Ner;
 import com.example.query.snippet.DatabaseConfig;
 import com.example.query.snippet.SnippetConfig;
 import com.example.query.snippet.SnippetGenerator;
@@ -26,6 +28,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -99,7 +102,7 @@ public class ResultGenerator {
         VariableBindings variableBindings,
         Map<String, IndexAccess> indexes
     ) throws ResultGenerationException {
-        Query.Granularity granularity = query.getGranularity().orElse(Query.Granularity.DOCUMENT);
+        Query.Granularity granularity = query.granularity();
         logger.debug("Generating result table for {} matching {} at {} granularity", 
                 matches.size(), 
                 granularity == Query.Granularity.DOCUMENT ? "documents" : "sentences",
@@ -107,7 +110,7 @@ public class ResultGenerator {
         
         try {
             // Check if this is a COUNT query
-            List<SelectColumn> selectColumns = query.getSelectColumns();
+            List<SelectColumn> selectColumns = query.selectColumns();
             if (selectColumns != null && !selectColumns.isEmpty()) {
                 // Check for COUNT expressions
                 for (SelectColumn column : selectColumns) {
@@ -128,18 +131,18 @@ public class ResultGenerator {
             ResultTable resultTable = new ResultTable(columns, rows);
             
             // Apply ordering if specified
-            if (!query.getOrderBy().isEmpty()) {
+            if (!query.orderBy().isEmpty()) {
                 // Sort the rows based on order specifications
-                logger.debug("Ordering results by {} criteria", query.getOrderBy().size());
+                logger.debug("Ordering results by {} criteria", query.orderBy().size());
                 
                 // Use the original order specs - variable names with question marks are preserved
                 // in both the OrderSpec and the result table columns/rows
-                resultTable = resultTable.sort(query.getOrderBy());
+                resultTable = resultTable.sort(query.orderBy());
             }
             
             // Apply limit if specified
-            if (query.getLimit().isPresent()) {
-                int limit = query.getLimit().get();
+            if (query.limit().isPresent()) {
+                int limit = query.limit().get();
                 logger.debug("Limiting results to {} rows out of {}", limit, resultTable.getRows().size());
                 resultTable = resultTable.limit(limit);
             }
@@ -174,7 +177,7 @@ public class ResultGenerator {
         Set<DocSentenceMatch> matches
     ) {
         List<ColumnSpec> columns = new ArrayList<>();
-        Query.Granularity granularity = query.getGranularity().orElse(Query.Granularity.DOCUMENT);
+        Query.Granularity granularity = query.granularity();
         
         // Always include document ID column
         columns.add(new ColumnSpec("document_id", ColumnType.TERM));
@@ -185,7 +188,7 @@ public class ResultGenerator {
         }
         
         // Check if we have a METADATA column in the SELECT clause
-        List<SelectColumn> selectColumns = query.getSelectColumns();
+        List<SelectColumn> selectColumns = query.selectColumns();
         if (selectColumns != null) {
             for (SelectColumn column : selectColumns) {
                 if (column instanceof MetadataColumn) {
@@ -204,12 +207,29 @@ public class ResultGenerator {
         
         // Add columns for all variable bindings
         Set<Integer> documentIds = matches.stream()
-                .map(DocSentenceMatch::getDocumentId)
+                .map(DocSentenceMatch::documentId)
                 .collect(Collectors.toSet());
         
         Set<String> variableNames = new HashSet<>();
         for (int docId : documentIds) {
-            variableNames.addAll(variableBindings.getBindingsForDocument(docId).keySet());
+            variableNames.addAll(variableBindings.getValuesForDocument(docId).keySet());
+            
+            // Also check sentence-level bindings if we're at sentence granularity
+            if (granularity == Query.Granularity.SENTENCE) {
+                // Get all sentences for this document from the matches
+                Set<Integer> sentenceIds = matches.stream()
+                        .filter(match -> match.documentId() == docId)
+                        .map(DocSentenceMatch::sentenceId)
+                        .collect(Collectors.toSet());
+                
+                // Add variable names from sentence-level bindings
+                for (int sentId : sentenceIds) {
+                    Map<String, List<String>> sentBindings = variableBindings.getValuesForSentence(docId, sentId);
+                    variableNames.addAll(sentBindings.keySet());
+                    logger.debug("Found sentence-level variable names for doc {} sent {}: {}", 
+                                 docId, sentId, sentBindings.keySet());
+                }
+            }
         }
         
         for (String variableName : variableNames) {
@@ -252,33 +272,179 @@ public class ResultGenerator {
         List<ColumnSpec> columns
     ) throws ResultGenerationException {
         List<Map<String, String>> rows = new ArrayList<>();
-        Query.Granularity granularity = query.getGranularity().orElse(Query.Granularity.DOCUMENT);
+        Query.Granularity granularity = query.granularity();
+        
+        // Extract query variables from SELECT clause and WHERE conditions
+        List<String> queryVariables = extractQueryVariables(query);
+        logger.debug("Query variables in SELECT: {}", queryVariables);
         
         // Process each match
         for (DocSentenceMatch match : matches) {
-            Map<String, String> row = new HashMap<>();
+            int documentId = match.documentId();
+            int sentenceId = match.sentenceId();
             
-            // Add document ID
-            row.put("document_id", String.valueOf(match.getDocumentId()));
+            logger.debug("Processing match for documentId={}, sentenceId={}", documentId, sentenceId);
+
+            // Get all variable values for this document/sentence
+            Map<String, List<String>> allValues = variableBindings.getAllValuesForSentence(documentId, sentenceId);
             
-            // Add sentence ID for sentence granularity
-            if (granularity == Query.Granularity.SENTENCE) {
-                row.put("sentence_id", String.valueOf(match.getSentenceId()));
+            logger.debug("Variable values for doc {} sent {}: {}", documentId, sentenceId, allValues);
+            
+            if (allValues.isEmpty()) {
+                // No variable bindings for this match, create empty row
+                Map<String, String> row = createBaseRow(query, match, granularity);
+                rows.add(row);
+                continue;
             }
             
-            // Add metadata if requested
-            addMetadataToRow(query, match.getDocumentId(), row);
-            
-            // Add variable bindings
-            addVariableBindingsToRow(variableBindings, match, row);
-            
-            // Add snippets if requested
-            addSnippetsToRow(query, match, variableBindings, row);
-            
-            rows.add(row);
+            // Focus on variables that are specifically selected in the query
+            if (!queryVariables.isEmpty()) {
+                // Create a map of all values for query variables
+                Map<String, List<String>> selectedValues = new HashMap<>();
+                
+                for (String varName : queryVariables) {
+                    List<String> values = allValues.getOrDefault(varName, Collections.emptyList());
+                    selectedValues.put(varName, values);
+                }
+                
+                if (selectedValues.isEmpty() || selectedValues.values().stream().allMatch(List::isEmpty)) {
+                    // No selected variables have bindings, create empty row
+                    Map<String, String> row = createBaseRow(query, match, granularity);
+                    // Add empty values for selected variables
+                    for (String varName : queryVariables) {
+                        row.put(varName, "");
+                    }
+                    rows.add(row);
+                    continue;
+                }
+                
+                // Determine how many rows we need to create for this document/sentence
+                // by finding the maximum number of values for any of the variables
+                int maxBindings = 0;
+                for (List<String> values : selectedValues.values()) {
+                    maxBindings = Math.max(maxBindings, values.size());
+                }
+                
+                // Create one row for each binding
+                for (int i = 0; i < maxBindings; i++) {
+                    Map<String, String> row = createBaseRow(query, match, granularity);
+                    
+                    // Add variable values
+                    for (Map.Entry<String, List<String>> entry : selectedValues.entrySet()) {
+                        String varName = entry.getKey();
+                        List<String> values = entry.getValue();
+                        
+                        if (i < values.size()) {
+                            // We have a value for this position
+                            row.put(varName, values.get(i));
+                        }
+                    }
+                    
+                    // Add snippets if requested
+                    addSnippetsToRow(query, match, variableBindings, row);
+                    
+                    rows.add(row);
+                }
+            } else {
+                // No specific variables selected, create a single row with the first value of each variable
+                Map<String, String> row = createBaseRow(query, match, granularity);
+                
+                // Add first value of each variable
+                for (Map.Entry<String, List<String>> entry : allValues.entrySet()) {
+                    if (!entry.getValue().isEmpty()) {
+                        row.put(entry.getKey(), entry.getValue().get(0));
+                    }
+                }
+                
+                // Add snippets if requested
+                addSnippetsToRow(query, match, variableBindings, row);
+                
+                rows.add(row);
+            }
         }
         
         return rows;
+    }
+    
+    /**
+     * Creates a base row with document ID, sentence ID (if applicable), and metadata.
+     * 
+     * @param query The query
+     * @param match The document/sentence match
+     * @param granularity The query granularity
+     * @return A new row with base information
+     * @throws ResultGenerationException if metadata access fails
+     */
+    private Map<String, String> createBaseRow(Query query, DocSentenceMatch match, Query.Granularity granularity) 
+            throws ResultGenerationException {
+        Map<String, String> row = new HashMap<>();
+        
+        // Add document ID
+        row.put("document_id", String.valueOf(match.documentId()));
+        
+        // Add sentence ID for sentence granularity
+        if (granularity == Query.Granularity.SENTENCE) {
+            row.put("sentence_id", String.valueOf(match.sentenceId()));
+        }
+        
+        // Add metadata if requested
+        addMetadataToRow(query, match.documentId(), row);
+        
+        return row;
+    }
+    
+    /**
+     * Extract variable names from the SELECT clause and WHERE conditions.
+     * 
+     * @param query The query
+     * @return List of variable names (without the ? prefix)
+     */
+    private List<String> extractQueryVariables(Query query) {
+        Set<String> variables = new HashSet<>();
+        List<SelectColumn> selectColumns = query.selectColumns();
+        
+        // Extract variables from SELECT clause
+        if (selectColumns != null) {
+            for (SelectColumn column : selectColumns) {
+                String colString = column.toString();
+                if (colString.startsWith("?")) {
+                    // Variable column, strip the leading ?
+                    String varName = colString.substring(1);
+                    variables.add(varName);
+                } else if (column instanceof SnippetColumn) {
+                    // Snippet column, extract the variable
+                    SnippetNode snippetNode = ((SnippetColumn) column).getSnippetNode();
+                    String varName = snippetNode.variable();
+                    if (varName.startsWith("?")) {
+                        varName = varName.substring(1);
+                    }
+                    variables.add(varName);
+                }
+            }
+        }
+        
+        // Also extract variables from NER conditions, regardless of whether we found variables in SELECT
+        // This ensures variables that only appear in WHERE clauses are also included
+        logger.debug("Checking for variables in conditions");
+        for (Condition condition : query.conditions()) {
+            logger.debug("Checking condition: {}", condition);
+            if (condition instanceof Ner) {
+                Ner nerCondition = (Ner) condition;
+                String varName = nerCondition.variableName();
+                logger.debug("Found NER condition: {} with variable: {}, isVariable: {}", 
+                             nerCondition.entityType(), varName, nerCondition.isVariable());
+                if (nerCondition.isVariable()) {
+                    if (varName.startsWith("?")) {
+                        varName = varName.substring(1);
+                    }
+                    variables.add(varName);
+                    logger.debug("Added variable from NER condition: {}", varName);
+                }
+            }
+        }
+        
+        logger.debug("Extracted variables: {}", variables);
+        return new ArrayList<>(variables);
     }
     
     /**
@@ -320,7 +486,7 @@ public class ResultGenerator {
     private void addMetadataToRow(Query query, int documentId, Map<String, String> row) 
             throws ResultGenerationException {
         // Check if we have metadata columns in the SELECT clause
-        List<SelectColumn> selectColumns = query.getSelectColumns();
+        List<SelectColumn> selectColumns = query.selectColumns();
         if (selectColumns == null || selectColumns.isEmpty()) {
             return;
         }
@@ -414,39 +580,6 @@ public class ResultGenerator {
     }
     
     /**
-     * Adds variable bindings to a result row.
-     *
-     * @param variableBindings Variable bindings from query execution
-     * @param match The document/sentence match
-     * @param row The row to add variable bindings to
-     */
-    private void addVariableBindingsToRow(
-        VariableBindings variableBindings,
-        DocSentenceMatch match,
-        Map<String, String> row
-    ) {
-        int documentId = match.getDocumentId();
-        int sentenceId = match.getSentenceId();
-        
-        // Process document and sentence level bindings
-        Map<String, String> allBindings = variableBindings.getAllBindingsForSentence(documentId, sentenceId);
-        
-        for (Map.Entry<String, String> entry : allBindings.entrySet()) {
-            String variableName = entry.getKey();
-            String value = entry.getValue();
-            
-            // Add debugging information to help identify issues with snippet generation
-            String debugInfo = variableBindings.getVariableDebugInfo(variableName, match);
-            if (!debugInfo.isEmpty()) {
-                // Append debug info to the value (variableName@sentence_id|begin_char)
-                value = debugInfo;
-            }
-            
-            row.put(variableName, value);
-        }
-    }
-    
-    /**
      * Adds snippets to a result row.
      *
      * @param query The query
@@ -461,10 +594,10 @@ public class ResultGenerator {
         VariableBindings variableBindings,
         Map<String, String> row
     ) throws ResultGenerationException {
-        logger.debug("Adding snippets for documentId={}, sentenceId={}", match.getDocumentId(), match.getSentenceId());
+        logger.debug("Adding snippets for documentId={}, sentenceId={}", match.documentId(), match.sentenceId());
         
         // Don't process snippets if we're beyond the LIMIT
-        Optional<Integer> limitOpt = query.getLimit();
+        Optional<Integer> limitOpt = query.limit();
         
         if (limitOpt.isPresent() && row.containsKey("_row_num")) {
             int rowNum = Integer.parseInt(row.get("_row_num"));
@@ -483,7 +616,7 @@ public class ResultGenerator {
             // Find SnippetNode instances in the query
             List<SnippetNode> snippetNodes = new ArrayList<>();
             
-            for (SelectColumn column : query.getSelectColumns()) {
+            for (SelectColumn column : query.selectColumns()) {
                 if (column instanceof SnippetColumn) {
                     SnippetNode snippetNode = ((SnippetColumn) column).getSnippetNode();
                     snippetNodes.add(snippetNode);
@@ -513,20 +646,50 @@ public class ResultGenerator {
                 String columnName = "snippet_" + variableName;
                 
                 try {
-                    // Get the token position from variable bindings
-                    int tokenPosition = variableBindings.getTokenPosition(variableName, match);
-                    
-                    if (tokenPosition == -1) {
-                        logger.warn("Could not find token position for variable '{}'", variableName);
+                    // Check if we have this variable in the current row
+                    if (!row.containsKey(variableName)) {
+                        logger.warn("Variable '{}' not found in current row", variableName);
                         row.put(columnName, "");
                         continue;
                     }
                     
-                    // Generate the snippet
+                    // Extract positions from the variable value in the current row
+                    String valueStr = row.get(variableName);
+                    int beginPos = -1;
+                    int endPos = -1;
+                    
+                    // Parse the position from the value format: term@beginPos:endPos
+                    int atPos = valueStr.lastIndexOf('@');
+                    if (atPos != -1) {
+                        int colonPos = valueStr.lastIndexOf(':');
+                        if (colonPos != -1 && colonPos > atPos) {
+                            try {
+                                beginPos = Integer.parseInt(valueStr.substring(atPos + 1, colonPos));
+                                endPos = Integer.parseInt(valueStr.substring(colonPos + 1));
+                            } catch (NumberFormatException e) {
+                                logger.warn("Could not parse positions from value: {}", valueStr);
+                            }
+                        }
+                    }
+                    
+                    // If we couldn't extract positions from the row value, fall back to the variable bindings method
+                    if (beginPos == -1 || endPos == -1) {
+                        beginPos = variableBindings.getBeginCharPosition(variableName, match);
+                        endPos = variableBindings.getEndCharPosition(variableName, match);
+                    }
+                    
+                    if (beginPos == -1 || endPos == -1) {
+                        logger.warn("Could not find character positions for variable '{}'", variableName);
+                        row.put(columnName, "");
+                        continue;
+                    }
+                    
+                    // Generate the snippet with begin and end positions
                     String snippetText = snippetGenerator.generateSnippet(
-                        match.getDocumentId(),
-                        match.getSentenceId(),
-                        tokenPosition,
+                        match.documentId(),
+                        match.sentenceId(),
+                        beginPos,
+                        endPos,
                         variableName
                     );
                     
@@ -595,6 +758,45 @@ public class ResultGenerator {
             } catch (SQLException e) {
                 logger.warn("Error closing database connection: {}", e.getMessage());
             }
+        }
+    }
+    
+    private void addVariableBindingsToRow(
+        Query query,
+        DocSentenceMatch match,
+        VariableBindings variableBindings,
+        Map<String, String> row
+    ) {
+        List<String> variables = extractQueryVariables(query);
+        logger.debug("Adding variable bindings for variables: {} to row for match: {}", variables, match);
+        
+        for (String variable : variables) {
+            // Check for both doc-level and sentence-level bindings
+            List<String> values = new ArrayList<>();
+            
+            // Try document-level bindings first
+            List<String> docBindings = variableBindings.getValues(match.documentId(), variable);
+            if (docBindings != null && !docBindings.isEmpty()) {
+                logger.debug("Found document-level bindings for variable {} in doc {}: {}", 
+                             variable, match.documentId(), docBindings);
+                values.addAll(docBindings);
+            }
+            
+            // Then try sentence-level bindings if applicable
+            if (match.isSentenceLevel()) {
+                List<String> sentBindings = variableBindings.getValues(
+                        match.documentId(), match.sentenceId(), variable);
+                if (sentBindings != null && !sentBindings.isEmpty()) {
+                    logger.debug("Found sentence-level bindings for variable {} in doc {} sentence {}: {}", 
+                                 variable, match.documentId(), match.sentenceId(), sentBindings);
+                    values.addAll(sentBindings);
+                }
+            }
+            
+            // Always add the variable to the row, even if no values found
+            String value = values.isEmpty() ? "" : String.join(", ", values);
+            logger.debug("Adding variable {} with value '{}' to row", variable, value);
+            row.put(variable, value);
         }
     }
 } 

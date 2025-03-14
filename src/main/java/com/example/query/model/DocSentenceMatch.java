@@ -12,11 +12,11 @@ import java.util.Set;
  * Represents a match at either document or sentence level.
  * This is the core data structure for representing matches with different granularity.
  */
-public class DocSentenceMatch {
-    private final int documentId;
-    private final int sentenceId;  // -1 for document-level matches
-    private final Map<String, Set<Position>> matchPositions;
-
+public record DocSentenceMatch(
+    int documentId,
+    int sentenceId,  // -1 for document-level matches
+    Map<String, Set<Position>> matchPositions
+) {
     /**
      * Constructor for sentence-level match.
      *
@@ -24,9 +24,7 @@ public class DocSentenceMatch {
      * @param sentenceId The sentence ID
      */
     public DocSentenceMatch(int documentId, int sentenceId) {
-        this.documentId = documentId;
-        this.sentenceId = sentenceId;
-        this.matchPositions = new HashMap<>();
+        this(documentId, sentenceId, new HashMap<>());
     }
 
     /**
@@ -36,6 +34,13 @@ public class DocSentenceMatch {
      */
     public DocSentenceMatch(int documentId) {
         this(documentId, -1);
+    }
+
+    /**
+     * Compact constructor to ensure defensive copy of matchPositions.
+     */
+    public DocSentenceMatch {
+        matchPositions = matchPositions != null ? new HashMap<>(matchPositions) : new HashMap<>();
     }
 
     /**
@@ -59,24 +64,6 @@ public class DocSentenceMatch {
             return;
         }
         matchPositions.computeIfAbsent(key, k -> new HashSet<>()).addAll(positions);
-    }
-
-    /**
-     * Gets the document ID.
-     *
-     * @return The document ID
-     */
-    public int getDocumentId() {
-        return documentId;
-    }
-
-    /**
-     * Gets the sentence ID.
-     *
-     * @return The sentence ID, or -1 for document-level matches
-     */
-    public int getSentenceId() {
-        return sentenceId;
     }
 
     /**
@@ -116,19 +103,13 @@ public class DocSentenceMatch {
         return matchPositions.keySet();
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        DocSentenceMatch that = (DocSentenceMatch) o;
-        return documentId == that.documentId && sentenceId == that.sentenceId;
-    }
-
-    @Override
-    public int hashCode() {
-        int result = documentId;
-        result = 31 * result + sentenceId;
-        return result;
+    public void mergePositions(DocSentenceMatch other) {
+        other.matchPositions.forEach((key, positions) -> 
+            this.matchPositions.merge(key, positions, (a, b) -> {
+                a.addAll(b);
+                return a;
+            })
+        );
     }
 
     @Override

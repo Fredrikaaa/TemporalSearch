@@ -13,8 +13,13 @@ import java.time.LocalDate;
 public class TestData {
     
     public static AnnotationEntry createAnnotation(int docId, String lemma, String pos) {
+        // Default annotation id to 1 for backward compatibility
+        return createAnnotation(1, docId, lemma, pos);
+    }
+
+    public static AnnotationEntry createAnnotation(int annotationId, int docId, String lemma, String pos) {
         return new AnnotationEntry(
-            docId, 1, 0, lemma.length(),
+            annotationId, docId, 1, 0, lemma.length(),
             lemma, pos, LocalDate.now()
         );
     }
@@ -28,13 +33,13 @@ public class TestData {
 
     public static void insertBasicAnnotations(Connection conn) throws SQLException {
         try (PreparedStatement stmt = conn.prepareStatement(
-            "INSERT INTO annotations (document_id, sentence_id, begin_char, end_char, lemma, pos) VALUES (?, ?, ?, ?, ?, ?)"
+            "INSERT INTO annotations (annotation_id, document_id, sentence_id, begin_char, end_char, lemma, pos) VALUES (?, ?, ?, ?, ?, ?, ?)"
         )) {
             // Basic test data
             Object[][] data = {
-                {1, 1, 0, 3, "cat", "NOUN"},
-                {1, 1, 4, 10, "chases", "VERB"},
-                {1, 1, 11, 16, "mouse", "NOUN"}
+                {1, 1, 1, 0, 3, "cat", "NOUN"},
+                {2, 1, 1, 4, 10, "chases", "VERB"},
+                {3, 1, 1, 11, 16, "mouse", "NOUN"}
             };
 
             for (Object[] row : data) {

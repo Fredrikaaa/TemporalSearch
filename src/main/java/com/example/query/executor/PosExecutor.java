@@ -4,34 +4,55 @@ import com.example.core.IndexAccess;
 import com.example.core.Position;
 import com.example.core.PositionList;
 import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.PosCondition;
 import com.example.query.model.Query;
+import com.example.query.model.condition.Pos;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Objects;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Executor for PosCondition.
- * Searches for words with specific part-of-speech tags in the POS index.
+ * Executor for POS (Part of Speech) conditions.
+ * Handles part-of-speech pattern matching and variable binding.
  */
-public class PosConditionExecutor implements ConditionExecutor<PosCondition> {
-    private static final Logger logger = LoggerFactory.getLogger(PosConditionExecutor.class);
+public final class PosExecutor implements ConditionExecutor<Pos> {
+    private static final Logger logger = LoggerFactory.getLogger(PosExecutor.class);
     
     private static final String POS_INDEX = "pos";
+    private final String variableName;
+
+    public PosExecutor(String variableName) {
+        this.variableName = variableName;
+    }
 
     @Override
-    public Set<DocSentenceMatch> execute(PosCondition condition, Map<String, IndexAccess> indexes,
-                               VariableBindings variableBindings, Query.Granularity granularity)
+    public Set<DocSentenceMatch> execute(Pos condition, Map<String, IndexAccess> indexes,
+                               VariableBindings variableBindings, Query.Granularity granularity,
+                               int granularitySize)
         throws QueryExecutionException {
         
-        String posTag = condition.getPosTag();
-        String term = condition.getTerm();
+        logger.debug("Executing POS condition for tag {} at {} granularity with size {}", 
+                condition.posTag(), granularity, granularitySize);
+        
+        // Validate required indexes
+        if (!indexes.containsKey(POS_INDEX)) {
+            throw new QueryExecutionException(
+                "Missing required POS index",
+                condition.toString(),
+                QueryExecutionException.ErrorType.MISSING_INDEX
+            );
+        }
+        
+        String posTag = condition.posTag();
+        String term = condition.term();
         boolean isVariable = condition.isVariable();
         
         // Normalize POS tag to lowercase
@@ -135,8 +156,8 @@ public class PosConditionExecutor implements ConditionExecutor<PosCondition> {
                     int docId = position.getDocumentId();
                     int sentenceId = position.getSentenceId();
                     
-                    // Format: term@sentenceId:startPos
-                    String valueWithPosition = term + "@" + sentenceId + ":" + position.getBeginPosition();
+                    // Format: term@beginPos:endPos
+                    String valueWithPosition = term + "@" + position.getBeginPosition() + ":" + position.getEndPosition();
                     variableBindings.addBinding(docId, variableName, valueWithPosition);
                     
                     if (granularity == Query.Granularity.DOCUMENT) {
@@ -192,32 +213,16 @@ public class PosConditionExecutor implements ConditionExecutor<PosCondition> {
             Map<Integer, DocSentenceMatch> docMatches = new HashMap<>();
             
             for (Position position : positionList.getPositions()) {
-                int docId = position.getDocumentId();
-                
-                // Get or create the document match
-                DocSentenceMatch match = docMatches.computeIfAbsent(docId, 
-                        id -> new DocSentenceMatch(id));
-                
-                // Add the position to the match - use original term for display
-                match.addPosition(term, position);
+                addDocumentMatch(position, docMatches, variableName);
             }
             
             matches.addAll(docMatches.values());
         } else {
             // Sentence granularity - group by document ID and sentence ID
-            Map<String, DocSentenceMatch> sentMatches = new HashMap<>();
+            Map<SentenceKey, DocSentenceMatch> sentMatches = new HashMap<>();
             
             for (Position position : positionList.getPositions()) {
-                int docId = position.getDocumentId();
-                int sentId = position.getSentenceId();
-                String key = docId + ":" + sentId;
-                
-                // Get or create the sentence match
-                DocSentenceMatch match = sentMatches.computeIfAbsent(key, 
-                        k -> new DocSentenceMatch(docId, sentId));
-                
-                // Add the position to the match - use original term for display
-                match.addPosition(term, position);
+                addSentenceMatch(position, sentMatches, variableName);
             }
             
             matches.addAll(sentMatches.values());

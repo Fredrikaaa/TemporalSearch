@@ -1,10 +1,10 @@
 package com.example.query.executor;
 
 import com.example.core.IndexAccess;
-import com.example.query.model.Condition;
 import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.LogicalCondition;
-import com.example.query.model.LogicalCondition.LogicalOperator;
+import com.example.query.model.condition.Condition;
+import com.example.query.model.condition.Logical;
+import com.example.query.model.condition.Logical.LogicalOperator;
 import com.example.query.model.Query;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,12 +51,17 @@ public class QueryExecutor {
         // Clear variable bindings from previous executions
         variableBindings.clear();
         
-        // Determine granularity
-        Query.Granularity granularity = query.getGranularity().orElse(Query.Granularity.DOCUMENT);
-        logger.debug("Using granularity: {}", granularity);
+        // Set granularity for execution
+        Query.Granularity granularity = query.granularity();
+        int granularitySize = query.granularitySize().orElse(1);
+        
+        // Validate granularity size
+        if (granularitySize < 0 || granularitySize > 10) {
+            throw new IllegalArgumentException("Granularity size must be between 0 and 10, got: " + granularitySize);
+        }
         
         // Get all conditions from the query
-        List<Condition> conditions = query.getConditions();
+        List<Condition> conditions = query.conditions();
         
         if (conditions.isEmpty()) {
             logger.debug("Query has no conditions, returning empty result set");
@@ -65,12 +70,12 @@ public class QueryExecutor {
         
         // If there's only one condition, execute it directly
         if (conditions.size() == 1) {
-            return executeCondition(conditions.get(0), indexes, granularity);
+            return executeCondition(conditions.get(0), indexes, granularity, granularitySize);
         }
         
         // If there are multiple conditions, create a logical AND condition and execute it
-        LogicalCondition andCondition = new LogicalCondition(LogicalOperator.AND, conditions);
-        return executeCondition(andCondition, indexes, granularity);
+        Logical andCondition = new Logical(LogicalOperator.AND, conditions);
+        return executeCondition(andCondition, indexes, granularity, granularitySize);
     }
     
     /**
@@ -79,6 +84,7 @@ public class QueryExecutor {
      * @param condition The condition to execute
      * @param indexes Map of index name to IndexAccess
      * @param granularity The query granularity
+     * @param granularitySize The window size for sentence granularity
      * @return Set of matches at the specified granularity level
      * @throws QueryExecutionException if execution fails
      */
@@ -86,16 +92,19 @@ public class QueryExecutor {
     private Set<DocSentenceMatch> executeCondition(
             Condition condition,
             Map<String, IndexAccess> indexes,
-            Query.Granularity granularity) 
+            Query.Granularity granularity,
+            int granularitySize) 
             throws QueryExecutionException {
-        logger.debug("Executing condition: {} with granularity: {}", condition, granularity);
+        logger.debug("Executing condition: {} with granularity: {} and size: {}", 
+                condition, granularity, granularitySize);
         
         try {
             // Get the appropriate executor for this condition type
             ConditionExecutor executor = executorFactory.getExecutor(condition);
             
             // Execute the condition
-            Set<DocSentenceMatch> results = executor.execute(condition, indexes, variableBindings, granularity);
+            Set<DocSentenceMatch> results = executor.execute(
+                    condition, indexes, variableBindings, granularity, granularitySize);
             logger.debug("Condition {} matched {} {}", 
                     condition, 
                     results.size(),
@@ -136,7 +145,7 @@ public class QueryExecutor {
      */
     public Set<Integer> getDocumentIds(Set<DocSentenceMatch> matches) {
         return matches.stream()
-                .map(DocSentenceMatch::getDocumentId)
+                .map(DocSentenceMatch::documentId)
                 .collect(Collectors.toSet());
     }
 } 

@@ -49,7 +49,7 @@ public class IndexRunner {
                 .help("Batch size for processing (default: 1000)");
 
         parser.addArgument("-t", "--type")
-                .choices("all", "unigram", "bigram", "trigram", "dependency", "ner_date", "pos", "hypernym")
+                .choices("all", "unigram", "bigram", "trigram", "dependency", "ner_date", "ner", "pos", "hypernym", "stitch")
                 .setDefault("all")
                 .help("Type of index to generate");
 
@@ -137,8 +137,10 @@ public class IndexRunner {
                 indexPath.resolve("entity"),
                 indexPath.resolve("dependency"),
                 indexPath.resolve("nerdate"),
+                indexPath.resolve("ner"),
                 indexPath.resolve("pos"),
-                indexPath.resolve("hypernym")
+                indexPath.resolve("hypernym"),
+                indexPath.resolve("stitch")
             };
             
             for (Path dir : indexDirectories) {
@@ -163,7 +165,7 @@ public class IndexRunner {
         // Connect to database and process indexes
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
             // Determine total number of indexes to generate
-            int totalIndexes = indexType.equals("all") ? 7 : 1;
+            int totalIndexes = indexType.equals("all") ? 9 : 1;
             int currentIndex = 0;
 
             // Create and run generators based on type
@@ -268,6 +270,26 @@ public class IndexRunner {
                     progress.completeIndex();
                 }
 
+                if (indexType.equals("all") || indexType.equals("ner")) {
+                    currentIndex++;
+                    System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
+                    metrics.startBatch(batchSize, "ner");
+                    long count = getNerCount(conn, limit);
+                    progress.startIndex("NER Index", count);
+                    
+                    // Get path with proper directory structure
+                    Path nerPath = Path.of(indexDir).resolve("ner");
+                    try (NerIndexGenerator gen = new NerIndexGenerator(
+                            nerPath.toString(), stopwordsPath, conn, progress, indexConfig)) {
+                        gen.generateIndex();
+                        metrics.recordBatchSuccess((int)count);
+                    } catch (Exception e) {
+                        metrics.recordBatchFailure();
+                        logger.error("Error generating NER index: {}", e.getMessage(), e);
+                    }
+                    progress.completeIndex();
+                }
+
                 if (indexType.equals("all") || indexType.equals("pos")) {
                     currentIndex++;
                     System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
@@ -304,6 +326,26 @@ public class IndexRunner {
                     } catch (Exception e) {
                         metrics.recordBatchFailure();
                         logger.error("Error generating hypernym index: {}", e.getMessage(), e);
+                    }
+                    progress.completeIndex();
+                }
+
+                if (indexType.equals("all") || indexType.equals("stitch")) {
+                    currentIndex++;
+                    System.out.printf("%nIndex %d/%d", currentIndex, totalIndexes);
+                    metrics.startBatch(batchSize, "stitch");
+                    long count = getNerDateCount(conn, limit);
+                    progress.startIndex("Stitch Index", count);
+                    
+                    // Get path with proper directory structure
+                    Path stitchPath = Path.of(indexDir).resolve("stitch");
+                    try (StitchIndexGenerator gen = new StitchIndexGenerator(
+                            stitchPath.toString(), stopwordsPath, conn, progress, indexConfig)) {
+                        gen.generateIndex();
+                        metrics.recordBatchSuccess((int)count);
+                    } catch (Exception e) {
+                        metrics.recordBatchFailure();
+                        logger.error("Error generating stitch index: {}", e.getMessage(), e);
                     }
                     progress.completeIndex();
                 }
@@ -401,6 +443,34 @@ public class IndexRunner {
         }
     }
 
+    private static long getNerCount(Connection conn, Integer limit) throws SQLException {
+        // First check if the annotations table exists
+        try (Statement checkStmt = conn.createStatement();
+             ResultSet checkRs = checkStmt.executeQuery(
+                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='annotations'")) {
+            if (checkRs.next() && checkRs.getInt(1) == 0) {
+                // Table doesn't exist
+                logger.error("Annotations table does not exist. Please run annotation stage first.");
+                throw new SQLException("Annotations table does not exist. Please run annotation stage first.");
+            }
+        }
+        
+        String sql = "SELECT COUNT(*) FROM annotations WHERE ner IS NOT NULL AND ner != '' AND ner != 'DATE' AND ner != 'O'";
+        if (limit != null) {
+            sql += " LIMIT " + limit;
+        }
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) {
+                return rs.getLong(1);
+            }
+            return 0;
+        } catch (SQLException e) {
+            logger.error("Error counting NER entities: {}", e.getMessage());
+            return 0;
+        }
+    }
+
     /**
      * Setup index directories for the given project
      * @param indexDir Base directory for indexes
@@ -408,29 +478,36 @@ public class IndexRunner {
      * @throws IOException If directory creation fails
      */
     private static void setupIndexDirectories(String indexDir, String indexType) throws IOException {
-        Path indexDirPath = Path.of(indexDir);
+        // Ensure the base directory exists
+        Files.createDirectories(Path.of(indexDir));
         
-        // Make sure the base directory exists
-        if (!Files.exists(indexDirPath)) {
-            Files.createDirectories(indexDirPath);
-            logger.info("Created index directory: {}", indexDirPath);
+        // Determine which subdirectories to create
+        if (indexType.equals("all") || indexType.equals("unigram")) {
+            Files.createDirectories(Path.of(indexDir, "unigram"));
         }
-        
-        // Determine which index types to create
-        String[] typesToCreate;
-        if ("all".equals(indexType)) {
-            typesToCreate = new String[]{"unigram", "bigram", "trigram", "dependency", "ner_date", "pos", "hypernym"};
-        } else {
-            typesToCreate = new String[]{indexType};
+        if (indexType.equals("all") || indexType.equals("bigram")) {
+            Files.createDirectories(Path.of(indexDir, "bigram"));
         }
-        
-        // Create subdirectories for each index type
-        for (String type : typesToCreate) {
-            Path indexTypeDir = indexDirPath.resolve(type);
-            if (!Files.exists(indexTypeDir)) {
-                Files.createDirectories(indexTypeDir);
-                logger.info("Created index subdirectory: {}", indexTypeDir);
-            }
+        if (indexType.equals("all") || indexType.equals("trigram")) {
+            Files.createDirectories(Path.of(indexDir, "trigram"));
+        }
+        if (indexType.equals("all") || indexType.equals("dependency")) {
+            Files.createDirectories(Path.of(indexDir, "dependency"));
+        }
+        if (indexType.equals("all") || indexType.equals("ner_date")) {
+            Files.createDirectories(Path.of(indexDir, "ner_date"));
+        }
+        if (indexType.equals("all") || indexType.equals("ner")) {
+            Files.createDirectories(Path.of(indexDir, "ner"));
+        }
+        if (indexType.equals("all") || indexType.equals("pos")) {
+            Files.createDirectories(Path.of(indexDir, "pos"));
+        }
+        if (indexType.equals("all") || indexType.equals("hypernym")) {
+            Files.createDirectories(Path.of(indexDir, "hypernym"));
+        }
+        if (indexType.equals("all") || indexType.equals("stitch")) {
+            Files.createDirectories(Path.of(indexDir, "stitch"));
         }
     }
 }

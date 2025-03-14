@@ -1,10 +1,10 @@
 package com.example.query.executor;
 
 import com.example.core.IndexAccess;
-import com.example.query.model.Condition;
 import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.NotCondition;
 import com.example.query.model.Query;
+import com.example.query.model.condition.Condition;
+import com.example.query.model.condition.Not;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -16,44 +16,49 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Executor for NotCondition.
- * Handles logical negation of a condition.
+ * Executor for NOT conditions.
+ * Handles negation by executing the inner condition and inverting the result.
  */
-public class NotConditionExecutor implements ConditionExecutor<NotCondition> {
-    private static final Logger logger = LoggerFactory.getLogger(NotConditionExecutor.class);
+public final class NotExecutor implements ConditionExecutor<Not> {
+    private static final Logger logger = LoggerFactory.getLogger(NotExecutor.class);
     
     private final ConditionExecutorFactory executorFactory;
     
     /**
      * Creates a new NotConditionExecutor that uses the provided factory to create
-     * executors for the negated condition.
+     * executors for the inner condition.
      *
      * @param executorFactory The factory to use for creating condition executors
      */
-    public NotConditionExecutor(ConditionExecutorFactory executorFactory) {
+    public NotExecutor(ConditionExecutorFactory executorFactory) {
         this.executorFactory = executorFactory;
     }
     
     @Override
-    public Set<DocSentenceMatch> execute(NotCondition condition, Map<String, IndexAccess> indexes,
-                               VariableBindings variableBindings, Query.Granularity granularity)
+    public Set<DocSentenceMatch> execute(Not condition, Map<String, IndexAccess> indexes,
+                               VariableBindings variableBindings, Query.Granularity granularity,
+                               int granularitySize)
         throws QueryExecutionException {
         
-        Condition negatedCondition = condition.getCondition();
-        logger.debug("Executing NOT operation on condition: {} with granularity: {}", 
-                    negatedCondition, granularity);
+        logger.debug("Executing NOT condition at {} granularity with size {}", 
+                granularity, granularitySize);
+        
+        // Execute inner condition
+        Condition innerCondition = condition.condition();
+        ConditionExecutor<Condition> executor = executorFactory.getExecutor(innerCondition);
+        Set<DocSentenceMatch> innerMatches = executor.execute(
+            innerCondition, indexes, variableBindings, granularity, granularitySize);
+        
+        Condition negatedCondition = condition.condition();
+        logger.debug("Executing NOT operation on condition: {} with granularity: {} and size: {}", 
+                    negatedCondition, granularity, granularitySize);
         
         try {
-            // Execute the negated condition
-            ConditionExecutor<Condition> executor = executorFactory.getExecutor(negatedCondition);
-            Set<DocSentenceMatch> negatedResults = executor.execute(
-                negatedCondition, indexes, variableBindings, granularity);
-            
             // Get all document/sentence IDs from the collection
             Set<DocSentenceMatch> allMatches = getAllMatches(indexes, granularity);
             
             // Apply negation using the appropriate strategy
-            Set<DocSentenceMatch> result = negateMatches(allMatches, negatedResults);
+            Set<DocSentenceMatch> result = negateMatches(innerMatches, allMatches);
             
             logger.debug("NOT operation completed with {} matching results at {} granularity", 
                         result.size(), granularity);
@@ -75,40 +80,30 @@ public class NotConditionExecutor implements ConditionExecutor<NotCondition> {
      * Negates a set of matches against a universe set.
      * Returns all matches from the universe that are not in the set to negate.
      *
-     * @param universe The universe of all possible matches
      * @param toNegate The set of matches to negate
+     * @param allMatches The universe of all possible matches
      * @return All matches from universe that are not in toNegate
      */
-    public Set<DocSentenceMatch> negateMatches(
-            Set<DocSentenceMatch> universe,
-            Set<DocSentenceMatch> toNegate) {
-
-        if (universe.isEmpty()) {
-            return new HashSet<>();
-        }
-
+    Set<DocSentenceMatch> negateMatches(Set<DocSentenceMatch> toNegate, Set<DocSentenceMatch> allMatches) {
         if (toNegate.isEmpty()) {
-            return new HashSet<>(universe);
+            return allMatches;
         }
 
         Set<DocSentenceMatch> result = new HashSet<>();
 
-        // Determine granularity from first match in universe
-        boolean isSentenceLevel = !universe.isEmpty() && universe.iterator().next().isSentenceLevel();
-
-        if (isSentenceLevel) {
+        if (toNegate.iterator().next().isSentenceLevel()) {
             // Sentence-level negation
             Map<SentenceKey, DocSentenceMatch> toNegateMap = new HashMap<>();
-
-            // Index the set to negate
+            
+            // Index matches to negate by sentence key
             for (DocSentenceMatch match : toNegate) {
-                SentenceKey key = new SentenceKey(match.getDocumentId(), match.getSentenceId());
+                SentenceKey key = new SentenceKey(match.documentId(), match.sentenceId());
                 toNegateMap.put(key, match);
             }
-
-            // Add sentences from universe that aren't in the negation set
-            for (DocSentenceMatch match : universe) {
-                SentenceKey key = new SentenceKey(match.getDocumentId(), match.getSentenceId());
+            
+            // Add matches that don't appear in toNegate
+            for (DocSentenceMatch match : allMatches) {
+                SentenceKey key = new SentenceKey(match.documentId(), match.sentenceId());
                 if (!toNegateMap.containsKey(key)) {
                     result.add(match);
                 }
@@ -116,15 +111,13 @@ public class NotConditionExecutor implements ConditionExecutor<NotCondition> {
         } else {
             // Document-level negation
             Set<Integer> toNegateIds = new HashSet<>();
-
-            // Extract document IDs to negate
             for (DocSentenceMatch match : toNegate) {
-                toNegateIds.add(match.getDocumentId());
+                toNegateIds.add(match.documentId());
             }
-
-            // Add documents from universe that aren't in the negation set
-            for (DocSentenceMatch match : universe) {
-                if (!toNegateIds.contains(match.getDocumentId())) {
+            
+            // Add matches from documents not in toNegate
+            for (DocSentenceMatch match : allMatches) {
+                if (!toNegateIds.contains(match.documentId())) {
                     result.add(match);
                 }
             }
@@ -231,15 +224,7 @@ public class NotConditionExecutor implements ConditionExecutor<NotCondition> {
     /**
      * Helper class for sentence identification
      */
-    private static class SentenceKey {
-        private final int documentId;
-        private final int sentenceId;
-
-        public SentenceKey(int documentId, int sentenceId) {
-            this.documentId = documentId;
-            this.sentenceId = sentenceId;
-        }
-
+    private record SentenceKey(int documentId, int sentenceId) {
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;

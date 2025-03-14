@@ -44,7 +44,7 @@ public final class NerDateIndexGenerator extends IndexGenerator<AnnotationEntry>
     @Override
     protected List<AnnotationEntry> fetchBatch(int offset) throws SQLException {
         List<AnnotationEntry> batch = new ArrayList<>();
-        String query = "SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char, " +
+        String query = "SELECT a.annotation_id, a.document_id, a.sentence_id, a.begin_char, a.end_char, " +
                       "a.token, a.normalized_ner, a.ner, d.timestamp " +
                       "FROM annotations a " +
                       "JOIN documents d ON a.document_id = d.document_id " +
@@ -64,6 +64,7 @@ public final class NerDateIndexGenerator extends IndexGenerator<AnnotationEntry>
                     }
 
                     batch.add(new AnnotationEntry(
+                        rs.getInt("annotation_id"),
                         rs.getInt("document_id"),
                         rs.getInt("sentence_id"),
                         rs.getInt("begin_char"),

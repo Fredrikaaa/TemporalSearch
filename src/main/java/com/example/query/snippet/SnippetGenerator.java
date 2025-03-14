@@ -54,8 +54,8 @@ public class SnippetGenerator {
     }
     
     /**
-     * Efficiently generates a formatted snippet for a match in a document.
-     * 
+     * Generates a snippet of text around a token in a document.
+     *
      * @param documentId The document ID
      * @param sentenceId The sentence ID
      * @param tokenPosition The position of the token in the sentence
@@ -65,51 +65,75 @@ public class SnippetGenerator {
      */
     public String generateSnippet(long documentId, int sentenceId, int tokenPosition, String variableName) 
             throws SQLException {
-        logger.debug("Generating snippet for documentId={}, sentenceId={}, tokenPosition={}, variableName={}",
+        logger.debug("Using backward compatibility method for documentId={}, sentenceId={}, tokenPosition={}, variableName={}",
             documentId, sentenceId, tokenPosition, variableName);
         
-        // 1. Get document text (using cache for efficiency)
+        // Get document text to find the token
         String documentText = getDocumentText(documentId);
         if (documentText == null || documentText.isEmpty()) {
             logger.warn("Document text not found: documentId={}", documentId);
             return "[Document text not found]";
         }
         
-        // Skip further processing if tokenPosition is out of bounds
+        // Find the token based on position
         if (tokenPosition < 0 || tokenPosition >= documentText.length()) {
-            logger.warn("Token position {} is out of bounds for document {} (length: {})",
-                tokenPosition, documentId, documentText.length());
-            return generatePositionBasedSnippet(documentText, 
-                Math.min(documentText.length() - 1, Math.max(0, tokenPosition)),
-                variableName);
-        }
-        
-        // For document-level matches, find the appropriate sentence efficiently
-        if (sentenceId < 0) {
-            sentenceId = findSentenceForPosition(documentId, tokenPosition);
-            logger.debug("For document-level match, found sentence {} for position {}", sentenceId, tokenPosition);
-            
-            if (sentenceId < 0) {
-                // Use a direct position-based approach if we can't find a sentence
-                return generatePositionBasedSnippet(documentText, tokenPosition, variableName);
-            }
-        }
-        
-        // Find the token efficiently with an optimized query
-        MatchInfo matchInfo = findNearestToken(documentId, sentenceId, tokenPosition);
-        if (matchInfo == null) {
-            // Fall back to position-based snippet if we can't find the token
+            logger.warn("Token position {} is out of bounds", tokenPosition);
             return generatePositionBasedSnippet(documentText, tokenPosition, variableName);
         }
         
-        // Generate snippet with the found token
-        String snippet = extractContextSnippet(
-            documentText, 
-            matchInfo.beginPos, 
-            matchInfo.endPos, 
-            matchInfo.token,
-            variableName
-        );
+        // For backward compatibility, we'll expand around the token position to create a reasonable highlight
+        int beginPos = tokenPosition;
+        
+        // Search backward to find the beginning of the word
+        while (beginPos > 0 && !Character.isWhitespace(documentText.charAt(beginPos - 1))) {
+            beginPos--;
+        }
+        
+        // Search forward to find the end of the word
+        int endPos = tokenPosition;
+        while (endPos < documentText.length() && !Character.isWhitespace(documentText.charAt(endPos))) {
+            endPos++;
+        }
+        
+        // Use the new method with the calculated positions
+        return generateSnippet(documentId, sentenceId, beginPos, endPos, variableName);
+    }
+    
+    /**
+     * Generates a snippet of text around a variable match.
+     *
+     * @param documentId The document ID
+     * @param sentenceId The sentence ID where the match occurs
+     * @param beginPos The beginning character position of the match
+     * @param endPos The ending character position of the match
+     * @param variableName The name of the variable that matched
+     * @return Formatted snippet text with highlights
+     * @throws SQLException if a database error occurs
+     */
+    public String generateSnippet(long documentId, int sentenceId, int beginPos, int endPos, String variableName) 
+            throws SQLException {
+        logger.debug("Generating snippet for documentId={}, sentenceId={}, span=[{},{}], variable={}",
+            documentId, sentenceId, beginPos, endPos, variableName);
+        
+        // Get document text (using cache if available)
+        String documentText = getDocumentText(documentId);
+        if (documentText == null || documentText.isEmpty()) {
+            logger.warn("Document text not found for document {}", documentId);
+            return "[Document text not found]";
+        }
+        
+        // Verify positions are valid
+        if (beginPos < 0 || endPos < 0 || beginPos >= documentText.length() || endPos > documentText.length() || beginPos >= endPos) {
+            logger.warn("Invalid positions ({}, {}) for document {} with length {}", 
+                beginPos, endPos, documentId, documentText.length());
+            return "[Invalid position]";
+        }
+        
+        // Extract the actual entity text from the document
+        String matchedText = documentText.substring(beginPos, endPos);
+        
+        // Create the snippet using the extracted text
+        String snippet = extractContextSnippet(documentText, beginPos, endPos, matchedText, variableName);
         
         return snippet;
     }
@@ -211,7 +235,13 @@ public class SnippetGenerator {
             return null;
         }
         
-        // Optimized query to find the nearest token in one step
+        // First try to find a named entity (NER) at the position
+        MatchInfo nerEntity = findNamedEntityAtPosition(documentId, sentenceId, position);
+        if (nerEntity != null) {
+            return nerEntity;
+        }
+        
+        // If no named entity found, fall back to finding the nearest token
         String sql = """
             SELECT begin_char, end_char, token, sentence_id
             FROM annotations
@@ -241,6 +271,140 @@ public class SnippetGenerator {
                         endChar,
                         token
                     );
+                }
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Attempts to find a complete named entity at the given position.
+     * Specifically looks for NER-annotated tokens.
+     *
+     * @param documentId The document ID
+     * @param sentenceId The sentence ID
+     * @param position The character position to search at
+     * @return The entity information if found, or null if no entity at this position
+     * @throws SQLException if a database error occurs
+     */
+    private MatchInfo findNamedEntityAtPosition(long documentId, int sentenceId, int position) throws SQLException {
+        String sql = """
+            WITH tokens AS (
+                SELECT 
+                    document_id, 
+                    sentence_id, 
+                    begin_char, 
+                    end_char, 
+                    token,
+                    ner,
+                    ROW_NUMBER() OVER (ORDER BY begin_char) as row_num
+                FROM annotations
+                WHERE document_id = ?
+                  AND (sentence_id = ? OR ? = -1)
+                  AND ner IS NOT NULL 
+                  AND ner != '' 
+                  AND ner != 'O'
+                ORDER BY begin_char
+            ),
+            -- Identify entity group boundaries based on position and same NER type
+            entity_groups AS (
+                SELECT 
+                    t1.row_num,
+                    t1.document_id,
+                    t1.sentence_id,
+                    t1.ner,
+                    -- Create entity group ID based on gaps in sequence and changes in NER type
+                    SUM(CASE 
+                        WHEN t1.row_num = 1 THEN 1
+                        WHEN t1.ner != LAG(t1.ner) OVER (ORDER BY t1.row_num) THEN 1
+                        WHEN t1.begin_char > LAG(t1.end_char) OVER (ORDER BY t1.row_num) + 3 THEN 1
+                        ELSE 0
+                    END) OVER (ORDER BY t1.row_num) as entity_group_id
+                FROM tokens t1
+            ),
+            -- Calculate entity boundaries and text for each entity group
+            entity_boundaries AS (
+                SELECT 
+                    eg.entity_group_id,
+                    eg.document_id,
+                    eg.sentence_id,
+                    eg.ner,
+                    MIN(t.begin_char) as entity_begin,
+                    MAX(t.end_char) as entity_end,
+                    GROUP_CONCAT(t.token, ' ') as entity_text
+                FROM entity_groups eg
+                JOIN tokens t ON eg.row_num = t.row_num
+                GROUP BY eg.entity_group_id, eg.document_id, eg.sentence_id, eg.ner
+            )
+            -- Find the entity containing the position
+            SELECT 
+                entity_begin, 
+                entity_end, 
+                entity_text,
+                ner
+            FROM entity_boundaries
+            WHERE ? BETWEEN entity_begin AND entity_end
+            LIMIT 1
+            """;
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setLong(1, documentId);
+            stmt.setInt(2, sentenceId);
+            stmt.setInt(3, sentenceId);
+            stmt.setInt(4, position);
+            
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    int beginChar = rs.getInt("entity_begin");
+                    int endChar = rs.getInt("entity_end");
+                    String entityText = rs.getString("entity_text");
+                    String nerType = rs.getString("ner");
+                    
+                    logger.debug("Found NER entity '{}' type={} at position [{},{}]", 
+                        entityText, nerType, beginChar, endChar);
+                    
+                    return new MatchInfo(
+                        entityText,
+                        beginChar,
+                        endChar,
+                        entityText
+                    );
+                }
+            }
+        } catch (SQLException e) {
+            // If the advanced SQL fails (e.g., window functions not supported), try a simpler approach
+            logger.debug("Advanced entity query failed: {}", e.getMessage());
+            
+            // Simple query to just get the token at the exact position
+            String simpleQuery = """
+                SELECT begin_char, end_char, token, ner
+                FROM annotations
+                WHERE document_id = ?
+                  AND (sentence_id = ? OR ? = -1)
+                  AND ? BETWEEN begin_char AND end_char
+                LIMIT 1
+                """;
+                
+            try (PreparedStatement stmt = connection.prepareStatement(simpleQuery)) {
+                stmt.setLong(1, documentId);
+                stmt.setInt(2, sentenceId);
+                stmt.setInt(3, sentenceId);
+                stmt.setInt(4, position);
+                
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        int beginChar = rs.getInt("begin_char");
+                        int endChar = rs.getInt("end_char");
+                        String token = rs.getString("token");
+                        
+                        return new MatchInfo(
+                            token,
+                            beginChar,
+                            endChar,
+                            token
+                        );
+                    }
                 }
             }
         }
@@ -366,6 +530,18 @@ public class SnippetGenerator {
             this.beginPos = beginPos;
             this.endPos = endPos;
             this.matchedText = matchedText;
+        }
+        
+        String getToken() {
+            return token;
+        }
+        
+        int getBeginChar() {
+            return beginPos;
+        }
+        
+        int getEndChar() {
+            return endPos;
         }
     }
 } 

@@ -67,16 +67,16 @@ public class SnippetIntegrationTest {
     }
     
     /**
-     * Tests that QueryCLI properly initializes ResultGenerator with snippet support
+     * Tests that QueryCLI properly initializes without requiring a database path
      */
     @Test
     public void testQueryCLIIntegratesSnippetSupport() {
-        // Create a QueryCLI with a test database path
-        QueryCLI cli = new QueryCLI(Path.of("test-indexes"), "test.db");
+        // Create a QueryCLI with only the index directory parameter
+        QueryCLI cli = new QueryCLI(Path.of("test-indexes"));
         
         // Since the CLI constructor doesn't expose its internal components directly,
-        // we mainly verify that it initializes without errors when given a database path
-        assertNotNull(cli, "QueryCLI should initialize with database path for snippets");
+        // we mainly verify that it initializes without errors
+        assertNotNull(cli, "QueryCLI should initialize without errors");
     }
     
     /**
@@ -87,16 +87,20 @@ public class SnippetIntegrationTest {
         // Create SchemaCompatibleSnippetGenerator with custom configuration
         snippetGenerator = new SnippetGenerator(connection);
         
-        // Create test variable bindings with position information
+        // Create test variable bindings with position information - using new format (term@beginPos:endPos)
         VariableBindings bindings = new VariableBindings();
-        bindings.addBinding(1, 2, "testVar", "highlighted@2:27");
+        bindings.addBinding(1, 2, "testVar", "highlighted@20:30");
         
         // Create a match
         DocSentenceMatch match = new DocSentenceMatch(1, 2);
         
-        // Extract position from bindings
-        int position = bindings.getTokenPosition("testVar", match);
-        assertEquals(27, position, "Should extract correct position from variable binding");
+        // Extract begin position from bindings
+        int beginPos = bindings.getBeginCharPosition("testVar", match);
+        assertEquals(20, beginPos, "Should extract correct begin position from variable binding");
+        
+        // Extract end position from bindings
+        int endPos = bindings.getEndCharPosition("testVar", match);
+        assertEquals(30, endPos, "Should extract correct end position from variable binding");
         
         // Verify we can clear the cache
         assertDoesNotThrow(() -> {

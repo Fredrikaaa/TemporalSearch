@@ -2,11 +2,12 @@ package com.example.query.index;
 
 import com.example.core.IndexAccess;
 import com.example.core.IndexAccessException;
-import com.example.query.model.Condition;
-import com.example.query.model.ContainsCondition;
-import com.example.query.model.DependencyCondition;
-import com.example.query.model.NerCondition;
-import com.example.query.model.TemporalCondition;
+import com.example.query.model.condition.Condition;
+import com.example.query.model.condition.Contains;
+import com.example.query.model.condition.Dependency;
+import com.example.query.model.condition.Ner;
+import com.example.query.model.condition.Temporal;
+
 import org.iq80.leveldb.Options;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -134,10 +135,10 @@ public class IndexManager implements AutoCloseable {
         checkClosed();
         
         // Map condition types to appropriate indexes
-        if (condition instanceof ContainsCondition) {
+        if (condition instanceof Contains) {
             // For CONTAINS conditions, prefer the most specific n-gram index available
-            ContainsCondition containsCondition = (ContainsCondition) condition;
-            String[] terms = containsCondition.getTerms().toArray(new String[0]);
+            Contains containsCondition = (Contains) condition;
+            String[] terms = containsCondition.terms().toArray(new String[0]);
             
             if (terms.length >= 3 && indexes.containsKey("trigram")) {
                 return Optional.of(indexes.get("trigram"));
@@ -146,9 +147,9 @@ public class IndexManager implements AutoCloseable {
             } else if (indexes.containsKey("unigram")) {
                 return Optional.of(indexes.get("unigram"));
             }
-        } else if (condition instanceof NerCondition) {
-            NerCondition nerCondition = (NerCondition) condition;
-            String entityType = nerCondition.getEntityType();
+        } else if (condition instanceof Ner) {
+            Ner nerCondition = (Ner) condition;
+            String entityType = nerCondition.entityType();
             
             // Use ner_date for DATE entities, ner for others
             if ("DATE".equals(entityType) && indexes.containsKey("ner_date")) {
@@ -156,9 +157,9 @@ public class IndexManager implements AutoCloseable {
             } else if (indexes.containsKey("ner")) {
                 return Optional.of(indexes.get("ner"));
             }
-        } else if (condition instanceof TemporalCondition && indexes.containsKey("ner_date")) {
+        } else if (condition instanceof Temporal && indexes.containsKey("ner_date")) {
             return Optional.of(indexes.get("ner_date"));
-        } else if (condition instanceof DependencyCondition && indexes.containsKey("dependency")) {
+        } else if (condition instanceof Dependency && indexes.containsKey("dependency")) {
             return Optional.of(indexes.get("dependency"));
         }
         

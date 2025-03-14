@@ -1,85 +1,54 @@
 package com.example.query.executor;
 
-import com.example.query.model.Condition;
-import com.example.query.model.ContainsCondition;
-import com.example.query.model.DependencyCondition;
-import com.example.query.model.LogicalCondition;
-import com.example.query.model.NerCondition;
-import com.example.query.model.NotCondition;
-import com.example.query.model.PosCondition;
-import com.example.query.model.TemporalCondition;
-
-import java.util.HashMap;
-import java.util.Map;
-
+import com.example.query.model.condition.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Factory for creating condition executors based on condition type.
- * Maintains a registry of executors for different condition types.
+ * Factory for condition executors using pattern matching and singleton instances.
+ * Maintains type safety through sealed interfaces.
  */
-public class ConditionExecutorFactory {
+public final class ConditionExecutorFactory {
     private static final Logger logger = LoggerFactory.getLogger(ConditionExecutorFactory.class);
     
-    private final Map<Class<? extends Condition>, ConditionExecutor<?>> executors;
-
+    // Logical and Not executors are singletons since they don't need variable names
+    private final LogicalExecutor logicalExecutor;
+    private final NotExecutor notExecutor;
+    
     /**
-     * Creates a new ConditionExecutorFactory with default executors.
+     * Creates a new ConditionExecutorFactory with singleton executor instances.
      */
     public ConditionExecutorFactory() {
-        this.executors = new HashMap<>();
-        registerDefaultExecutors();
-    }
-
-    /**
-     * Registers the default set of condition executors.
-     */
-    private void registerDefaultExecutors() {
-        logger.debug("Registering default condition executors");
+        // Logical and Not executors need this factory for recursive execution
+        this.logicalExecutor = new LogicalExecutor(this);
+        this.notExecutor = new NotExecutor(this);
         
-        // Register the implemented condition executors
-        executors.put(ContainsCondition.class, new ContainsConditionExecutor());
-        executors.put(NerCondition.class, new NerConditionExecutor());
-        executors.put(LogicalCondition.class, new LogicalConditionExecutor(this));
-        executors.put(NotCondition.class, new NotConditionExecutor(this));
-        executors.put(PosCondition.class, new PosConditionExecutor());
-        executors.put(DependencyCondition.class, new DependencyConditionExecutor());
-        
-        // TODO: Implement these executors
-        // executors.put(TemporalCondition.class, new TemporalConditionExecutor());
+        logger.debug("Initialized condition executor factory");
     }
-
+    
     /**
-     * Registers a condition executor for a specific condition type.
-     *
-     * @param <T> The condition type
-     * @param conditionClass The condition class
-     * @param executor The executor for the condition
-     */
-    public <T extends Condition> void registerExecutor(Class<T> conditionClass, ConditionExecutor<T> executor) {
-        executors.put(conditionClass, executor);
-        logger.debug("Registered executor for condition type: {}", conditionClass.getSimpleName());
-    }
-
-    /**
-     * Gets the appropriate executor for a condition.
+     * Gets the appropriate executor for a condition using pattern matching.
+     * For conditions that support variable binding, creates a new executor instance
+     * with the variable name from the condition.
      *
      * @param <T> The condition type
      * @param condition The condition
      * @return The executor for the condition
-     * @throws IllegalArgumentException if no executor is found for the condition type
+     * @throws IllegalArgumentException if the condition type is not supported
      */
     @SuppressWarnings("unchecked")
     public <T extends Condition> ConditionExecutor<T> getExecutor(T condition) {
-        ConditionExecutor<?> executor = executors.get(condition.getClass());
-        if (executor == null) {
-            String message = "No executor found for condition type: " + condition.getClass().getName();
-            logger.error(message);
-            throw new IllegalArgumentException(message);
-        }
+        logger.debug("Getting executor for condition type: {}", condition.getType());
         
-        logger.debug("Found executor for condition type: {}", condition.getClass().getSimpleName());
-        return (ConditionExecutor<T>) executor;
+        return (ConditionExecutor<T>) switch (condition) {
+            case Contains c -> new ContainsExecutor(c.variableName());
+            case Ner c -> new NerExecutor(c.variableName());
+            case Pos c -> new PosExecutor(c.variableName());
+            case Dependency c -> new DependencyExecutor(c.variableName());
+            case Logical c -> logicalExecutor;
+            case Not c -> notExecutor;
+            case Temporal c -> throw new UnsupportedOperationException(
+                "Temporal condition execution not yet implemented");
+        };
     }
 } 

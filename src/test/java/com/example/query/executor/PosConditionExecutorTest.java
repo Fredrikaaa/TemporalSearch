@@ -4,8 +4,9 @@ import com.example.core.IndexAccess;
 import com.example.core.Position;
 import com.example.core.PositionList;
 import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.PosCondition;
 import com.example.query.model.Query;
+import com.example.query.model.condition.Pos;
+
 import org.iq80.leveldb.DBIterator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 public class PosConditionExecutorTest {
 
-    private PosConditionExecutor executor;
+    private PosExecutor executor;
     
     @Mock
     private IndexAccess posIndex;
@@ -37,8 +38,8 @@ public class PosConditionExecutorTest {
     private VariableBindings variableBindings;
 
     @BeforeEach
-    public void setUp() {
-        executor = new PosConditionExecutor();
+    void setUp() {
+        executor = new PosExecutor("testVar");
         indexes = new HashMap<>();
         indexes.put("pos", posIndex);
         variableBindings = new VariableBindings();
@@ -47,7 +48,7 @@ public class PosConditionExecutorTest {
     @Test
     public void testExecuteTermSearch() throws Exception {
         // Create a POS condition for a specific term with a POS tag
-        PosCondition condition = new PosCondition("NN", "apple", false);
+        Pos condition = new Pos("NN", "apple", null, false);
         
         // Create a position list with some document positions
         PositionList positionList = new PositionList();
@@ -60,11 +61,11 @@ public class PosConditionExecutorTest {
         when(posIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute the condition
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify the results
         assertEquals(3, result.size());
-        Set<Integer> docIds = result.stream().map(DocSentenceMatch::getDocumentId).collect(Collectors.toSet());
+        Set<Integer> docIds = result.stream().map(DocSentenceMatch::documentId).collect(Collectors.toSet());
         assertTrue(docIds.contains(1));
         assertTrue(docIds.contains(2));
         assertTrue(docIds.contains(3));
@@ -80,13 +81,13 @@ public class PosConditionExecutorTest {
     @Test
     public void testExecuteTermNotFound() throws Exception {
         // Create a POS condition for a term that doesn't exist
-        PosCondition condition = new PosCondition("VB", "nonexistent", false);
+        Pos condition = new Pos("VB", "nonexistent", null, false);
         
         // Mock the index response for a term that doesn't exist
         when(posIndex.get(any())).thenReturn(Optional.empty());
         
         // Execute the condition
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
         
         // Verify the results are empty
         assertTrue(result.isEmpty());
@@ -95,18 +96,18 @@ public class PosConditionExecutorTest {
     @Test
     public void testExecuteWithMissingIndex() {
         // Create a POS condition
-        PosCondition condition = new PosCondition("NN", "apple", false);
+        Pos condition = new Pos("NN", "apple", null, false);
         
         // Remove the POS index
         indexes.remove("pos");
         
         // Execute the condition and expect an exception
         QueryExecutionException exception = assertThrows(QueryExecutionException.class, 
-            () -> executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT));
+            () -> executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0));
         
         // Verify the exception details
-        assertEquals(QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR, exception.getErrorType());
-        assertTrue(exception.getMessage().contains("Required index not found: pos"));
+        assertEquals(QueryExecutionException.ErrorType.MISSING_INDEX, exception.getErrorType());
+        assertTrue(exception.getMessage().contains("Missing required POS index"));
     }
     
     @Test

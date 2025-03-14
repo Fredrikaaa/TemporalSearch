@@ -4,35 +4,57 @@ import com.example.core.IndexAccess;
 import com.example.core.Position;
 import com.example.core.PositionList;
 import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.NerCondition;
 import com.example.query.model.Query;
+import com.example.query.model.condition.Ner;
 
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Objects;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Executor for NerCondition.
- * Searches for named entities in the NER indexes.
- * Uses the consolidated NER index for all entity types except DATE, which uses a dedicated index.
+ * Executor for NER (Named Entity Recognition) conditions.
+ * Handles entity type matching and variable binding for named entities.
  */
-public class NerConditionExecutor implements ConditionExecutor<NerCondition> {
-    private static final Logger logger = LoggerFactory.getLogger(NerConditionExecutor.class);
+public final class NerExecutor implements ConditionExecutor<Ner> {
+    private static final Logger logger = LoggerFactory.getLogger(NerExecutor.class);
     
     private static final String NER_INDEX = "ner";
     private static final String DATE_INDEX = "ner_date";
 
+    private final String variableName;
+
+    public NerExecutor(String variableName) {
+        this.variableName = variableName;
+    }
+
     @Override
-    public Set<DocSentenceMatch> execute(NerCondition condition, Map<String, IndexAccess> indexes,
-                               VariableBindings variableBindings, Query.Granularity granularity)
+    public Set<DocSentenceMatch> execute(Ner condition, Map<String, IndexAccess> indexes,
+                               VariableBindings variableBindings, Query.Granularity granularity,
+                               int granularitySize)
         throws QueryExecutionException {
         
-        String entityType = condition.getEntityType();
-        String target = condition.getTarget();
+        logger.debug("Executing NER condition for type {} at {} granularity with size {}", 
+                condition.entityType(), granularity, granularitySize);
+        
+        // Validate required indexes
+        String requiredIndex = condition.entityType().equals("DATE") ? DATE_INDEX : NER_INDEX;
+        if (!indexes.containsKey(requiredIndex)) {
+            throw new QueryExecutionException(
+                String.format("Missing required index: %s", requiredIndex),
+                condition.toString(),
+                QueryExecutionException.ErrorType.MISSING_INDEX
+            );
+        }
+        
+        String entityType = condition.entityType();
+        String variableName = condition.variableName();
         boolean isVariable = condition.isVariable();
         
         // Normalize entity type to uppercase for standard types like DATE, PERSON, etc.
@@ -41,15 +63,6 @@ public class NerConditionExecutor implements ConditionExecutor<NerCondition> {
         if (!"*".equals(entityType)) {
             normalizedEntityType = entityType.toUpperCase();
         }
-        
-        // Normalize target to lowercase if it's not a variable
-        String normalizedTarget = target;
-        if (!isVariable) {
-            normalizedTarget = target.toLowerCase();
-        }
-        
-        logger.debug("Executing NER condition for entity type '{}' (normalized: '{}'), target '{}' (normalized: '{}'), isVariable={}, granularity={}", 
-                    entityType, normalizedEntityType, target, normalizedTarget, isVariable, granularity);
         
         // Determine which index to use (DATE uses separate index)
         String indexName = "DATE".equals(normalizedEntityType) ? DATE_INDEX : NER_INDEX;
@@ -68,10 +81,14 @@ public class NerConditionExecutor implements ConditionExecutor<NerCondition> {
         try {
             if (isVariable) {
                 // Variable binding mode - extract entities of the given type
-                result = executeVariableExtraction(normalizedEntityType, normalizedTarget, index, variableBindings, granularity);
+                result = executeVariableExtraction(normalizedEntityType, variableName, index, variableBindings, granularity);
+                
+                // Add debug logging to check variable bindings
+                logger.debug("After variable extraction for type '{}', variable '{}', variable bindings: {}", 
+                             normalizedEntityType, variableName, variableBindings);
             } else {
-                // Search mode - find documents with specific entity
-                result = executeEntitySearch(normalizedEntityType, normalizedTarget, index, granularity);
+                // Search mode - find documents with specific entity type
+                result = executeEntitySearch(normalizedEntityType, index, granularity);
             }
             
             logger.debug("NER condition matched {} results at {} granularity", 
@@ -131,8 +148,12 @@ public class NerConditionExecutor implements ConditionExecutor<NerCondition> {
                     for (Position position : positions.getPositions()) {
                         int docId = position.getDocumentId();
                         int sentenceId = position.getSentenceId();
+                        int beginPosition = position.getBeginPosition();
+                        int endPosition = position.getEndPosition();
                         
-                        variableBindings.addBinding(docId, variableName, dateStr);
+                        // Format the value with position information: value@beginPos:endPos
+                        String valueWithPosition = String.format("%s@%d:%d", dateStr, beginPosition, endPosition);
+                        variableBindings.addBinding(docId, sentenceId, variableName, valueWithPosition);
                         
                         if (granularity == Query.Granularity.DOCUMENT) {
                             matches.add(new DocSentenceMatch(docId));
@@ -172,8 +193,12 @@ public class NerConditionExecutor implements ConditionExecutor<NerCondition> {
                     for (Position position : positions.getPositions()) {
                         int docId = position.getDocumentId();
                         int sentenceId = position.getSentenceId();
+                        int beginPos = position.getBeginPosition();
+                        int endPos = position.getEndPosition();
                         
-                        variableBindings.addBinding(docId, variableName, entityValue);
+                        // Format the value with position information: value@beginPos:endPos
+                        String valueWithPosition = String.format("%s@%d:%d", entityValue, beginPos, endPos);
+                        variableBindings.addBinding(docId, sentenceId, variableName, valueWithPosition);
                         
                         if (granularity == Query.Granularity.DOCUMENT) {
                             matches.add(new DocSentenceMatch(docId));
@@ -191,59 +216,98 @@ public class NerConditionExecutor implements ConditionExecutor<NerCondition> {
     }
     
     /**
-     * Executes an entity search for a specific entity value.
+     * Executes an entity search for a specific entity type.
+     * This mode just finds documents that contain any entity of the given type.
      *
      * @param entityType The entity type to search for
-     * @param entityValue The entity value to search for
      * @param index The index to search in
      * @param granularity Whether to return document or sentence level matches
      * @return Set of matches at the specified granularity level
      */
-    private Set<DocSentenceMatch> executeEntitySearch(String entityType, String entityValue, IndexAccess index,
+    private Set<DocSentenceMatch> executeEntitySearch(String entityType, IndexAccess index,
                                                      Query.Granularity granularity)
         throws Exception {
         
-        logger.debug("Searching for entity type '{}' with value '{}' at {} granularity", 
-                    entityType, entityValue, granularity);
+        logger.debug("Searching for entity type '{}' at {} granularity", 
+                    entityType, granularity);
         
-        // Create the search key
+        // Create the search key prefix for the entity type
         String searchKey;
         if ("DATE".equals(entityType)) {
-            // DATE index stores dates directly
-            searchKey = entityValue;
+            // For DATE index, we need to iterate through all entries
+            return getAllDateMatches(index, granularity);
         } else {
-            // Consolidated NER index uses format "entityType\0entityValue" with null byte delimiter
-            searchKey = entityType + IndexAccess.NGRAM_DELIMITER + entityValue;
+            // For other entity types, use prefix search
+            searchKey = entityType + IndexAccess.NGRAM_DELIMITER;
         }
         
-        // Convert to bytes
-        byte[] keyBytes = searchKey.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        
-        // Search the index
-        Optional<PositionList> positionsOpt = index.get(keyBytes);
-        
-        if (!positionsOpt.isPresent()) {
-            logger.debug("Entity '{}' not found in any documents", searchKey);
-            return new HashSet<>();
-        }
-        
-        PositionList positionList = positionsOpt.get();
         Set<DocSentenceMatch> matches = new HashSet<>();
         
-        // Extract document/sentence IDs based on granularity
-        for (Position position : positionList.getPositions()) {
-            int docId = position.getDocumentId();
-            int sentenceId = position.getSentenceId();
+        // Use prefix search to find all entities of this type
+        byte[] prefixBytes = searchKey.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        try (var iterator = index.iterator()) {
+            iterator.seek(prefixBytes);
             
-            if (granularity == Query.Granularity.DOCUMENT) {
-                matches.add(new DocSentenceMatch(docId));
-            } else {
-                matches.add(new DocSentenceMatch(docId, sentenceId));
+            while (iterator.hasNext()) {
+                byte[] keyBytes = iterator.peekNext().getKey();
+                byte[] valueBytes = iterator.peekNext().getValue();
+                
+                // Check if we're still in the same entity type
+                String key = new String(keyBytes, java.nio.charset.StandardCharsets.UTF_8);
+                if (!key.startsWith(searchKey)) {
+                    break; // We've moved past this entity type
+                }
+                
+                iterator.next(); // Move to next entry
+                
+                // Add matches from this entry
+                PositionList positions = PositionList.deserialize(valueBytes);
+                for (Position position : positions.getPositions()) {
+                    int docId = position.getDocumentId();
+                    int sentenceId = position.getSentenceId();
+                    
+                    if (granularity == Query.Granularity.DOCUMENT) {
+                        matches.add(new DocSentenceMatch(docId));
+                    } else {
+                        matches.add(new DocSentenceMatch(docId, sentenceId));
+                    }
+                }
             }
         }
         
-        logger.debug("Found entity '{}' in {} results at {} granularity", 
-                    searchKey, matches.size(), granularity);
+        logger.debug("Found {} results for entity type '{}' at {} granularity", 
+                    matches.size(), entityType, granularity);
+        return matches;
+    }
+
+    /**
+     * Gets all matches from the DATE index.
+     */
+    private Set<DocSentenceMatch> getAllDateMatches(IndexAccess index, Query.Granularity granularity) 
+        throws Exception {
+        Set<DocSentenceMatch> matches = new HashSet<>();
+        
+        try (var iterator = index.iterator()) {
+            iterator.seekToFirst();
+            
+            while (iterator.hasNext()) {
+                byte[] valueBytes = iterator.peekNext().getValue();
+                iterator.next();
+                
+                PositionList positions = PositionList.deserialize(valueBytes);
+                for (Position position : positions.getPositions()) {
+                    int docId = position.getDocumentId();
+                    int sentenceId = position.getSentenceId();
+                    
+                    if (granularity == Query.Granularity.DOCUMENT) {
+                        matches.add(new DocSentenceMatch(docId));
+                    } else {
+                        matches.add(new DocSentenceMatch(docId, sentenceId));
+                    }
+                }
+            }
+        }
+        
         return matches;
     }
 } 

@@ -10,6 +10,7 @@ import com.example.query.model.OrderSpec;
 import com.example.query.model.Query;
 import com.example.query.model.ResultTable;
 import com.example.query.QueryParser;
+import com.example.query.QueryParseException;
 import com.example.query.result.ResultFormatter;
 import com.example.query.result.ResultGenerator;
 import com.example.query.result.ResultGenerationException;
@@ -19,6 +20,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.nio.file.Path;
 import java.util.*;

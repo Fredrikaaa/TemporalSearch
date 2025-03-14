@@ -46,7 +46,7 @@ public final class UnigramIndexGenerator extends IndexGenerator<AnnotationEntry>
     @Override
     protected List<AnnotationEntry> fetchBatch(int offset) throws SQLException {
         List<AnnotationEntry> entries = new ArrayList<>();
-        String sql = "SELECT a.document_id, a.sentence_id, a.begin_char, a.end_char, a.lemma, a.pos, d.timestamp " +
+        String sql = "SELECT a.annotation_id, a.document_id, a.sentence_id, a.begin_char, a.end_char, a.lemma, a.pos, d.timestamp " +
                     "FROM annotations a " +
                     "JOIN documents d ON a.document_id = d.document_id " +
                     "WHERE a.lemma IS NOT NULL " +
@@ -64,6 +64,7 @@ public final class UnigramIndexGenerator extends IndexGenerator<AnnotationEntry>
                     }
                     
                     entries.add(new AnnotationEntry(
+                        rs.getInt("annotation_id"),
                         rs.getInt("document_id"),
                         rs.getInt("sentence_id"),
                         rs.getInt("begin_char"),

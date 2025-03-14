@@ -9,7 +9,6 @@ import com.example.query.model.column.ColumnType;
 import com.example.query.result.*;
 import com.example.query.snippet.DatabaseConfig;
 import com.example.query.snippet.SnippetConfig;
-import com.example.query.snippet.DatabaseDiagnostic;
 import com.example.core.*;
 
 import net.sourceforge.argparse4j.ArgumentParsers;
@@ -22,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.util.*;
 import java.io.IOException;
+import java.util.Map;
 
 /**
  * Command-line interface for executing queries against the indexed corpus.
@@ -30,13 +30,11 @@ import java.io.IOException;
 public class QueryCLI {
     private static final Logger logger = LoggerFactory.getLogger(QueryCLI.class);
     private final Path indexBaseDir;
-    private final String dbPath;
-
+    
     // Core components
     private final QueryParser parser;
     private final QuerySemanticValidator validator;
     private final QueryExecutor executor;
-    private final ResultGenerator resultGenerator;
     private final ResultFormatter resultFormatter;
     private final SnippetConfig snippetConfig;
 
@@ -46,28 +44,17 @@ public class QueryCLI {
      * @param indexBaseDir The base directory for all index sets
      */
     public QueryCLI(Path indexBaseDir) {
-        this(indexBaseDir, DatabaseConfig.DEFAULT_DB_PATH);
-    }
-    
-    /**
-     * Creates a new QueryCLI instance with a custom database path.
-     *
-     * @param indexBaseDir The base directory for all index sets
-     * @param dbPath The path to the database file
-     */
-    public QueryCLI(Path indexBaseDir, String dbPath) {
         this.indexBaseDir = indexBaseDir;
-        this.dbPath = dbPath;
         this.parser = new QueryParser();
         this.validator = new QuerySemanticValidator();
         this.executor = new QueryExecutor(new ConditionExecutorFactory());
         this.snippetConfig = SnippetConfig.DEFAULT;
-        this.resultGenerator = new ResultGenerator(snippetConfig, dbPath);
         this.resultFormatter = new ResultFormatter();
         
-        logger.info("Initialized QueryCLI with base directory: {} and database: {}", indexBaseDir, dbPath);
+        logger.info("Initialized QueryCLI with base directory: {}", indexBaseDir);
+        logger.info("Using database structure: {}/[CORPUS_NAME]/[CORPUS_NAME].db", indexBaseDir);
     }
-
+    
     /**
      * Executes a query string.
      *
@@ -84,8 +71,26 @@ public class QueryCLI {
             validator.validate(query);
             
             // 3. Get index path from FROM clause
-            String indexSetName = query.getSource();
+            String indexSetName = query.source();
             logger.debug("Using index set: {}", indexSetName);
+            
+            // Update database path to match the corpus name from FROM clause
+            String corpusDbPath = Path.of(indexBaseDir.toString(), indexSetName, indexSetName + ".db").toString();
+            logger.debug("Using database path based on corpus: {}", corpusDbPath);
+            
+            // Check if corpus-specific database exists
+            if (!new java.io.File(corpusDbPath).exists()) {
+                String errorMessage = String.format("Database file not found: %s. Each corpus must have a database in [index-dir]/%s/%s.db", 
+                                                   corpusDbPath, indexSetName, indexSetName);
+                logger.error(errorMessage);
+                System.err.println("Error: " + errorMessage);
+                System.err.println(String.format("Expected database location: %s/%s/%s.db", indexBaseDir, indexSetName, indexSetName));
+                return; // Early return to avoid further processing
+            }
+            
+            // Create a new ResultGenerator with the corpus-specific database path
+            ResultGenerator queryResultGenerator = new ResultGenerator(snippetConfig, corpusDbPath);
+            logger.info("Using corpus-specific database at: {}", corpusDbPath);
             
             // 4. Create IndexManager for the resolved path
             try (IndexManager indexManager = new IndexManager(indexBaseDir, indexSetName)) {
@@ -93,7 +98,9 @@ public class QueryCLI {
                 
                 // 5. Execute query using QueryExecutor
                 logger.debug("Executing query against index set: {}", indexSetName);
-                Query.Granularity granularity = query.getGranularity().orElse(Query.Granularity.DOCUMENT);
+                Query.Granularity granularity = query.granularity();
+                logger.info("Query granularity: {} with size: {}", 
+                    granularity, query.granularitySize().isPresent() ? query.granularitySize().get() : 0);
                 Set<DocSentenceMatch> matches = executor.execute(query, indexManager.getAllIndexes());
                 VariableBindings variableBindings = executor.getVariableBindings();
                 
@@ -107,9 +114,9 @@ public class QueryCLI {
                     System.out.println("Total matches: " + matches.size() + " sentences");
                 }
                 
-                // 6. Generate results using ResultGenerator
+                // 6. Generate results using ResultGenerator with corpus-specific database path
                 logger.debug("Generating result table");
-                ResultTable resultTable = resultGenerator.generateResultTable(
+                ResultTable resultTable = queryResultGenerator.generateResultTable(
                     query, matches, variableBindings, indexManager.getAllIndexes());
                 
                 // 7. Format and display results
@@ -145,10 +152,6 @@ public class QueryCLI {
                 .setDefault("indexes")
                 .help("Base directory for index sets");
         
-        parser.addArgument("--db")
-                .setDefault(DatabaseConfig.DEFAULT_DB_PATH)
-                .help("Path to the SQLite database file (required for snippet functionality)");
-        
         parser.addArgument("query")
                 .nargs("?")
                 .help("Query string to execute");
@@ -157,11 +160,10 @@ public class QueryCLI {
             // Parse arguments
             Namespace ns = parser.parseArgs(args);
             String indexDir = ns.getString("index_dir");
-            String dbPath = ns.getString("db");
             String query = ns.getString("query");
             
             // Create and run CLI
-            QueryCLI cli = new QueryCLI(Path.of(indexDir), dbPath);
+            QueryCLI cli = new QueryCLI(Path.of(indexDir));
             
             if (query != null) {
                 // Execute the provided query
@@ -171,7 +173,7 @@ public class QueryCLI {
                 Scanner scanner = new Scanner(System.in);
                 System.out.println("Query CLI - Enter queries or 'exit' to quit");
                 System.out.println("Using index directory: " + indexDir);
-                System.out.println("Using database: " + dbPath);
+                System.out.println("Database structure: " + indexDir + "/[CORPUS_NAME]/[CORPUS_NAME].db");
                 System.out.println("Snippet support is enabled. Use SNIPPET(variable) in SELECT clause to show text context.");
                 
                 while (true) {

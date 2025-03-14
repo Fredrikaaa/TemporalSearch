@@ -103,7 +103,7 @@ public class Pipeline {
                 .help("Path to file containing stopwords to exclude (default: stopwords.txt)");
 
         indexGroup.addArgument("-y", "--index-type")
-                .choices("unigram", "bigram", "trigram", "dependency", "ner_date", "all")
+                .choices("unigram", "bigram", "trigram", "dependency", "ner_date", "ner", "pos", "hypernym", "stitch", "all")
                 .setDefault("all")
                 .help("Type of index to generate:\n" +
                       "  unigram    - Single word index\n" +
@@ -111,6 +111,10 @@ public class Pipeline {
                       "  trigram    - Three word phrases\n" +
                       "  dependency - Grammatical dependencies\n" +
                       "  ner_date   - Named entity dates\n" +
+                      "  ner        - Named entity recognition\n" +
+                      "  pos        - Part-of-speech tagging\n" +
+                      "  hypernym   - Word hypernyms\n" +
+                      "  stitch     - Connects unigrams with their associated dates\n" +
                       "  all        - Generate all index types (default)");
 
         indexGroup.addArgument("-k", "--preserve-index")

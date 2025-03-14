@@ -7,17 +7,21 @@ import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 import net.sourceforge.argparse4j.inf.Namespace;
 import java.io.*;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
 import com.example.core.Position;
 import com.example.core.PositionList;
+import com.example.index.StitchPosition;
 
 public class LevelDBBrowser {
     private static final String DELIMITER = "\u0000";
     private static final String WILDCARD = "*";
     private static final Logger logger = LoggerFactory.getLogger(LevelDBBrowser.class);
+    private static final String DATE_SYNONYMS_FILE = "date_synonyms.ser";
 
     public static void main(String[] args) throws IOException {
         logger.debug("Starting LevelDBBrowser...");
@@ -26,7 +30,7 @@ public class LevelDBBrowser {
                 .description("Browse contents of LevelDB index databases");
 
         parser.addArgument("index_type")
-                .choices("unigram", "bigram", "trigram", "dependency", "ner_date", "pos", "hypernym")
+                .choices("unigram", "bigram", "trigram", "dependency", "ner_date", "pos", "hypernym", "stitch")
                 .help("Type of index to browse");
 
         parser.addArgument("db_path")
@@ -51,6 +55,10 @@ public class LevelDBBrowser {
         parser.addArgument("-s", "--summary")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Show summary statistics of the index");
+                
+        parser.addArgument("-d", "--synonyms")
+                .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
+                .help("Display date synonyms for stitch index");
 
         parser.addArgument("-m", "--min-occurrences")
                 .type(Integer.class)
@@ -71,6 +79,7 @@ public class LevelDBBrowser {
             boolean showCounts = ns.getBoolean("count");
             boolean showTime = ns.getBoolean("time");
             boolean showSummary = ns.getBoolean("summary");
+            boolean showSynonyms = ns.getBoolean("synonyms");
             int minOccurrences = ns.getInt("min_occurrences");
             int topN = ns.getInt("top");
 
@@ -92,9 +101,19 @@ public class LevelDBBrowser {
                 }
             }
 
+            // For stitch index, load date synonyms if needed or requested
+            Map<Integer, String> dateSynonyms = new HashMap<>();
+            if (indexType.equals("stitch") && (showSynonyms || words != null || listEntries)) {
+                dateSynonyms = loadDateSynonyms(basePath);
+            }
+
             // Open the database
             Options options = new Options();
             try (DB db = factory.open(new File(dbPath), options)) {
+                if (showSynonyms && indexType.equals("stitch")) {
+                    displayDateSynonyms(dateSynonyms);
+                }
+                
                 if (showSummary) {
                     showSummary(db, indexType);
                 }
@@ -105,10 +124,10 @@ public class LevelDBBrowser {
                     } else if (indexType.equals("hypernym")) {
                         lookupHypernym(db, words, showTime, minOccurrences);
                     } else {
-                        lookupWords(db, words, indexType, showTime, minOccurrences);
+                        lookupWords(db, words, indexType, showTime, minOccurrences, dateSynonyms);
                     }
                 } else if (listEntries || showCounts) {
-                    listEntries(db, indexType, showCounts, minOccurrences, topN);
+                    listEntries(db, indexType, showCounts, minOccurrences, topN, dateSynonyms);
                 }
             }
         } catch (ArgumentParserException e) {
@@ -121,17 +140,73 @@ public class LevelDBBrowser {
         }
     }
 
+    /**
+     * Loads date synonyms from the serialized file.
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<Integer, String> loadDateSynonyms(String basePath) {
+        Map<Integer, String> idToDate = new HashMap<>();
+        Path synonymsPath = Paths.get(basePath, "stitch", DATE_SYNONYMS_FILE);
+        File synonymsFile = synonymsPath.toFile();
+        
+        System.out.println("\nLooking for date synonyms at: " + synonymsPath);
+        
+        if (!synonymsFile.exists()) {
+            System.out.println("Date synonyms file not found. This is normal if no synonyms have been created yet.");
+            return idToDate;
+        }
+        
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(synonymsFile))) {
+            Map<String, Integer> dateToId = (Map<String, Integer>) ois.readObject();
+            
+            // Convert dateToId to idToDate for easier lookup
+            for (Map.Entry<String, Integer> entry : dateToId.entrySet()) {
+                idToDate.put(entry.getValue(), entry.getKey());
+            }
+            
+            System.out.println("Successfully loaded " + idToDate.size() + " date synonyms");
+        } catch (Exception e) {
+            System.err.println("Error loading date synonyms: " + e.getMessage());
+        }
+        
+        return idToDate;
+    }
+    
+    /**
+     * Displays the date synonyms in a formatted table.
+     */
+    private static void displayDateSynonyms(Map<Integer, String> dateSynonyms) {
+        if (dateSynonyms.isEmpty()) {
+            System.out.println("No date synonyms found.");
+            return;
+        }
+        
+        System.out.println("\nDate Synonym Mappings:");
+        System.out.println("======================");
+        
+        // Sort by ID for consistent display
+        List<Map.Entry<Integer, String>> sortedEntries = new ArrayList<>(dateSynonyms.entrySet());
+        sortedEntries.sort(Map.Entry.comparingByKey());
+        
+        for (Map.Entry<Integer, String> entry : sortedEntries) {
+            System.out.printf("  [%3d] -> %s%n", entry.getKey(), entry.getValue());
+        }
+        System.out.println();
+    }
+
     private static int getExpectedWordCount(String indexType) {
         return switch (indexType) {
             case "unigram", "ner_date", "pos" -> 1;
             case "bigram", "hypernym" -> 2;
             case "trigram" -> 3;
             case "dependency" -> 3;
+            case "stitch" -> 1;
             default -> throw new IllegalArgumentException("Unknown index type: " + indexType);
         };
     }
 
-    private static void lookupWords(DB db, List<String> words, String indexType, boolean showTime, int minOccurrences) throws IOException {
+    private static void lookupWords(DB db, List<String> words, String indexType, boolean showTime, 
+                                   int minOccurrences, Map<Integer, String> dateSynonyms) throws IOException {
         // Create key based on index type
         String key = switch (indexType) {
             case "unigram" -> words.get(0).toLowerCase();
@@ -141,11 +216,15 @@ public class LevelDBBrowser {
                     .toList());
             case "ner_date" -> words.get(0);
             case "pos" -> words.get(0).toLowerCase();
+            case "stitch" -> words.get(0).toLowerCase(); // Always lowercase for stitch index
             default -> throw new IllegalArgumentException("Invalid index type: " + indexType);
         };
 
         // Get positions for key
         byte[] data = db.get(bytes(key));
+        
+        // No need for case variations for stitch index anymore since all entries are lowercase
+        
         if (data == null) {
             System.out.printf("%s not found in index%n",
                     formatSearchTerm(words, indexType));
@@ -162,6 +241,86 @@ public class LevelDBBrowser {
         System.out.printf("Found %s in %d positions:%n",
                 formatSearchTerm(words, indexType), positions.size());
 
+        // Special handling for stitch index to show word-date associations
+        if (indexType.equals("stitch") && !showTime) {
+            // Group positions by date for stitch index
+            Map<Integer, List<Position>> positionsByDateId = new HashMap<>();
+            
+            // Count positions with and without proper StitchPosition information
+            int regularPositionCount = 0;
+            
+            for (Position pos : positions.getPositions()) {
+                if (pos instanceof StitchPosition stitchPos) {
+                    int synonymId = stitchPos.getSynonymId();
+                    positionsByDateId.computeIfAbsent(
+                        synonymId, 
+                        k -> new ArrayList<>()
+                    ).add(pos);
+                } else {
+                    regularPositionCount++;
+                    // Handle regular positions (unlikely in stitch index, but possible)
+                    positionsByDateId.computeIfAbsent(-1, k -> new ArrayList<>()).add(pos);
+                }
+            }
+            
+            if (regularPositionCount > 0) {
+                System.out.printf("\nNote: %d positions are not properly associated with any date.%n", 
+                        regularPositionCount);
+            }
+            
+            // Display word-date relationships in a structured format
+            System.out.println("\nWord-Date Associations:");
+            System.out.println("======================");
+            
+            // Sort by date for consistent display
+            List<Map.Entry<Integer, List<Position>>> sortedEntries = 
+                new ArrayList<>(positionsByDateId.entrySet());
+            
+            sortedEntries.sort((a, b) -> {
+                // Place unknown dates (-1) at the end
+                if (a.getKey() == -1) return 1;
+                if (b.getKey() == -1) return -1;
+                
+                String dateA = dateSynonyms.getOrDefault(a.getKey(), "unknown");
+                String dateB = dateSynonyms.getOrDefault(b.getKey(), "unknown");
+                return dateA.compareTo(dateB);
+            });
+            
+            for (Map.Entry<Integer, List<Position>> entry : sortedEntries) {
+                int synonymId = entry.getKey();
+                List<Position> datePositions = entry.getValue();
+                String dateValue = dateSynonyms.getOrDefault(synonymId, "unknown");
+                
+                if (synonymId < 0) {
+                    System.out.printf("  Word '%s' with no associated date (%d occurrences)%n", 
+                            key, datePositions.size());
+                } else {
+                    System.out.printf("  Word '%s' + Date '%s' [synId:%d] (%d occurrences)%n", 
+                            key, dateValue, synonymId, datePositions.size());
+                }
+                
+                // Show the first few positions as examples
+                int maxToShow = Math.min(5, datePositions.size());
+                for (int i = 0; i < maxToShow; i++) {
+                    Position pos = datePositions.get(i);
+                    System.out.printf("    - [docId:%d][sentId:%d][chars:%d-%d][timestamp:%s]%n",
+                            pos.getDocumentId(),
+                            pos.getSentenceId(),
+                            pos.getBeginPosition(),
+                            pos.getEndPosition(),
+                            pos.getTimestamp());
+                }
+                
+                if (datePositions.size() > maxToShow) {
+                    System.out.printf("    ... and %d more positions%n", 
+                            datePositions.size() - maxToShow);
+                }
+                
+                System.out.println();
+            }
+            return; // Skip the default position display
+        }
+
         // Sort positions by date if showing temporal distribution
         if (showTime) {
             List<Position> sortedPositions = new ArrayList<>(positions.getPositions());
@@ -177,12 +336,38 @@ public class LevelDBBrowser {
             System.out.println("\nTemporal distribution:");
             timeDistribution.forEach((date, count) -> System.out.printf("%s: %d occurrences%n", date, count));
         } else {
-            // Show individual positions
+            // Show individual positions for non-stitch indices
             for (Position pos : positions.getPositions()) {
-                System.out.printf("  Document %d, Sentence %d, Chars %d-%d, Date: %s%n",
-                        pos.getDocumentId(), pos.getSentenceId(),
-                        pos.getBeginPosition(), pos.getEndPosition(),
-                        pos.getTimestamp());
+                if (indexType.equals("stitch")) {
+                    // For stitch index, show the date value from synonyms if available
+                    if (pos instanceof StitchPosition stitchPos) {
+                        int synonymId = stitchPos.getSynonymId();
+                        String dateValue = dateSynonyms.getOrDefault(synonymId, "unknown");
+                        
+                        System.out.printf("  [docId:%d][sentId:%d][chars:%d-%d][timestamp:%s][synId:%d][date:%s]%n",
+                                pos.getDocumentId(),
+                                pos.getSentenceId(),
+                                pos.getBeginPosition(),
+                                pos.getEndPosition(),
+                                pos.getTimestamp(),
+                                synonymId,
+                                dateValue);
+                    } else {
+                        System.out.printf("  [docId:%d][sentId:%d][chars:%d-%d][timestamp:%s]%n",
+                                pos.getDocumentId(),
+                                pos.getSentenceId(),
+                                pos.getBeginPosition(),
+                                pos.getEndPosition(),
+                                pos.getTimestamp());
+                    }
+                } else {
+                    System.out.printf("  [docId:%d][sentId:%d][chars:%d-%d][timestamp:%s]%n",
+                            pos.getDocumentId(),
+                            pos.getSentenceId(),
+                            pos.getBeginPosition(),
+                            pos.getEndPosition(),
+                            pos.getTimestamp());
+                }
             }
         }
     }
@@ -200,6 +385,7 @@ public class LevelDBBrowser {
             case "pos" -> String.format("POS tag '%s'", words.get(0).toLowerCase());
             case "hypernym" -> String.format("hypernym relation '%s' -> '%s'", 
                     words.get(0).toLowerCase(), words.get(1).toLowerCase());
+            case "stitch" -> String.format("word '%s' with associated dates", words.get(0));
             default -> throw new IllegalArgumentException("Invalid index type");
         };
     }
@@ -328,7 +514,8 @@ public class LevelDBBrowser {
         }
     }
 
-    private static void listEntries(DB db, String indexType, boolean showCounts, int minOccurrences, int topN) throws IOException {
+    private static void listEntries(DB db, String indexType, boolean showCounts, 
+                                   int minOccurrences, int topN, Map<Integer, String> dateSynonyms) throws IOException {
         System.out.printf("Listing entries in %s index:%n", indexType);
         int totalEntries = 0;
         
@@ -387,6 +574,105 @@ public class LevelDBBrowser {
                             String.join(", ", instances.keySet()));
                 }
                 totalEntries++;
+            }
+        } else if (indexType.equals("stitch")) {
+            // Special handling for stitch index - group entries by date
+            Map<Integer, Map<String, Integer>> entriesByDateId = new HashMap<>();
+            
+            try (DBIterator iterator = db.iterator()) {
+                iterator.seekToFirst();
+                
+                while (iterator.hasNext()) {
+                    String key = asString(iterator.peekNext().getKey());
+                    PositionList positions = PositionList.deserialize(iterator.peekNext().getValue());
+                    
+                    if (positions.size() < minOccurrences) {
+                        iterator.next();
+                        continue;
+                    }
+                    
+                    // Find a StitchPosition with a valid synonym ID
+                    int synonymId = -1;
+                    for (Position pos : positions.getPositions()) {
+                        if (pos instanceof StitchPosition stitchPos) {
+                            synonymId = stitchPos.getSynonymId();
+                            if (synonymId > 0 && dateSynonyms.containsKey(synonymId)) {
+                                break;  // Found a valid synonym ID
+                            }
+                        }
+                    }
+                    
+                    // Add to entries map (even with unknown date)
+                    entriesByDateId.computeIfAbsent(synonymId, k -> new HashMap<>())
+                        .put(key, positions.size());
+                    
+                    totalEntries++;
+                    iterator.next();
+                }
+            }
+            
+            // Display entries grouped by date
+            if (entriesByDateId.isEmpty()) {
+                System.out.println("No entries found meeting the minimum occurrence criteria.");
+            } else {
+                // Sort by date for consistent display
+                List<Map.Entry<Integer, Map<String, Integer>>> sortedDateEntries = 
+                    new ArrayList<>(entriesByDateId.entrySet());
+                
+                sortedDateEntries.sort((a, b) -> {
+                    // Place unknown dates (-1) at the end
+                    if (a.getKey() == -1) return 1;
+                    if (b.getKey() == -1) return -1;
+                    
+                    String dateA = dateSynonyms.getOrDefault(a.getKey(), "unknown");
+                    String dateB = dateSynonyms.getOrDefault(b.getKey(), "unknown");
+                    return dateA.compareTo(dateB);
+                });
+                
+                for (Map.Entry<Integer, Map<String, Integer>> dateEntry : sortedDateEntries) {
+                    int synonymId = dateEntry.getKey();
+                    Map<String, Integer> wordCounts = dateEntry.getValue();
+                    String dateValue = dateSynonyms.getOrDefault(synonymId, "unknown");
+                    
+                    // Sort words by occurrence count (descending)
+                    List<Map.Entry<String, Integer>> sortedWords = 
+                        new ArrayList<>(wordCounts.entrySet());
+                    sortedWords.sort((a, b) -> b.getValue().compareTo(a.getValue()));
+                    
+                    int totalDateOccurrences = wordCounts.values().stream()
+                        .mapToInt(Integer::intValue).sum();
+                    
+                    if (synonymId < 0) {
+                        System.out.printf("\nEntries with unknown date association (%d words, %d total occurrences)%n",
+                                wordCounts.size(), totalDateOccurrences);
+                    } else {
+                        String dateText = dateSynonyms.containsKey(synonymId) ? 
+                                          dateSynonyms.get(synonymId) : "unknown";
+                        System.out.printf("\nDate: %s [synId:%d] (%d words, %d total occurrences)%n", 
+                                dateText, synonymId, wordCounts.size(), totalDateOccurrences);
+                    }
+                    
+                    // Display words with this date
+                    int count = 0;
+                    System.out.println("  Words:");
+                    
+                    for (Map.Entry<String, Integer> wordEntry : sortedWords) {
+                        if (showCounts) {
+                            System.out.printf("    - %s (%d occurrences)%n", 
+                                wordEntry.getKey(), wordEntry.getValue());
+                        } else {
+                            System.out.printf("    - %s%n", wordEntry.getKey());
+                        }
+                        
+                        // Limit number of words shown
+                        count++;
+                        if (count >= 20 && wordCounts.size() > 20) {
+                            System.out.printf("    ... and %d more words%n", 
+                                    wordCounts.size() - 20);
+                            break;
+                        }
+                    }
+                }
             }
         } else {
             try (DBIterator iterator = db.iterator()) {

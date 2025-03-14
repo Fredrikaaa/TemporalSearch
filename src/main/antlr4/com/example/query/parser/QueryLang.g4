@@ -8,6 +8,7 @@ WHERE: 'WHERE';
 SNIPPET: 'SNIPPET';
 WINDOW: 'WINDOW';
 NER: 'NER';
+POS: 'POS';
 DEPENDS: 'DEPENDS';
 DATE: 'DATE';
 NEAR: 'NEAR';
@@ -32,6 +33,14 @@ AS: 'AS';
 COUNT: 'COUNT';
 UNIQUE: 'UNIQUE';
 DOCUMENTS: 'DOCUMENTS';
+
+// NER types
+PERSON: 'PERSON';
+LOCATION: 'LOCATION';
+ORGANIZATION: 'ORGANIZATION';
+TIME: 'TIME';
+MONEY: 'MONEY';
+PERCENT: 'PERCENT';
 
 // Structure tokens
 LPAREN: '(';
@@ -132,6 +141,7 @@ singleCondition
     | containsExpression
     | dateExpression
     | dependsExpression
+    | posExpression
     ;
 
 dateExpression
@@ -174,13 +184,19 @@ limitClause
     ;
 
 nerExpression
-    : NER LPAREN type=entityType COMMA target=entityTarget RPAREN
+    : NER LPAREN type=entityType (COMMA target=entityTarget)? RPAREN
     ;
 
 entityType
-    : STRING
-    | identifier
+    : PERSON
+    | LOCATION
+    | ORGANIZATION
+    | TIME
+    | MONEY
+    | PERCENT
     | WILDCARD
+    | STRING
+    | IDENTIFIER
     ;
 
 entityTarget 
@@ -225,4 +241,19 @@ identifier
 
 comparisonOp
     : LT | GT | LE | GE | EQ
+    ;
+
+posExpression
+    : POS LPAREN tag=posTag COMMA termValue=term RPAREN
+    ;
+
+posTag
+    : STRING
+    | identifier
+    ;
+
+term
+    : STRING
+    | variable
+    | identifier
     ; 

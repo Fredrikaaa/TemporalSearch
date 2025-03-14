@@ -15,7 +15,8 @@ public class QueryExecutionException extends Exception {
         INDEX_ACCESS_ERROR,
         INVALID_CONDITION,
         UNSUPPORTED_OPERATION,
-        INTERNAL_ERROR
+        INTERNAL_ERROR,
+        MISSING_INDEX
     }
 
     /**

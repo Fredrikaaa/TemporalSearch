@@ -32,7 +32,7 @@ class AnnotationEntryTest extends BaseIndexTest {
     @Test
     void testNullHandling() {
         // Test with null lemma and POS
-        AnnotationEntry entry = new AnnotationEntry(1, 1, 0, 3, null, null, LocalDate.now());
+        AnnotationEntry entry = new AnnotationEntry(1, 1, 1, 0, 3, null, null, LocalDate.now());
         assertNull(entry.getLemma());
         assertNull(entry.getPos());
     }
@@ -40,7 +40,7 @@ class AnnotationEntryTest extends BaseIndexTest {
     @Test
     void testEmptyStrings() {
         // Test with empty strings
-        AnnotationEntry entry = new AnnotationEntry(1, 1, 0, 3, "", "", LocalDate.now());
+        AnnotationEntry entry = new AnnotationEntry(1, 1, 1, 0, 3, "", "", LocalDate.now());
         assertEquals("", entry.getLemma());
         assertEquals("", entry.getPos());
     }
@@ -48,7 +48,15 @@ class AnnotationEntryTest extends BaseIndexTest {
     @Test
     void testTimestampHandling() {
         LocalDate timestamp = LocalDate.of(2024, 1, 20);
-        AnnotationEntry entry = new AnnotationEntry(1, 1, 0, 3, "test", "NOUN", timestamp);
+        AnnotationEntry entry = new AnnotationEntry(1, 1, 1, 0, 3, "test", "NOUN", timestamp);
         assertEquals(timestamp, entry.getTimestamp());
+    }
+    
+    @Test
+    void testAnnotationId() {
+        // Test annotation ID getter
+        int annotationId = 42;
+        AnnotationEntry entry = new AnnotationEntry(annotationId, 1, 1, 0, 3, "test", "NOUN", LocalDate.now());
+        assertEquals(annotationId, entry.getAnnotationId());
     }
 } 

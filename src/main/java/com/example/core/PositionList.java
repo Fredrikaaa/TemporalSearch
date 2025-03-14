@@ -61,6 +61,11 @@ public class PositionList {
             int[] endPositions = new int[positions.size()];
             long[] timestamps = new long[positions.size()];
             
+            // Prepare type information and synonym IDs (for StitchPosition)
+            byte[] positionTypes = new byte[positions.size()];
+            int[] synonymIds = new int[positions.size()];
+            boolean hasSpecialPositions = false;
+            
             // Store original values
             for (int i = 0; i < positions.size(); i++) {
                 Position pos = positions.get(i);
@@ -69,6 +74,16 @@ public class PositionList {
                 beginPositions[i] = pos.getBeginPosition();
                 endPositions[i] = pos.getEndPosition();
                 timestamps[i] = pos.getTimestamp().toEpochDay();
+                
+                // Store position type and synonym ID if applicable
+                if (pos instanceof com.example.index.StitchPosition) {
+                    positionTypes[i] = com.example.index.StitchPosition.POSITION_TYPE;
+                    synonymIds[i] = ((com.example.index.StitchPosition) pos).getSynonymId();
+                    hasSpecialPositions = true;
+                } else {
+                    positionTypes[i] = 0; // Regular position
+                    synonymIds[i] = -1;   // Invalid synonym ID
+                }
             }
 
             if (logSampler.shouldLog()) {
@@ -77,10 +92,11 @@ public class PositionList {
             }
 
             // Allocate buffer with estimated size
-            ByteBuffer buffer = ByteBuffer.allocate(positions.size() * 24 + 128);
+            ByteBuffer buffer = ByteBuffer.allocate(positions.size() * 28 + 256);
 
             // Write metadata
             buffer.putInt(positions.size());
+            buffer.put((byte)(hasSpecialPositions ? 1 : 0)); // Flag if we have special positions
 
             // Compress each array individually with proper size checks
             for (int[] array : new int[][]{docIds, sentenceIds, beginPositions, endPositions}) {
@@ -120,6 +136,43 @@ public class PositionList {
             for (long timestamp : timestamps) {
                 buffer.putLong(timestamp);
             }
+            
+            // Write position type information if needed
+            if (hasSpecialPositions) {
+                // Write position types (1 byte per position)
+                buffer.put(positionTypes);
+                
+                // Write synonym IDs if we have StitchPositions
+                IntWrapper inOffset = new IntWrapper(0);
+                IntWrapper outOffset = new IntWrapper(0);
+                
+                if (positions.size() <= 128) {  // Don't compress small arrays
+                    buffer.putInt(-positions.size());
+                    for (int i = 0; i < positions.size(); i++) {
+                        buffer.putInt(synonymIds[i]);
+                    }
+                } else {
+                    // Calculate number of complete blocks
+                    int blockSize = 128;
+                    int numBlocks = (positions.size() + blockSize - 1) / blockSize;
+                    int paddedSize = numBlocks * blockSize;
+                    
+                    // Create padded array
+                    int[] paddedArray = Arrays.copyOf(synonymIds, paddedSize);
+                    int[] compressed = new int[paddedSize * 2]; // Double size for safety
+                    
+                    // Try compression
+                    codec.compress(paddedArray, inOffset, paddedSize, compressed, outOffset);
+                    int compressedSize = outOffset.get();
+                    
+                    // Store the actual length and compressed size
+                    buffer.putInt(positions.size());  // Original length
+                    buffer.putInt(compressedSize);    // Compressed size
+                    for (int i = 0; i < compressedSize; i++) {
+                        buffer.putInt(compressed[i]);
+                    }
+                }
+            }
 
             // Create exact-sized result
             byte[] result = new byte[buffer.position()];
@@ -143,7 +196,8 @@ public class PositionList {
 
             // Read metadata
             int count = buffer.getInt();
-            logger.debug("Deserializing {} positions", count);
+            boolean hasSpecialPositions = buffer.get() != 0;
+            logger.debug("Deserializing {} positions, hasSpecialPositions: {}", count, hasSpecialPositions);
 
             // Prepare arrays
             int[] docIds = new int[count];
@@ -151,6 +205,8 @@ public class PositionList {
             int[] beginPositions = new int[count];
             int[] endPositions = new int[count];
             long[] timestamps = new long[count];
+            byte[] positionTypes = hasSpecialPositions ? new byte[count] : null;
+            int[] synonymIds = hasSpecialPositions ? new int[count] : null;
 
             IntWrapper inOffset = new IntWrapper(0);
             IntWrapper outOffset = new IntWrapper(0);
@@ -195,16 +251,69 @@ public class PositionList {
             for (int i = 0; i < count; i++) {
                 timestamps[i] = buffer.getLong();
             }
+            
+            // Read position type information if present
+            if (hasSpecialPositions) {
+                // Read position types
+                buffer.get(positionTypes);
+                
+                // Read synonym IDs
+                int size = buffer.getInt();
+                
+                if (size < 0) {  // Uncompressed data
+                    size = -size;
+                    for (int i = 0; i < size; i++) {
+                        synonymIds[i] = buffer.getInt();
+                    }
+                } else {
+                    int originalLength = size;
+                    int compressedSize = buffer.getInt();
+                    
+                    // Calculate padded size
+                    int blockSize = 128;
+                    int numBlocks = (originalLength + blockSize - 1) / blockSize;
+                    int paddedSize = numBlocks * blockSize;
+                    
+                    int[] compressed = new int[compressedSize];
+                    int[] decompressed = new int[paddedSize];
+                    
+                    for (int i = 0; i < compressedSize; i++) {
+                        compressed[i] = buffer.getInt();
+                    }
+                    
+                    inOffset.set(0);
+                    outOffset.set(0);
+                    
+                    // Decompress to padded array
+                    codec.uncompress(compressed, inOffset, compressedSize, decompressed, outOffset);
+                    
+                    // Copy only the needed values
+                    System.arraycopy(decompressed, 0, synonymIds, 0, originalLength);
+                }
+            }
 
             // Create Position objects
             for (int i = 0; i < count; i++) {
-                result.add(new Position(
-                    docIds[i],
-                    sentenceIds[i],
-                    beginPositions[i],
-                    endPositions[i],
-                    LocalDate.ofEpochDay(timestamps[i])
-                ));
+                if (hasSpecialPositions && positionTypes[i] == com.example.index.StitchPosition.POSITION_TYPE) {
+                    // Create StitchPosition
+                    result.add(new com.example.index.StitchPosition(
+                        docIds[i],
+                        sentenceIds[i],
+                        beginPositions[i],
+                        endPositions[i],
+                        LocalDate.ofEpochDay(timestamps[i]),
+                        synonymIds[i]
+                    ));
+                } else {
+                    // Create regular Position
+                    result.add(new Position(
+                        docIds[i],
+                        sentenceIds[i],
+                        beginPositions[i],
+                        endPositions[i],
+                        LocalDate.ofEpochDay(timestamps[i])
+                    ));
+                }
             }
 
             return result;
