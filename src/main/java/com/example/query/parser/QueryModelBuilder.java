@@ -34,7 +34,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         }
         
         List<Condition> conditions = new ArrayList<>();
-        List<OrderSpec> orderSpecs = new ArrayList<>();
+        List<String> orderColumns = new ArrayList<>();
         Optional<Integer> limit = Optional.empty();
         Query.Granularity granularity = Query.Granularity.DOCUMENT;
         Optional<Integer> granularitySize = Optional.empty();
@@ -51,7 +51,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
         if (ctx.orderByClause() != null) {
             for (QueryLangParser.OrderSpecContext specCtx : ctx.orderByClause().orderSpec()) {
-                orderSpecs.add((OrderSpec) visitOrderSpec(specCtx));
+                orderColumns.add((String) visitOrderSpec(specCtx));
             }
         }
 
@@ -69,9 +69,8 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
                 }
             }
         }
-
-        Query query = new Query(source, conditions, orderSpecs, limit, granularity, granularitySize, selectColumns);
-        return query;
+        
+        return new Query(source, conditions, orderColumns, limit, granularity, granularitySize, selectColumns);
     }
 
     @Override
@@ -480,13 +479,13 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             throw new IllegalStateException("OrderSpec must have either identifier or variable");
         }
         
-        OrderSpec.Direction direction = OrderSpec.Direction.ASC; // Default to ascending
-        
+        // For descending order, prefix with minus sign
         if (ctx.DESC() != null) {
-            direction = OrderSpec.Direction.DESC;
+            return "-" + field;
         }
         
-        return new OrderSpec(field, direction);
+        // For ascending order, just return the field name
+        return field;
     }
 
     private LocalDateTime parseDateTime(String text) {

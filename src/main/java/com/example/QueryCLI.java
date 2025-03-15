@@ -120,6 +120,10 @@ public class QueryCLI {
                 Table resultTable = tableResultService.generateTable(
                     query, matches, variableBindings, indexManager.getAllIndexes());
                 
+                // NOTE: We're now using Tablesaw's sorting capabilities directly
+                // The orderBy list in Query now contains Tablesaw-compatible sort strings
+                // (column names with optional "-" prefix for descending order)
+                
                 // 7. Handle export if requested
                 if (exportFormat.isPresent() && exportFilename.isPresent()) {
                     String format = exportFormat.get();

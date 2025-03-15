@@ -86,8 +86,8 @@ public class QuerySemanticValidator {
             }
             
             // Validate order by
-            for (OrderSpec orderSpec : query.orderBy()) {
-                validateOrderSpec(orderSpec);
+            for (String orderColumn : query.orderBy()) {
+                validateOrderColumn(orderColumn);
             }
             
             // Validate limit
@@ -270,22 +270,29 @@ public class QuerySemanticValidator {
         }
     }
 
-    private void validateOrderSpec(OrderSpec orderSpec) throws QueryParseException {
-        // Add validation for valid ordering fields
-        if (orderSpec.field() == null || orderSpec.field().isEmpty()) {
+    /**
+     * Validates an order column.
+     *
+     * @param orderColumn The order column to validate
+     * @throws QueryParseException if the order column is invalid
+     */
+    private void validateOrderColumn(String orderColumn) throws QueryParseException {
+        // Remove the minus sign for descending order if present
+        String columnName = orderColumn.startsWith("-") ? orderColumn.substring(1) : orderColumn;
+        
+        // Check if the column name is empty
+        if (columnName == null || columnName.trim().isEmpty()) {
             throw new QueryParseException("Empty order by field");
         }
         
         // If this is a variable, check that it's bound
-        if (orderSpec.field().startsWith("?")) {
-            String varName = orderSpec.field();
+        if (columnName.startsWith("?")) {
+            logger.debug("Validating ORDER BY variable: {} against bound variables: {}", columnName, boundVariables);
             
-            logger.debug("Validating ORDER BY variable: {} against bound variables: {}", varName, boundVariables);
-            
-            if (!boundVariables.contains(varName)) {
+            if (!boundVariables.contains(columnName)) {
                 throw new QueryParseException(String.format(
                     "Unbound variable in ORDER BY: %s. Variables must be bound in WHERE clause.",
-                    varName
+                    columnName
                 ));
             }
         }

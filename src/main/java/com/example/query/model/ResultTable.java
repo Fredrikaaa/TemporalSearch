@@ -206,19 +206,26 @@ public class ResultTable {
     /**
      * Sorts the table rows based on the given order specifications.
      *
-     * @param orderSpecs The order specifications
+     * @param orderColumns The order columns (prefix with "-" for descending order)
      * @return A new table with sorted rows
      */
-    public ResultTable sort(List<OrderSpec> orderSpecs) {
-        if (orderSpecs == null || orderSpecs.isEmpty()) {
+    public ResultTable sort(List<String> orderColumns) {
+        if (orderColumns == null || orderColumns.isEmpty()) {
             return this;
         }
 
         List<Map<String, String>> sortedRows = new ArrayList<>(this.rows);
         
         sortedRows.sort((row1, row2) -> {
-            for (OrderSpec spec : orderSpecs) {
-                String field = spec.getField();
+            for (String orderColumn : orderColumns) {
+                boolean ascending = true;
+                String field = orderColumn;
+                
+                // Check if this is a descending order column (prefixed with "-")
+                if (field.startsWith("-")) {
+                    ascending = false;
+                    field = field.substring(1);
+                }
                 
                 if (!row1.containsKey(field) || !row2.containsKey(field)) {
                     throw new IllegalArgumentException("Order by field not found: " + field);
@@ -230,14 +237,14 @@ public class ResultTable {
                 if (value1 == null && value2 == null) {
                     continue;
                 } else if (value1 == null) {
-                    return spec.getDirection() == OrderSpec.Direction.ASC ? -1 : 1;
+                    return ascending ? -1 : 1;
                 } else if (value2 == null) {
-                    return spec.getDirection() == OrderSpec.Direction.ASC ? 1 : -1;
+                    return ascending ? 1 : -1;
                 }
                 
                 int comparison = value1.compareTo(value2);
                 if (comparison != 0) {
-                    return spec.getDirection() == OrderSpec.Direction.ASC ? comparison : -comparison;
+                    return ascending ? comparison : -comparison;
                 }
             }
             return 0;

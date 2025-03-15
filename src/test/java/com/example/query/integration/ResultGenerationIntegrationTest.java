@@ -6,7 +6,6 @@ import com.example.query.executor.QueryExecutionException;
 import com.example.query.executor.VariableBindings;
 import com.example.query.index.IndexManager;
 import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.OrderSpec;
 import com.example.query.model.Query;
 import com.example.query.model.ResultTable;
 import com.example.query.QueryParser;

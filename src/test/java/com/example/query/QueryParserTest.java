@@ -1,7 +1,6 @@
 package com.example.query;
 
 import com.example.query.model.Query;
-import com.example.query.model.OrderSpec;
 import com.example.query.model.TemporalRange;
 import com.example.query.model.condition.Condition;
 import com.example.query.model.condition.Contains;
@@ -172,10 +171,8 @@ class QueryParserTest {
         Query query = parser.parse(queryStr);
 
         assertEquals(2, query.orderBy().size());
-        assertEquals("date", query.orderBy().get(0).field());
-        assertEquals(OrderSpec.Direction.DESC, query.orderBy().get(0).direction());
-        assertEquals("relevance", query.orderBy().get(1).field());
-        assertEquals(OrderSpec.Direction.ASC, query.orderBy().get(1).direction());
+        assertEquals("-date", query.orderBy().get(0));
+        assertEquals("relevance", query.orderBy().get(1));
     }
 
     @Test

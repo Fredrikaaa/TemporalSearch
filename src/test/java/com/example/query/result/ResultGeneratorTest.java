@@ -3,7 +3,6 @@ package com.example.query.result;
 import com.example.core.IndexAccess;
 import com.example.query.executor.VariableBindings;
 import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.OrderSpec;
 import com.example.query.model.Query;
 import com.example.query.model.ResultTable;
 import com.example.query.model.column.ColumnSpec;
@@ -122,9 +121,9 @@ class ResultGeneratorTest {
     @DisplayName("Should apply ordering to result table")
     void shouldApplyOrdering() throws ResultGenerationException {
         // Given
-        List<OrderSpec> orderSpecs = new ArrayList<>();
-        orderSpecs.add(new OrderSpec("?person", OrderSpec.Direction.ASC));
-        when(query.orderBy()).thenReturn(orderSpecs);
+        List<String> orderColumns = new ArrayList<>();
+        orderColumns.add("?person");
+        when(query.orderBy()).thenReturn(orderColumns);
         
         // When
         ResultTable resultTable = resultGenerator.generateResultTable(

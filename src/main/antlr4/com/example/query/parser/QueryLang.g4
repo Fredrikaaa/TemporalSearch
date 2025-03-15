@@ -175,6 +175,9 @@ orderByClause
     : ORDER BY orderSpec (COMMA orderSpec)*
     ;
 
+// Order specification rule
+// The visitor implementation converts this to strings with "-" prefix for DESC order
+// Example: "column_name" for ASC, "-column_name" for DESC
 orderSpec
     : (identifier | variable) (ASC | DESC)?
     ;

@@ -50,9 +50,9 @@ public class ResultControlTest {
     @Test
     void testOrderByAscending() {
         // Order by person name ascending
-        List<OrderSpec> orderSpecs = List.of(new OrderSpec("person", OrderSpec.Direction.ASC));
+        List<String> orderColumns = List.of("person");
         
-        ResultTable sortedTable = sampleTable.sort(orderSpecs);
+        ResultTable sortedTable = sampleTable.sort(orderColumns);
         
         // Verify the order is correct
         List<String> personColumn = extractColumn(sortedTable, "person");
@@ -64,9 +64,9 @@ public class ResultControlTest {
     @Test
     void testOrderByDescending() {
         // Order by organization name descending
-        List<OrderSpec> orderSpecs = List.of(new OrderSpec("org", OrderSpec.Direction.DESC));
+        List<String> orderColumns = List.of("-org");
         
-        ResultTable sortedTable = sampleTable.sort(orderSpecs);
+        ResultTable sortedTable = sampleTable.sort(orderColumns);
         
         // Verify the order is correct
         List<String> orgColumn = extractColumn(sortedTable, "org");
@@ -87,12 +87,9 @@ public class ResultControlTest {
         ResultTable table = new ResultTable(sampleTable.getColumns(), rows, 10, TableConfig.getDefault());
         
         // Order by org ascending, then by person descending
-        List<OrderSpec> orderSpecs = List.of(
-            new OrderSpec("org", OrderSpec.Direction.ASC),
-            new OrderSpec("person", OrderSpec.Direction.DESC)
-        );
+        List<String> orderColumns = List.of("org", "-person");
         
-        ResultTable sortedTable = table.sort(orderSpecs);
+        ResultTable sortedTable = table.sort(orderColumns);
         
         // Verify the order is correct
         List<String> orgColumn = extractColumn(sortedTable, "org");
@@ -157,9 +154,9 @@ public class ResultControlTest {
     @Test
     void testOrderByWithLimit() {
         // Order by person name ascending and limit to 2 rows
-        List<OrderSpec> orderSpecs = List.of(new OrderSpec("person", OrderSpec.Direction.ASC));
+        List<String> orderColumns = List.of("person");
         
-        ResultTable sortedTable = sampleTable.sort(orderSpecs);
+        ResultTable sortedTable = sampleTable.sort(orderColumns);
         ResultTable limitedTable = sortedTable.limit(2);
         
         // Verify the order and limit are correct

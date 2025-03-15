@@ -5,7 +5,6 @@ import com.example.query.model.CountNode;
 import com.example.query.model.CountColumn;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.MetadataColumn;
-import com.example.query.model.OrderSpec;
 import com.example.query.model.Query;
 import com.example.query.model.SelectColumn;
 import com.example.query.model.SnippetColumn;
@@ -368,14 +367,36 @@ public class TableResultService {
      * Applies ordering to a Tablesaw table based on order specifications.
      *
      * @param table The table to order
-     * @param orderSpecs The order specifications
+     * @param orderColumns The order columns (prefix with "-" for descending order)
      * @return The ordered table
      */
-    private Table applyOrdering(Table table, List<OrderSpec> orderSpecs) {
-        // For simplicity, we'll just return the table as is
-        // In a real implementation, you would need to implement proper sorting
-        logger.warn("Sorting not fully implemented - returning unsorted table");
-        return table;
+    private Table applyOrdering(Table table, List<String> orderColumns) {
+        if (orderColumns.isEmpty()) {
+            return table;
+        }
+        
+        // Use Tablesaw's sortOn method with the column names
+        logger.debug("Sorting table on columns: {}", orderColumns);
+        return table.sortOn(orderColumns.toArray(new String[0]));
+    }
+
+    /**
+     * Sorts a table by the given columns.
+     * 
+     * This method provides a direct way to sort tables using Tablesaw's column syntax.
+     * Columns can be prefixed with "-" to indicate descending order.
+     * 
+     * @param table The table to sort
+     * @param columns The columns to sort by
+     * @return The sorted table
+     */
+    public Table sortTable(Table table, String... columns) {
+        if (columns == null || columns.length == 0) {
+            return table;
+        }
+        
+        logger.debug("Sorting table on columns: {}", Arrays.toString(columns));
+        return table.sortOn(columns);
     }
 
     /**

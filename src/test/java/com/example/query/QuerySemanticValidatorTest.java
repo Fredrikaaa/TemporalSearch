@@ -37,7 +37,7 @@ class QuerySemanticValidatorTest {
                 new Contains("test"),
                 Ner.of("PERSON")
             ),
-            Collections.singletonList(new OrderSpec("date", OrderSpec.Direction.DESC)),
+            Collections.singletonList("date"),
             Optional.of(10),
             Query.Granularity.DOCUMENT,
             Optional.empty(),
@@ -147,7 +147,7 @@ class QuerySemanticValidatorTest {
         Query query = new Query(
             "wikipedia",
             Collections.emptyList(),
-            Collections.singletonList(new OrderSpec("", OrderSpec.Direction.ASC)),
+            Collections.singletonList(""),
             Optional.empty(),
             Query.Granularity.DOCUMENT,
             Optional.empty(),
@@ -183,7 +183,7 @@ class QuerySemanticValidatorTest {
         Query query = new Query(
             "wikipedia",
             Collections.singletonList(new Contains("test")),
-            Collections.singletonList(new OrderSpec("?person", OrderSpec.Direction.ASC)),
+            Collections.singletonList("?person"),
             Optional.empty(),
             Query.Granularity.DOCUMENT,
             Optional.empty(),
@@ -201,7 +201,7 @@ class QuerySemanticValidatorTest {
         Query query = new Query(
             "wikipedia",
             Collections.singletonList(Ner.withVariable("PERSON", "?person")),
-            Collections.singletonList(new OrderSpec("?person", OrderSpec.Direction.ASC)),
+            Collections.singletonList("?person"),
             Optional.empty(),
             Query.Granularity.DOCUMENT,
             Optional.empty(),
@@ -232,7 +232,7 @@ class QuerySemanticValidatorTest {
                     )
                 )
             ),
-            Collections.singletonList(new OrderSpec("?person", OrderSpec.Direction.ASC)),
+            Collections.singletonList("?person"),
             Optional.empty(),
             Query.Granularity.DOCUMENT,
             Optional.empty(),

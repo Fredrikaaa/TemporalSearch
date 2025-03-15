@@ -11,7 +11,7 @@ import com.example.query.model.condition.Condition;
  * A query consists of:
  * - A source (e.g. "wikipedia")
  * - A list of conditions
- * - Optional order by specifications
+ * - Optional order by specifications (column names, prefix with "-" for descending)
  * - Optional limit
  * - Granularity settings
  * - Optional granularity size
@@ -20,7 +20,7 @@ import com.example.query.model.condition.Condition;
 public record Query(
     String source,
     List<Condition> conditions,
-    List<OrderSpec> orderBy,
+    List<String> orderBy,
     Optional<Integer> limit,
     Granularity granularity,
     Optional<Integer> granularitySize,
@@ -95,7 +95,12 @@ public record Query(
             sb.append(" ORDER BY ");
             for (int i = 0; i < orderBy.size(); i++) {
                 if (i > 0) sb.append(", ");
-                sb.append(orderBy.get(i));
+                String column = orderBy.get(i);
+                if (column.startsWith("-")) {
+                    sb.append(column.substring(1)).append(" DESC");
+                } else {
+                    sb.append(column).append(" ASC");
+                }
             }
         }
         

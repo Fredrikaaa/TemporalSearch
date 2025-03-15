@@ -4,7 +4,6 @@ import com.example.core.IndexAccess;
 import com.example.query.executor.VariableBindings;
 import com.example.query.model.CountNode;
 import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.OrderSpec;
 import com.example.query.model.Query;
 import com.example.query.model.ResultTable;
 import com.example.query.model.SelectColumn;
@@ -135,8 +134,7 @@ public class ResultGenerator {
                 // Sort the rows based on order specifications
                 logger.debug("Ordering results by {} criteria", query.orderBy().size());
                 
-                // Use the original order specs - variable names with question marks are preserved
-                // in both the OrderSpec and the result table columns/rows
+                // Use the string-based order columns directly
                 resultTable = resultTable.sort(query.orderBy());
             }
             
