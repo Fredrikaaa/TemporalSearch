@@ -68,14 +68,61 @@ public class QueryExecutor {
             return new HashSet<>();
         }
         
+        // Get the source name from the query
+        String source = query.source();
+        logger.debug("Using source: {}", source);
+        
         // If there's only one condition, execute it directly
         if (conditions.size() == 1) {
-            return executeCondition(conditions.get(0), indexes, granularity, granularitySize);
+            Set<DocSentenceMatch> results = executeCondition(conditions.get(0), indexes, granularity, granularitySize);
+            return ensureSourceSet(results, source);
         }
         
         // If there are multiple conditions, create a logical AND condition and execute it
         Logical andCondition = new Logical(LogicalOperator.AND, conditions);
-        return executeCondition(andCondition, indexes, granularity, granularitySize);
+        Set<DocSentenceMatch> results = executeCondition(andCondition, indexes, granularity, granularitySize);
+        return ensureSourceSet(results, source);
+    }
+    
+    /**
+     * Ensures that all matches have the correct source set.
+     * 
+     * @param matches The matches to process
+     * @param source The source to set
+     * @return A new set of matches with the source set
+     */
+    private Set<DocSentenceMatch> ensureSourceSet(Set<DocSentenceMatch> matches, String source) {
+        Set<DocSentenceMatch> result = new HashSet<>();
+        
+        for (DocSentenceMatch match : matches) {
+            // If the source is already set correctly, use the match as is
+            if (source.equals(match.getSource())) {
+                result.add(match);
+                continue;
+            }
+            
+            // Otherwise, create a new match with the correct source
+            DocSentenceMatch newMatch;
+            if (match.isSentenceLevel()) {
+                newMatch = new DocSentenceMatch(
+                    match.documentId(), 
+                    match.sentenceId(), 
+                    match.getAllPositions(), 
+                    source
+                );
+            } else {
+                newMatch = new DocSentenceMatch(
+                    match.documentId(), 
+                    -1,  // Document-level match
+                    match.getAllPositions(), 
+                    source
+                );
+            }
+            
+            result.add(newMatch);
+        }
+        
+        return result;
     }
     
     /**

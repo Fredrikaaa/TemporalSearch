@@ -9,7 +9,7 @@ import java.util.Optional;
 public record CountNode(
     CountType type,
     Optional<String> variable
-) implements SelectColumn {
+) {
     
     /**
      * Enum representing the different types of COUNT operations.

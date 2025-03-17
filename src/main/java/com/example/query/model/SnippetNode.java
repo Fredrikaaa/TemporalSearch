@@ -11,7 +11,7 @@ public record SnippetNode(
     int windowSize,
     String highlightStyle,
     boolean showSentenceBoundaries
-) implements SelectColumn {
+) {
     
     public static final int DEFAULT_WINDOW_SIZE = 3;  // Default 3 sentence window (was 1)
     public static final String DEFAULT_HIGHLIGHT_STYLE = "**";  // Default bold highlighting

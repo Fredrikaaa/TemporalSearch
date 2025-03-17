@@ -9,6 +9,8 @@ import com.example.query.model.condition.Ner;
 import com.example.query.model.condition.Not;
 import com.example.query.model.condition.Pos;
 import com.example.query.model.condition.Temporal;
+import com.example.query.model.TitleColumn;
+import com.example.query.model.TimestampColumn;
 
 import org.antlr.v4.runtime.tree.ParseTree;
 
@@ -20,11 +22,19 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Visitor implementation that converts an ANTLR parse tree into our query model objects.
+ * Visitor implementation that builds a Query model from the parse tree.
+ * Handles conversion from parse tree nodes to model objects.
  */
 public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ISO_DATE;
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ISO_DATE_TIME;
+    
+    /**
+     * Creates a new QueryModelBuilder.
+     */
+    public QueryModelBuilder() {
+        // No parameters needed with SqliteAccessor singleton
+    }
     
     @Override
     public Query visitQuery(QueryLangParser.QueryContext ctx) {
@@ -95,9 +105,13 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     }
     
     @Override
-    public Object visitMetadataColumn(QueryLangParser.MetadataColumnContext ctx) {
-        // Create a metadata column that selects all fields
-        return new MetadataColumn("METADATA");
+    public Object visitTitleColumn(QueryLangParser.TitleColumnContext ctx) {
+        return new TitleColumn();
+    }
+    
+    @Override
+    public Object visitTimestampColumn(QueryLangParser.TimestampColumnContext ctx) {
+        return new TimestampColumn();
     }
     
     @Override
@@ -124,11 +138,6 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         return new SnippetNode(variable, windowSize);
     }
     
-    @Override
-    public Object visitMetadataExpression(QueryLangParser.MetadataExpressionContext ctx) {
-        // The metadataExpression rule is just METADATA with no parameters
-        return new MetadataNode();
-    }
     
     @Override
     public Object visitCountAllExpression(QueryLangParser.CountAllExpressionContext ctx) {

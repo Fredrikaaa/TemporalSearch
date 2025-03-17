@@ -15,7 +15,8 @@ import java.util.Set;
 public record DocSentenceMatch(
     int documentId,
     int sentenceId,  // -1 for document-level matches
-    Map<String, Set<Position>> matchPositions
+    Map<String, Set<Position>> matchPositions,
+    String source    // The source of this match (e.g., "wikipedia")
 ) {
     /**
      * Constructor for sentence-level match.
@@ -24,7 +25,7 @@ public record DocSentenceMatch(
      * @param sentenceId The sentence ID
      */
     public DocSentenceMatch(int documentId, int sentenceId) {
-        this(documentId, sentenceId, new HashMap<>());
+        this(documentId, sentenceId, new HashMap<>(), null);
     }
 
     /**
@@ -35,12 +36,42 @@ public record DocSentenceMatch(
     public DocSentenceMatch(int documentId) {
         this(documentId, -1);
     }
+    
+    /**
+     * Constructor for sentence-level match with source.
+     *
+     * @param documentId The document ID
+     * @param sentenceId The sentence ID
+     * @param source The source of this match
+     */
+    public DocSentenceMatch(int documentId, int sentenceId, String source) {
+        this(documentId, sentenceId, new HashMap<>(), source);
+    }
+
+    /**
+     * Constructor for document-level match with source.
+     *
+     * @param documentId The document ID
+     * @param source The source of this match
+     */
+    public DocSentenceMatch(int documentId, String source) {
+        this(documentId, -1, new HashMap<>(), source);
+    }
 
     /**
      * Compact constructor to ensure defensive copy of matchPositions.
      */
     public DocSentenceMatch {
         matchPositions = matchPositions != null ? new HashMap<>(matchPositions) : new HashMap<>();
+    }
+
+    /**
+     * Gets the source of this match.
+     * 
+     * @return The source of this match, or "default" if not specified
+     */
+    public String getSource() {
+        return source != null ? source : "default";
     }
 
     /**

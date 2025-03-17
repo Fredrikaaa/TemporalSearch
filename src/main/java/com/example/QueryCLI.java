@@ -10,6 +10,7 @@ import com.example.query.result.*;
 import com.example.query.snippet.DatabaseConfig;
 import com.example.query.snippet.SnippetConfig;
 import com.example.core.*;
+import com.example.query.sqlite.SqliteAccessor;
 
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
@@ -49,6 +50,9 @@ public class QueryCLI {
         this.validator = new QuerySemanticValidator();
         this.executor = new QueryExecutor(new ConditionExecutorFactory());
         this.snippetConfig = SnippetConfig.DEFAULT;
+        
+        // Initialize the SqliteAccessor singleton
+        SqliteAccessor.initialize(indexBaseDir.toString());
         
         logger.info("Initialized QueryCLI with base directory: {}", indexBaseDir);
         logger.info("Using database structure: {}/[CORPUS_NAME]/[CORPUS_NAME].db", indexBaseDir);

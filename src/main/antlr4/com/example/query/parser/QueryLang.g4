@@ -16,7 +16,8 @@ BETWEEN: 'BETWEEN';
 GRANULARITY: 'GRANULARITY';
 DOCUMENT: 'DOCUMENT';
 SENTENCE: 'SENTENCE';
-METADATA: 'METADATA';
+TITLE: 'TITLE';
+TIMESTAMP: 'TIMESTAMP';
 CONTAINS: 'CONTAINS';
 CONTAINED_BY: 'CONTAINED_BY';
 INTERSECT: 'INTERSECT';
@@ -90,17 +91,22 @@ selectList
 selectColumn
     : variable                    # VariableColumn
     | snippetExpression           # SnippetColumn
-    | metadataExpression          # MetadataColumn
-    | countExpression             # CountColumn
-    | identifier                  # IdentifierColumn
+    | titleExpression            # TitleColumn
+    | timestampExpression        # TimestampColumn
+    | countExpression            # CountColumn
+    | identifier                 # IdentifierColumn
     ;
 
 snippetExpression
     : SNIPPET LPAREN variable (COMMA WINDOW EQUALS NUMBER)? RPAREN
     ;
 
-metadataExpression
-    : METADATA
+titleExpression
+    : TITLE
+    ;
+
+timestampExpression
+    : TIMESTAMP
     ;
 
 countExpression

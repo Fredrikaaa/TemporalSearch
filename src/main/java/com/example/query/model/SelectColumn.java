@@ -1,10 +1,38 @@
 package com.example.query.model;
 
+import com.example.core.IndexAccess;
+import com.example.query.executor.VariableBindings;
+import tech.tablesaw.api.Table;
+import tech.tablesaw.columns.Column;
+
+import java.util.Map;
+
 /**
  * Interface for all column types that can appear in a SELECT clause.
  * This includes variables, snippets, and other column expressions.
  */
 public interface SelectColumn {
-    // Marker interface for now
-    // May add methods later as needed for query execution
+    /**
+     * Gets the name of this column as it should appear in results.
+     * @return The column name
+     */
+    String getColumnName();
+    
+    /**
+     * Creates a Tablesaw column for this select column.
+     * @return A new Tablesaw column
+     */
+    Column<?> createColumn();
+    
+    /**
+     * Populates the column with data for the given match.
+     * 
+     * @param table The table containing the column
+     * @param rowIndex The row index to populate
+     * @param match The document/sentence match
+     * @param variableBindings The variable bindings
+     * @param indexes The indexes for additional document information
+     */
+    void populateColumn(Table table, int rowIndex, DocSentenceMatch match, 
+                        VariableBindings variableBindings, Map<String, IndexAccess> indexes);
 } 

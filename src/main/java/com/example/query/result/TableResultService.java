@@ -2,14 +2,9 @@ package com.example.query.result;
 
 import com.example.query.executor.VariableBindings;
 import com.example.query.model.CountNode;
-import com.example.query.model.CountColumn;
 import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.MetadataColumn;
 import com.example.query.model.Query;
 import com.example.query.model.SelectColumn;
-import com.example.query.model.SnippetColumn;
-import com.example.query.model.column.ColumnSpec;
-import com.example.query.model.column.ColumnType;
 import com.example.core.IndexAccess;
 import com.example.query.snippet.DatabaseConfig;
 import com.example.query.snippet.SnippetConfig;
@@ -19,16 +14,10 @@ import tech.tablesaw.api.*;
 import tech.tablesaw.columns.Column;
 import tech.tablesaw.io.csv.CsvWriteOptions;
 
-import java.io.File;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.*;
 
 /**
@@ -104,31 +93,68 @@ public class TableResultService {
                 granularity);
 
         try {
-            // Check if this is a COUNT query
+            // Create columns directly from SelectColumn objects
+            List<Column<?>> columns = new ArrayList<>();
+            
+            // Add columns from SELECT clause
             List<SelectColumn> selectColumns = query.selectColumns();
             if (selectColumns != null && !selectColumns.isEmpty()) {
-                // Check for COUNT expressions
-                for (SelectColumn column : selectColumns) {
-                    if (column instanceof CountNode countNode) {
-                        return generateCountTable(countNode, matches, variableBindings);
-                    }
+                for (SelectColumn selectColumn : selectColumns) {
+                    columns.add(selectColumn.createColumn());
                 }
+            } else {
+                // If no SELECT columns specified, we'll handle this later
+                // after we've seen the matches
             }
-
-            // Create column specifications (reusing from existing code)
-            List<ColumnSpec> columnSpecs = createColumnSpecs(query, variableBindings, matches);
             
-            // Create Tablesaw columns based on column specifications
-            List<Column<?>> columns = createTablesawColumns(columnSpecs);
+            // Always include document_id
+            StringColumn docIdColumn = StringColumn.create("document_id");
+            columns.add(docIdColumn);
             
-            // Create the Tablesaw table
+            // Include sentence_id for sentence granularity
+            StringColumn sentIdColumn = null;
+            if (granularity == Query.Granularity.SENTENCE) {
+                sentIdColumn = StringColumn.create("sentence_id");
+                columns.add(sentIdColumn);
+            }
+            
+            // Create the table
             Table table = Table.create("QueryResults");
             for (Column<?> column : columns) {
                 table.addColumns(column);
             }
             
+            // Validate order by columns
+            for (String orderColumn : query.orderBy()) {
+                String columnName = orderColumn.startsWith("-") ? orderColumn.substring(1) : orderColumn;
+                if (!table.columnNames().contains(columnName)) {
+                    throw new ResultGenerationException(
+                        String.format("Cannot order by column '%s'", columnName),
+                        "table_result_service",
+                        ResultGenerationException.ErrorType.INTERNAL_ERROR
+                    );
+                }
+            }
+            
             // Populate the table with data
-            populateTable(table, query, matches, variableBindings, indexes, columnSpecs);
+            for (DocSentenceMatch match : matches) {
+                // Add a new row
+                int rowIndex = table.rowCount();
+                table.appendRow();
+                
+                // Set values for each column
+                for (SelectColumn selectColumn : selectColumns) {
+                    selectColumn.populateColumn(table, rowIndex, match, variableBindings, indexes);
+                }
+                
+                // Set document_id
+                docIdColumn.set(rowIndex, String.valueOf(match.documentId()));
+                
+                // Set sentence_id if applicable
+                if (sentIdColumn != null) {
+                    sentIdColumn.set(rowIndex, String.valueOf(match.sentenceId()));
+                }
+            }
             
             // Apply ordering if specified
             if (!query.orderBy().isEmpty()) {
@@ -159,208 +185,6 @@ public class TableResultService {
         } finally {
             closeDbConnection();
         }
-    }
-
-    /**
-     * Creates Tablesaw columns based on column specifications.
-     *
-     * @param columnSpecs The column specifications
-     * @return List of Tablesaw columns
-     */
-    private List<Column<?>> createTablesawColumns(List<ColumnSpec> columnSpecs) {
-        List<Column<?>> columns = new ArrayList<>();
-        
-        for (ColumnSpec spec : columnSpecs) {
-            String name = spec.name();
-            ColumnType type = spec.type();
-            
-            // Create appropriate column type based on the data type
-            if (type == ColumnType.DATE) {
-                columns.add(DateColumn.create(name));
-            } else if (type == ColumnType.COUNT) {
-                columns.add(IntColumn.create(name));
-            } else {
-                // Default to string column for all other types
-                columns.add(StringColumn.create(name));
-            }
-        }
-        
-        return columns;
-    }
-
-    /**
-     * Populates a Tablesaw table with data from query results.
-     *
-     * @param table The table to populate
-     * @param query The original query
-     * @param matches Set of matching document/sentence matches
-     * @param variableBindings Variable bindings from query execution
-     * @param indexes Map of indexes to retrieve additional document information
-     * @param columnSpecs The column specifications
-     * @throws ResultGenerationException if an error occurs
-     */
-    private void populateTable(
-            Table table,
-            Query query,
-            Set<DocSentenceMatch> matches,
-            VariableBindings variableBindings,
-            Map<String, IndexAccess> indexes,
-            List<ColumnSpec> columnSpecs
-    ) throws ResultGenerationException {
-        // For each match, create a row in the table
-        for (DocSentenceMatch match : matches) {
-            // Add a new row to the table
-            int rowIndex = table.rowCount();
-            
-            // Initialize all columns with default values first
-            for (ColumnSpec columnSpec : columnSpecs) {
-                String columnName = columnSpec.name();
-                ColumnType columnType = columnSpec.type();
-                
-                // Set default values based on column type
-                if (columnType == ColumnType.DATE) {
-                    DateColumn column = (DateColumn) table.column(columnName);
-                    column.appendMissing();
-                } else if (columnType == ColumnType.COUNT) {
-                    IntColumn column = (IntColumn) table.column(columnName);
-                    column.appendMissing();
-                } else {
-                    StringColumn column = (StringColumn) table.column(columnName);
-                    column.append((String)null);
-                }
-            }
-            
-            // Now set actual values for each column
-            for (ColumnSpec columnSpec : columnSpecs) {
-                String columnName = columnSpec.name();
-                ColumnType columnType = columnSpec.type();
-                
-                // Get the value for this column
-                String value = getValueForColumn(columnName, columnType, match, variableBindings, indexes, query);
-                
-                // Set the value in the appropriate column based on its type
-                if (value != null) {
-                    setColumnValue(table, rowIndex, columnName, columnType, value);
-                }
-            }
-        }
-    }
-
-    /**
-     * Sets a value in a Tablesaw column based on the column type.
-     *
-     * @param table The table
-     * @param rowIndex The row index
-     * @param columnName The column name
-     * @param columnType The column type
-     * @param value The string value to set
-     */
-    private void setColumnValue(Table table, int rowIndex, String columnName, ColumnType columnType, String value) {
-        if (columnType == ColumnType.DATE) {
-            try {
-                DateColumn column = (DateColumn) table.column(columnName);
-                LocalDate date = LocalDate.parse(value, DateTimeFormatter.ISO_DATE);
-                column.set(rowIndex, date);
-            } catch (DateTimeParseException e) {
-                // If parsing fails, set a missing value
-                DateColumn column = (DateColumn) table.column(columnName);
-                column.setMissing(rowIndex);
-            }
-        } else if (columnType == ColumnType.COUNT) {
-            try {
-                IntColumn column = (IntColumn) table.column(columnName);
-                column.set(rowIndex, Integer.parseInt(value));
-            } catch (NumberFormatException e) {
-                // If parsing fails, set a missing value
-                IntColumn column = (IntColumn) table.column(columnName);
-                column.setMissing(rowIndex);
-            }
-        } else {
-            // Default to string column for all other types
-            StringColumn column = (StringColumn) table.column(columnName);
-            column.set(rowIndex, value);
-        }
-    }
-
-    /**
-     * Gets the value for a column from the appropriate source.
-     * This is a simplified implementation - in a real implementation,
-     * you would need to handle all the different column types and data sources.
-     *
-     * @param columnName The column name
-     * @param columnType The column type
-     * @param match The document/sentence match
-     * @param variableBindings The variable bindings
-     * @param indexes The indexes
-     * @param query The original query
-     * @return The value for the column
-     */
-    private String getValueForColumn(
-            String columnName,
-            ColumnType columnType,
-            DocSentenceMatch match,
-            VariableBindings variableBindings,
-            Map<String, IndexAccess> indexes,
-            Query query
-    ) {
-        // For document_id column, get the document ID
-        if (columnName.equals("document_id")) {
-            return String.valueOf(match.documentId());
-        }
-        
-        // For sentence_id column, get the sentence ID
-        if (columnName.equals("sentence_id")) {
-            return String.valueOf(match.sentenceId());
-        }
-        
-        // For metadata columns (title, timestamp, etc.)
-        if (columnName.equals("title") || columnName.equals("timestamp") || 
-            columnType == ColumnType.DATE) {
-            try {
-                return getMetadataValue(match.documentId(), columnName);
-            } catch (SQLException e) {
-                logger.error("Error retrieving metadata for document {}: {}", 
-                    match.documentId(), e.getMessage());
-                return null;
-            }
-        }
-        
-        // For variable columns, get the value from the variable bindings
-        // Remove ? prefix if present
-        String variableName = columnName;
-        if (variableName.startsWith("?")) {
-            variableName = variableName.substring(1);
-        }
-        
-        // Get the first value for this variable
-        Optional<String> valueOpt = variableBindings.getValueWithFallback(
-            match.documentId(), match.sentenceId(), variableName);
-        return valueOpt.orElse(null);
-    }
-    
-    /**
-     * Retrieves a metadata value from the database.
-     *
-     * @param documentId The document ID
-     * @param fieldName The metadata field name
-     * @return The metadata value, or null if not found
-     * @throws SQLException if a database error occurs
-     */
-    private String getMetadataValue(int documentId, String fieldName) throws SQLException {
-        Connection conn = getDbConnection();
-        String sql = "SELECT " + fieldName + " FROM documents WHERE document_id = ?";
-        
-        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setInt(1, documentId);
-            
-            try (ResultSet rs = stmt.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getString(fieldName);
-                }
-            }
-        }
-        
-        return null;
     }
 
     /**
@@ -431,123 +255,6 @@ public class TableResultService {
         }
         
         return table;
-    }
-
-    /**
-     * Creates column specifications based on the query and available variable bindings.
-     * This method is similar to the one in ResultGenerator.
-     *
-     * @param query The query
-     * @param variableBindings Variable bindings from query execution
-     * @param matches Set of matching document/sentence matches
-     * @return List of column specifications
-     */
-    private List<ColumnSpec> createColumnSpecs(
-            Query query,
-            VariableBindings variableBindings,
-            Set<DocSentenceMatch> matches
-    ) {
-        List<ColumnSpec> columns = new ArrayList<>();
-        Set<String> columnNames = new HashSet<>(); // Track column names to avoid duplicates
-        
-        // Add columns from SELECT clause first
-        List<SelectColumn> selectColumns = query.selectColumns();
-        if (selectColumns != null && !selectColumns.isEmpty()) {
-            // Process each column in the SELECT clause
-            for (SelectColumn column : selectColumns) {
-                if (column instanceof CountNode || column instanceof CountColumn) {
-                    addColumnIfNotExists(columns, columnNames, new ColumnSpec("count", ColumnType.COUNT));
-                } else if (column instanceof MetadataColumn metadataColumn) {
-                    // Handle metadata columns
-                    if (metadataColumn.selectsAllFields()) {
-                        // Add all metadata fields without the metadata_ prefix
-                        addColumnIfNotExists(columns, columnNames, new ColumnSpec("title", ColumnType.TERM));
-                        addColumnIfNotExists(columns, columnNames, new ColumnSpec("timestamp", ColumnType.TERM));
-                    } else if (metadataColumn.getFieldName() != null) {
-                        // Add specific metadata field without the metadata_ prefix
-                        addColumnIfNotExists(columns, columnNames, new ColumnSpec(metadataColumn.getFieldName(), ColumnType.TERM));
-                    }
-                } else if (column instanceof SnippetColumn snippetColumn) {
-                    // Handle snippet columns
-                    String variableName = snippetColumn.getSnippetNode().variable();
-                    if (variableName.startsWith("?")) {
-                        variableName = variableName.substring(1);
-                    }
-                    addColumnIfNotExists(columns, columnNames, new ColumnSpec("snippet_" + variableName, ColumnType.SNIPPET));
-                } else {
-                    // Regular variable column
-                    String columnName = column.toString();
-                    // Remove the ? prefix if present
-                    if (columnName.startsWith("?")) {
-                        columnName = columnName.substring(1);
-                    }
-                    ColumnType columnType = inferColumnType(columnName, variableBindings);
-                    addColumnIfNotExists(columns, columnNames, new ColumnSpec(columnName, columnType));
-                }
-            }
-        } else {
-            // If no SELECT columns specified, include all variables
-            Set<String> variableNames = new HashSet<>();
-            
-            // Collect all variable names from matches
-            for (DocSentenceMatch match : matches) {
-                if (match.isSentenceLevel()) {
-                    // Get variables for this sentence
-                    Map<String, List<String>> sentVars = variableBindings.getValuesForSentence(match.documentId(), match.sentenceId());
-                    variableNames.addAll(sentVars.keySet());
-                } else {
-                    // Get variables for this document
-                    Map<String, List<String>> docVars = variableBindings.getValuesForDocument(match.documentId());
-                    variableNames.addAll(docVars.keySet());
-                }
-            }
-            
-            // Add columns for each variable
-            for (String variableName : variableNames) {
-                ColumnType columnType = inferColumnType(variableName, variableBindings);
-                addColumnIfNotExists(columns, columnNames, new ColumnSpec(variableName, columnType));
-            }
-        }
-        
-        // Always include document_id if not already added
-        addColumnIfNotExists(columns, columnNames, new ColumnSpec("document_id", ColumnType.TERM));
-        
-        // Include sentence_id for sentence granularity if not already added
-        if (query.granularity() == Query.Granularity.SENTENCE) {
-            addColumnIfNotExists(columns, columnNames, new ColumnSpec("sentence_id", ColumnType.TERM));
-        }
-        
-        return columns;
-    }
-    
-    /**
-     * Adds a column to the list if a column with the same name doesn't already exist.
-     *
-     * @param columns The list of columns
-     * @param columnNames The set of column names
-     * @param columnSpec The column specification to add
-     */
-    private void addColumnIfNotExists(List<ColumnSpec> columns, Set<String> columnNames, ColumnSpec columnSpec) {
-        if (!columnNames.contains(columnSpec.name())) {
-            columns.add(columnSpec);
-            columnNames.add(columnSpec.name());
-        }
-    }
-
-    /**
-     * Infers the column type based on the variable name and bindings.
-     *
-     * @param variableName The variable name
-     * @param variableBindings The variable bindings
-     * @return The inferred column type
-     */
-    private ColumnType inferColumnType(String variableName, VariableBindings variableBindings) {
-        // This is a simplified implementation
-        // In a real implementation, you would need to infer the type based on
-        // the variable bindings and other information
-        
-        // For now, just return a default type
-        return ColumnType.TERM;
     }
 
     /**

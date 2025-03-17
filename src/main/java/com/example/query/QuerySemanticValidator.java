@@ -80,8 +80,8 @@ public class QuerySemanticValidator {
             
             // Validate select list (especially snippets)
             for (SelectColumn column : query.selectColumns()) {
-                if (column instanceof SnippetNode snippetNode) {
-                    validateSnippetNode(snippetNode);
+                if (column instanceof SnippetColumn snippetColumn) {
+                    validateSnippetNode(snippetColumn.getSnippetNode());
                 }
             }
             

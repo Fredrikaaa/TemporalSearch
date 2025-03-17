@@ -4,6 +4,7 @@ import com.example.query.executor.VariableBindings;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.core.IndexAccess;
+import com.example.query.model.VariableColumn;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -115,5 +116,38 @@ class TableResultServiceTest {
         // Then
         assertNotNull(formatted, "Formatted string should not be null");
         assertTrue(formatted.length() > 0, "Formatted string should not be empty");
+    }
+    
+    @Test
+    public void testOrderByNonExistentColumn() {
+        // Create a new instance of TableResultService that doesn't use the mock setup
+        TableResultService realTableResultService = new TableResultService();
+        
+        // Create a query with an ORDER BY clause referencing a column not in the SELECT clause
+        Query query = new Query(
+            "test",
+            List.of(),
+            List.of("non_existent_column"), // Order by a column not in the result set
+            Optional.empty(),
+            Query.Granularity.DOCUMENT,
+            Optional.empty(),
+            List.of(new VariableColumn("existingColumn")) // Only select existingColumn
+        );
+        
+        // Create a match and variable bindings
+        DocSentenceMatch match = new DocSentenceMatch(1, "test");
+        Set<DocSentenceMatch> matches = Set.of(match);
+        VariableBindings variableBindings = new VariableBindings();
+        variableBindings.addBinding(1, "existingColumn", "value");
+        
+        // Verify that the exception is thrown
+        ResultGenerationException exception = assertThrows(
+            ResultGenerationException.class,
+            () -> realTableResultService.generateTable(query, matches, variableBindings, Map.of())
+        );
+        
+        // Verify the exception message
+        assertTrue(exception.getMessage().contains("Cannot order by column 'non_existent_column'"));
+        assertEquals(ResultGenerationException.ErrorType.INTERNAL_ERROR, exception.getErrorType());
     }
 } 

@@ -191,4 +191,44 @@ public class IndexAccess implements AutoCloseable {
     protected static String asString(byte[] bytes) {
         return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
     }
+
+    /**
+     * Gets the document text for a given document ID.
+     * 
+     * @param documentId The document ID
+     * @return The document text, or null if not found
+     */
+    public String getDocumentText(int documentId) {
+        try {
+            checkOpen();
+            // In a real implementation, you would retrieve the document text from the index
+            // For now, we'll just return a placeholder
+            return "This is the text of document " + documentId + ". It contains multiple sentences. This is the second sentence.";
+        } catch (Exception e) {
+            logger.error("Failed to get document text: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+    
+    /**
+     * Gets the sentences for a given document ID.
+     * 
+     * @param documentId The document ID
+     * @return Array of sentences, or null if not found
+     */
+    public String[] getDocumentSentences(int documentId) {
+        try {
+            checkOpen();
+            // In a real implementation, you would retrieve the sentences from the index
+            // For now, we'll just return placeholders
+            return new String[] {
+                "This is the text of document " + documentId + ".",
+                "It contains multiple sentences.",
+                "This is the third sentence."
+            };
+        } catch (Exception e) {
+            logger.error("Failed to get document sentences: {}", e.getMessage(), e);
+            return null;
+        }
+    }
 } 
