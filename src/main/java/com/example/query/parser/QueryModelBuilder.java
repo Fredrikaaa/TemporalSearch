@@ -121,12 +121,6 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     }
     
     @Override
-    public Object visitIdentifierColumn(QueryLangParser.IdentifierColumnContext ctx) {
-        String identifier = (String) visit(ctx.identifier());
-        return new VariableColumn(identifier);
-    }
-    
-    @Override
     public Object visitSnippetExpression(QueryLangParser.SnippetExpressionContext ctx) {
         String variable = (String) visit(ctx.variable());
         int windowSize = SnippetNode.DEFAULT_WINDOW_SIZE;

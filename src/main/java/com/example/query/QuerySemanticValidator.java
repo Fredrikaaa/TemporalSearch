@@ -78,12 +78,8 @@ public class QuerySemanticValidator {
                 validateCondition(condition);
             }
             
-            // Validate select list (especially snippets)
-            for (SelectColumn column : query.selectColumns()) {
-                if (column instanceof SnippetColumn snippetColumn) {
-                    validateSnippetNode(snippetColumn.getSnippetNode());
-                }
-            }
+            // Validate select list
+            validateSelectColumns(query);
             
             // Validate order by
             for (String orderColumn : query.orderBy()) {
@@ -120,20 +116,27 @@ public class QuerySemanticValidator {
     }
     
     /**
-     * Validates the select columns, with special attention to snippet nodes.
+     * Validates the select columns, ensuring all column references are valid.
      */
     private void validateSelectColumns(Query query) throws QueryParseException {
-        // This would need to be implemented after adding select columns to the Query model
-        // For now, we'll assume any validation would happen at model creation time
-        
-        // Example validation for snippets if we had access to them:
-        /*
-        for (SelectColumn column : query.getSelectColumns()) {
-            if (column instanceof SnippetNode snippetNode) {
-                validateSnippetNode(snippetNode);
-            }
+        if (query.selectColumns().isEmpty()) {
+            throw new QueryParseException("Query must select at least one column");
         }
-        */
+        
+        for (SelectColumn column : query.selectColumns()) {
+            if (column instanceof SnippetColumn snippetColumn) {
+                validateSnippetNode(snippetColumn.getSnippetNode());
+            } else if (column instanceof VariableColumn variableColumn) {
+                String variable = "?" + variableColumn.getVariableName();
+                if (!boundVariables.contains(variable)) {
+                    throw new QueryParseException(String.format(
+                        "Unbound variable in SELECT: %s. Variables must be bound in WHERE clause.",
+                        variable
+                    ));
+                }
+            }
+            // Other column types (TITLE, TIMESTAMP, COUNT) don't need special validation
+        }
     }
     
     /**

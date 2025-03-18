@@ -94,7 +94,6 @@ selectColumn
     | titleExpression            # TitleColumn
     | timestampExpression        # TimestampColumn
     | countExpression            # CountColumn
-    | identifier                 # IdentifierColumn
     ;
 
 snippetExpression

@@ -70,9 +70,9 @@ public class QuerySpecExamplesTest {
     }
 
     @Test
-    @DisplayName("Metadata examples from spec")
-    void testMetadataExamples() {
-        assertSpecExampleValid("SELECT METADATA FROM corpus WHERE CONTAINS(\"climate change\")");
+    @DisplayName("Title examples from spec")
+    void testTitleExamples() {
+        assertSpecExampleValid("SELECT TITLE FROM corpus WHERE CONTAINS(\"climate change\")");
     }
 
     @Test

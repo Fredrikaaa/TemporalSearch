@@ -37,7 +37,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse simple query without conditions")
     void parseSimpleQuery() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia";
         Query query = parser.parse(queryStr);
 
         assertEquals("wikipedia", query.source());
@@ -49,7 +49,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with CONTAINS condition")
     void parseContainsCondition() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE CONTAINS(\"artificial intelligence\")";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE CONTAINS(\"artificial intelligence\")";
         Query query = parser.parse(queryStr);
 
         assertEquals("wikipedia", query.source());
@@ -63,7 +63,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with NER condition")
     void parseNerCondition() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE NER(PERSON)";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE NER(PERSON)";
         Query query = parser.parse(queryStr);
 
         assertEquals(1, query.conditions().size());
@@ -78,7 +78,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with NER wildcard type")
     void parseNerWildcardType() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE NER(*)";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE NER(*)";
         Query query = parser.parse(queryStr);
 
         Ner condition = (Ner) query.conditions().get(0);
@@ -90,7 +90,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with NER variable binding")
     void parseNerVariableBinding() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE NER(PERSON, ?scientist)";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE NER(PERSON, ?scientist)";
         Query query = parser.parse(queryStr);
 
         Ner condition = (Ner) query.conditions().get(0);
@@ -102,7 +102,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with date comparison")
     void parseDateComparison() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE DATE(?date, < 2000)";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE DATE(?date, < 2000)";
         Query query = parser.parse(queryStr);
 
         assertTrue(query.conditions().get(0) instanceof Temporal);
@@ -120,7 +120,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with date NEAR range")
     void parseDateNearRange() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE DATE(?founding, NEAR 1980 RADIUS 5 y)";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE DATE(?founding, NEAR 1980 RADIUS 5 y)";
         Query query = parser.parse(queryStr);
 
         Temporal condition = (Temporal) query.conditions().get(0);
@@ -135,7 +135,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with dependency condition")
     void parseDependencyCondition() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE DEPENDS(\"cat\", \"nsubj\", \"eats\")";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE DEPENDS(\"cat\", \"nsubj\", \"eats\")";
         Query query = parser.parse(queryStr);
 
         assertTrue(query.conditions().get(0) instanceof Dependency);
@@ -149,7 +149,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with multiple conditions using AND")
     void parseMultipleConditions() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia " +
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia " +
                          "WHERE CONTAINS(\"physics\") " +
                          "AND NER(PERSON)";
         Query query = parser.parse(queryStr);
@@ -167,7 +167,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with order by clause")
     void parseOrderByClause() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia ORDER BY date DESC, relevance ASC";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia ORDER BY date DESC, relevance ASC";
         Query query = parser.parse(queryStr);
 
         assertEquals(2, query.orderBy().size());
@@ -178,7 +178,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with limit clause")
     void parseLimitClause() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia LIMIT 10";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia LIMIT 10";
         Query query = parser.parse(queryStr);
 
         assertTrue(query.limit().isPresent());
@@ -188,7 +188,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse complex query with all features")
     void parseComplexQuery() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia " +
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia " +
                          "WHERE CONTAINS(\"quantum physics\") " +
                          "AND NER(\"PERSON\", ?scientist) " +
                          "AND DATE(?publication, < 2000) " +
@@ -223,7 +223,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with nested conditions")
     void parseNestedConditions() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia " +
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia " +
                          "WHERE (CONTAINS(\"physics\") AND NER(PERSON))";
         Query query = parser.parse(queryStr);
 
@@ -238,7 +238,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with subquery")
     void parseSubquery() {
-        String queryStr = "SELECT documents FROM wikipedia " +
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia " +
                          "WHERE DATE(?date, < 2000) " +
                          "AND (CONTAINS(\"subquery\") AND CONTAINS(\"nested\"))";
         
@@ -249,7 +249,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with OR condition")
     void parseOrCondition() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE CONTAINS(\"physics\") OR NER(PERSON)";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE CONTAINS(\"physics\") OR NER(PERSON)";
         Query query = parser.parse(queryStr);
 
         assertEquals(1, query.conditions().size());
@@ -274,7 +274,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with NOT condition")
     void parseNotCondition() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE NOT CONTAINS(\"irrelevant\")";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE NOT CONTAINS(\"irrelevant\")";
         Query query = parser.parse(queryStr);
 
         assertEquals(1, query.conditions().size());
@@ -290,7 +290,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with mixed logical operators")
     void parseMixedLogicalOperators() throws QueryParseException {
-        String queryStr = "SELECT documents FROM wikipedia WHERE NER(\"PERSON\", ?person) AND (CONTAINS(\"physics\") OR NOT CONTAINS(\"biology\"))";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE NER(\"PERSON\", ?person) AND (CONTAINS(\"physics\") OR NOT CONTAINS(\"biology\"))";
         Query query = parser.parse(queryStr);
 
         assertEquals(1, query.conditions().size());
@@ -314,15 +314,24 @@ class QueryParserTest {
         assertTrue(notCondition.condition() instanceof Contains);
     }
 
+    @Test
+    @DisplayName("Query with invalid column name should fail")
+    void invalidColumnNameShouldFail() {
+        String queryStr = "SELECT not_real_column FROM wikipedia WHERE NER(PERSON)";
+        
+        // This should now fail with our grammar update
+        assertThrows(QueryParseException.class, () -> parser.parse(queryStr));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
-        "SELECT documents wikipedia",  // Missing FROM
-        "SELECT documents FROM",       // Missing source
-        "SELECT documents FROM wikipedia WHERE",  // Incomplete WHERE clause
-        "SELECT documents FROM wikipedia ORDER",  // Incomplete ORDER BY
-        "SELECT documents FROM wikipedia LIMIT",  // Missing limit value
-        "SELECT documents FROM wikipedia WHERE CONTAINS(\"physics\") NER(\"PERSON\")",  // Missing AND
-        "SELECT documents FROM wikipedia WHERE DATE(?date) < abc"  // Invalid date format
+        "SELECT COUNT(DOCUMENTS) wikipedia",  // Missing FROM
+        "SELECT COUNT(DOCUMENTS) FROM",       // Missing source
+        "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE",  // Incomplete WHERE clause
+        "SELECT COUNT(DOCUMENTS) FROM wikipedia ORDER",  // Incomplete ORDER BY
+        "SELECT COUNT(DOCUMENTS) FROM wikipedia LIMIT",  // Missing limit value
+        "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE CONTAINS(\"physics\") NER(\"PERSON\")",  // Missing AND
+        "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE DATE(?date) < abc"  // Invalid date format
     })
     @DisplayName("Parse invalid queries should throw exception")
     void parseInvalidQueriesShouldThrowException(String queryStr) {
