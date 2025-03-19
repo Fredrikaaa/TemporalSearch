@@ -4,6 +4,7 @@ import com.example.core.IndexAccess;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Temporal;
+import com.example.query.binding.BindingContext;
 
 import java.util.Map;
 import java.util.Set;
@@ -22,7 +23,7 @@ public final class TemporalExecutor implements ConditionExecutor<Temporal> {
     public Set<DocSentenceMatch> execute(
             Temporal condition,
             Map<String, IndexAccess> indexes,
-            VariableBindings variableBindings,
+            BindingContext bindingContext,
             Query.Granularity granularity,
             int granularitySize) throws QueryExecutionException {
         

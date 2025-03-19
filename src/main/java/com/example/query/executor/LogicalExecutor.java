@@ -7,6 +7,7 @@ import com.example.query.model.condition.Condition;
 import com.example.query.model.condition.Logical;
 import com.example.query.model.condition.Logical.LogicalOperator;
 import com.example.query.model.Query;
+import com.example.query.binding.BindingContext;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -41,7 +42,7 @@ public final class LogicalExecutor implements ConditionExecutor<Logical> {
     
     @Override
     public Set<DocSentenceMatch> execute(Logical condition, Map<String, IndexAccess> indexes,
-                               VariableBindings variableBindings, Query.Granularity granularity,
+                               BindingContext bindingContext, Query.Granularity granularity,
                                int granularitySize)
         throws QueryExecutionException {
         
@@ -54,298 +55,354 @@ public final class LogicalExecutor implements ConditionExecutor<Logical> {
             return new HashSet<>();
         }
         
-        // Process based on logical operator
-        return switch (condition.operator()) {
-            case AND -> executeAnd(subConditions, indexes, variableBindings, granularity, granularitySize);
-            case OR -> executeOr(subConditions, indexes, variableBindings, granularity, granularitySize);
-        };
+        LogicalOperator operator = condition.operator();
+        if (operator == LogicalOperator.AND) {
+            return executeAnd(subConditions, indexes, bindingContext, granularity, granularitySize);
+        } else if (operator == LogicalOperator.OR) {
+            return executeOr(subConditions, indexes, bindingContext, granularity, granularitySize);
+        } else {
+            throw new QueryExecutionException(
+                "Unsupported logical operator: " + operator,
+                condition.toString(),
+                QueryExecutionException.ErrorType.UNSUPPORTED_OPERATION
+            );
+        }
     }
     
+    /**
+     * Executes a logical AND condition.
+     * All subconditions must match for a result to be included.
+     */
     private Set<DocSentenceMatch> executeAnd(
             List<Condition> conditions, 
             Map<String, IndexAccess> indexes,
-            VariableBindings variableBindings,
+            BindingContext bindingContext,
             Query.Granularity granularity,
             int granularitySize)
         throws QueryExecutionException {
         
-        logger.debug("Executing AND operation with {} conditions at {} granularity with size {}",
-                conditions.size(), granularity, granularitySize);
+        logger.debug("Executing AND condition with {} subconditions", conditions.size());
         
-        // Handle first condition
-        Condition firstCondition = conditions.get(0);
-        ConditionExecutor<Condition> executor = executorFactory.getExecutor(firstCondition);
-        Set<DocSentenceMatch> result = executor.execute(firstCondition, indexes, variableBindings, granularity, granularitySize);
+        // Optimize execution order based on variable dependencies
+        List<Condition> orderedConditions = optimizeExecutionOrder(conditions);
         
-        if (result.isEmpty()) {
-            // Short-circuit: if first condition has no results, AND will have no results
-            logger.debug("First condition returned no results, short-circuiting AND");
-            return result;
+        // Base case: single condition
+        if (orderedConditions.size() == 1) {
+            Condition condition = orderedConditions.get(0);
+            ConditionExecutor executor = executorFactory.getExecutor(condition);
+            return executor.execute(condition, indexes, bindingContext, granularity, granularitySize);
         }
         
-        // Process remaining conditions
-        for (int i = 1; i < conditions.size(); i++) {
-            Condition nextCondition = conditions.get(i);
-            executor = executorFactory.getExecutor(nextCondition);
-            Set<DocSentenceMatch> nextResult = executor.execute(nextCondition, indexes, variableBindings, granularity, granularitySize);
+        // Copy binding context to avoid modifying the original
+        BindingContext workingContext = bindingContext.copy();
+        Set<DocSentenceMatch> result = null;
+        
+        // Execute each condition in sequence, intersecting results
+        for (Condition condition : orderedConditions) {
+            // Prepare binding context for this condition
+            workingContext = condition.prepareBindingContext(workingContext);
             
-            if (nextResult.isEmpty()) {
-                // Short-circuit: if any condition has no results, AND will have no results
-                logger.debug("Condition at index {} returned no results, short-circuiting AND", i);
+            // Get appropriate executor for this condition
+            ConditionExecutor executor = executorFactory.getExecutor(condition);
+            
+            // Execute the condition
+            Set<DocSentenceMatch> conditionMatches = executor.execute(
+                condition, indexes, workingContext, granularity, granularitySize);
+            
+            if (conditionMatches.isEmpty()) {
+                // Short-circuit: if any condition has no matches, AND will have no matches
+                logger.debug("Condition {} has no matches, short-circuiting AND", condition);
                 return new HashSet<>();
             }
             
-            // Modified intersection handling for document granularity
-            if (granularity == Query.Granularity.DOCUMENT) {
-                // Create maps to track matches by document ID
-                Map<Integer, DocSentenceMatch> resultMap = new HashMap<>();
-                Set<Integer> nextResultDocIds = new HashSet<>();
-                
-                // Index the current results by document ID
-                for (DocSentenceMatch match : result) {
-                    resultMap.put(match.documentId(), match);
-                }
-                
-                // Collect document IDs from the next result set
-                for (DocSentenceMatch match : nextResult) {
-                    nextResultDocIds.add(match.documentId());
-                }
-                
-                // Create a new result set with only documents that appear in both sets
-                Set<DocSentenceMatch> intersectionResult = new HashSet<>();
-                for (Map.Entry<Integer, DocSentenceMatch> entry : resultMap.entrySet()) {
-                    int docId = entry.getKey();
-                    if (nextResultDocIds.contains(docId)) {
-                        // This document is in both sets, so include it in the result
-                        // Find the corresponding match in nextResult to merge positions
-                        DocSentenceMatch currentMatch = entry.getValue();
-                        for (DocSentenceMatch nextMatch : nextResult) {
-                            if (nextMatch.documentId() == docId) {
-                                currentMatch.mergePositions(nextMatch);
-                                break;
-                            }
-                        }
-                        intersectionResult.add(currentMatch);
-                    }
-                }
-                
-                result = intersectionResult;
+            if (result == null) {
+                // First condition, just use its results
+                result = conditionMatches;
             } else {
-                // Existing sentence-level intersection logic
-                result = intersectMatches(result, nextResult, granularitySize);
-            }
-            
-            if (result.isEmpty()) {
-                // Short-circuit: if intersection is empty, AND will have no results
-                logger.debug("Intersection at index {} is empty, short-circuiting AND", i);
-                return result;
+                // Intersect with previous results
+                if (granularity == Query.Granularity.SENTENCE && granularitySize > 0) {
+                    // For sentence granularity with window, use windowed intersection
+                    result = intersectSentencesWithWindow(result, conditionMatches, granularitySize);
+                } else {
+                    // For document granularity or sentence without window, use simple intersection
+                    result = intersectMatches(result, conditionMatches, granularitySize);
+                }
+                
+                if (result.isEmpty()) {
+                    // Short-circuit: if intersection is empty, AND will have no matches
+                    logger.debug("Intersection is empty, short-circuiting AND");
+                    return new HashSet<>();
+                }
             }
         }
         
-        logger.debug("AND operation completed with {} matching {}", 
-                result.size(), granularity == Query.Granularity.DOCUMENT ? "documents" : "sentences");
-        return result;
+        // Merge the final working context back to the original
+        bindingContext = workingContext;
+        
+        return result != null ? result : new HashSet<>();
     }
     
+    /**
+     * Executes a logical OR condition.
+     * At least one subcondition must match for a result to be included.
+     */
     private Set<DocSentenceMatch> executeOr(
             List<Condition> conditions, 
             Map<String, IndexAccess> indexes,
-            VariableBindings variableBindings,
+            BindingContext bindingContext,
             Query.Granularity granularity,
             int granularitySize)
         throws QueryExecutionException {
         
-        logger.debug("Executing OR operation with {} conditions at {} granularity with size {}",
-                conditions.size(), granularity, granularitySize);
+        logger.debug("Executing OR condition with {} subconditions", conditions.size());
         
+        // Base case: single condition
+        if (conditions.size() == 1) {
+            Condition condition = conditions.get(0);
+            ConditionExecutor executor = executorFactory.getExecutor(condition);
+            return executor.execute(condition, indexes, bindingContext, granularity, granularitySize);
+        }
+        
+        // For OR, we need to execute all conditions and union their results
         Set<DocSentenceMatch> result = new HashSet<>();
         
-        // Process all conditions
-        for (Condition subCondition : conditions) {
-            ConditionExecutor<Condition> executor = executorFactory.getExecutor(subCondition);
-            Set<DocSentenceMatch> subResult = executor.execute(subCondition, indexes, variableBindings, granularity, granularitySize);
+        // Copy binding context to avoid modifying the original during execution
+        BindingContext combinedContext = bindingContext.copy();
+        
+        for (Condition condition : conditions) {
+            // Create a copy of the binding context for this condition
+            BindingContext conditionContext = bindingContext.copy();
             
-            if (!subResult.isEmpty()) {
-                if (result.isEmpty()) {
-                    // First non-empty result, just add all
-                    result.addAll(subResult);
-                } else if (granularity == Query.Granularity.DOCUMENT) {
-                    // For document granularity, merge matches by document ID
-                    Map<Integer, DocSentenceMatch> docMatches = new HashMap<>();
-                    
-                    // Add existing results to the map
-                    for (DocSentenceMatch match : result) {
-                        docMatches.put(match.documentId(), match);
-                    }
-                    
-                    // Merge in new results
-                    for (DocSentenceMatch match : subResult) {
-                        int docId = match.documentId();
-                        if (docMatches.containsKey(docId)) {
-                            // Document already exists, merge positions
-                            docMatches.get(docId).mergePositions(match);
-                        } else {
-                            // New document, add to map
-                            docMatches.put(docId, match);
-                        }
-                    }
-                    
-                    // Update result with merged matches
-                    result = new HashSet<>(docMatches.values());
-                } else {
-                    // For sentence granularity, use the existing union logic
-                    result = unionMatches(result, subResult);
-                }
+            // Get appropriate executor for this condition
+            ConditionExecutor executor = executorFactory.getExecutor(condition);
+            
+            // Execute the condition
+            Set<DocSentenceMatch> conditionMatches = executor.execute(
+                condition, indexes, conditionContext, granularity, granularitySize);
+            
+            if (!conditionMatches.isEmpty()) {
+                // Union with previous results
+                result = unionMatches(result, conditionMatches);
+                
+                // Merge this condition's context into the combined context
+                combinedContext = combinedContext.merge(conditionContext);
             }
         }
         
-        logger.debug("OR operation completed with {} matching {}", 
-                result.size(), granularity == Query.Granularity.DOCUMENT ? "documents" : "sentences");
+        // Update the original binding context with all bindings from all conditions
+        bindingContext = combinedContext;
+        
         return result;
     }
     
     /**
-     * Combines two sets of matches using logical AND operation (intersection).
-     * Preserves position information from both match sets.
+     * Optimizes the execution order of conditions based on variable dependencies.
+     * Conditions that produce variables should be executed before conditions that consume them.
+     *
+     * @param conditions The original list of conditions
+     * @return A new list with optimized execution order
+     */
+    private List<Condition> optimizeExecutionOrder(List<Condition> conditions) {
+        if (conditions.size() <= 1) {
+            return conditions;
+        }
+        
+        // Create a copy to manipulate
+        List<Condition> remaining = new ArrayList<>(conditions);
+        List<Condition> ordered = new ArrayList<>();
+        Set<String> availableVariables = new HashSet<>();
+        
+        // Continue until all conditions are ordered
+        while (!remaining.isEmpty()) {
+            boolean progress = false;
+            
+            // Find conditions that can be executed with available variables
+            for (int i = 0; i < remaining.size(); i++) {
+                Condition condition = remaining.get(i);
+                
+                // Check if all consumed variables are available
+                boolean canExecute = true;
+                for (String var : condition.getConsumedVariables()) {
+                    if (!availableVariables.contains(var)) {
+                        canExecute = false;
+                        break;
+                    }
+                }
+                
+                if (canExecute) {
+                    // Add condition to ordered list
+                    ordered.add(condition);
+                    remaining.remove(i);
+                    
+                    // Add produced variables to available set
+                    availableVariables.addAll(condition.getProducedVariables());
+                    
+                    progress = true;
+                    break;
+                }
+            }
+            
+            // If no progress was made, we have a circular dependency
+            // In this case, add the next condition and continue
+            if (!progress && !remaining.isEmpty()) {
+                Condition next = remaining.remove(0);
+                ordered.add(next);
+                availableVariables.addAll(next.getProducedVariables());
+            }
+        }
+        
+        logger.debug("Optimized execution order: {}", ordered.stream().map(Condition::getType).collect(Collectors.toList()));
+        return ordered;
+    }
+    
+    /**
+     * Intersects two sets of matches.
+     * For document granularity, matches are considered equal if they have the same document ID.
+     * For sentence granularity, matches are considered equal if they have the same document ID and sentence ID.
      *
      * @param set1 First set of matches
      * @param set2 Second set of matches
-     * @param windowSize Window size for sentence granularity (0 = same sentence only)
-     * @return Intersection of the two sets with combined position information
+     * @param windowSize Window size for sentence matching (0 for exact, > 0 for window)
+     * @return Intersection of the two sets
      */
     public Set<DocSentenceMatch> intersectMatches(
             Set<DocSentenceMatch> set1,
             Set<DocSentenceMatch> set2,
             int windowSize) {
-
+        
         if (set1.isEmpty() || set2.isEmpty()) {
             return new HashSet<>();
         }
-
-        logger.debug("Intersecting matches with window size: {}", windowSize);
-
-        Set<DocSentenceMatch> result = new HashSet<>();
-
-        // Determine granularity from first match in set1
-        boolean isSentenceLevel = !set1.isEmpty() && set1.iterator().next().isSentenceLevel();
-
-        if (isSentenceLevel) {
-            // Always use window-based matching, even for windowSize=0
+        
+        // Determine if we're working with document or sentence granularity
+        boolean isSentenceGranularity = set1.iterator().next().isSentenceLevel();
+        
+        if (isSentenceGranularity && windowSize > 0) {
+            // Sentence granularity with window, use special intersection
             return intersectSentencesWithWindow(set1, set2, windowSize);
-        } else {
-            // Document-level intersection
-            Map<Integer, DocSentenceMatch> documentMap = new HashMap<>();
-
-            // Index first set by document ID
+        }
+        
+        Set<DocSentenceMatch> result = new HashSet<>();
+        
+        if (isSentenceGranularity) {
+            // For sentence granularity without window, index by document ID and sentence ID
+            Map<SentenceKey, DocSentenceMatch> set1Map = new HashMap<>();
             for (DocSentenceMatch match : set1) {
-                documentMap.put(match.documentId(), match);
+                SentenceKey key = new SentenceKey(match.documentId(), match.sentenceId());
+                set1Map.put(key, match);
             }
-
-            // Check second set against the map
+            
+            // Iterate through set2 and find matches in set1
             for (DocSentenceMatch match2 : set2) {
-                DocSentenceMatch match1 = documentMap.get(match2.documentId());
-
+                SentenceKey key = new SentenceKey(match2.documentId(), match2.sentenceId());
+                DocSentenceMatch match1 = set1Map.get(key);
+                
                 if (match1 != null) {
-                    // Create a new match with combined positions
-                    DocSentenceMatch combined = new DocSentenceMatch(match1.documentId());
-
+                    // Combine positions from both matches
+                    DocSentenceMatch combined = new DocSentenceMatch(
+                        match1.documentId(), 
+                        match1.sentenceId(), 
+                        match1.getSource()
+                    );
+                    
                     // Copy positions from both matches
                     copyPositions(match1, combined);
                     copyPositions(match2, combined);
-
+                    
+                    result.add(combined);
+                }
+            }
+        } else {
+            // For document granularity, index by document ID
+            Map<Integer, DocSentenceMatch> set1Map = new HashMap<>();
+            for (DocSentenceMatch match : set1) {
+                set1Map.put(match.documentId(), match);
+            }
+            
+            // Iterate through set2 and find matches in set1
+            for (DocSentenceMatch match2 : set2) {
+                DocSentenceMatch match1 = set1Map.get(match2.documentId());
+                
+                if (match1 != null) {
+                    // Combine positions from both matches
+                    DocSentenceMatch combined = new DocSentenceMatch(
+                        match1.documentId(), 
+                        match1.getSource()
+                    );
+                    
+                    // Copy positions from both matches
+                    copyPositions(match1, combined);
+                    copyPositions(match2, combined);
+                    
                     result.add(combined);
                 }
             }
         }
-
+        
         return result;
     }
     
     /**
-     * New version of sentence intersection that uses window-based matching
+     * Intersects two sets of sentence-level matches with a window.
+     * Sentences are considered to match if they are within windowSize of each other.
+     *
+     * @param set1 First set of matches
+     * @param set2 Second set of matches
+     * @param windowSize Window size for sentence matching
+     * @return Intersection of the two sets
      */
     private Set<DocSentenceMatch> intersectSentencesWithWindow(
             Set<DocSentenceMatch> set1, 
             Set<DocSentenceMatch> set2,
             int windowSize) {
         
-        logger.debug("Window-based intersection with window size: {}", windowSize);
+        if (set1.isEmpty() || set2.isEmpty()) {
+            return new HashSet<>();
+        }
+        
+        if (windowSize <= 0) {
+            // For window size 0, use normal intersection
+            return intersectMatches(set1, set2, 0);
+        }
         
         Set<DocSentenceMatch> result = new HashSet<>();
         
-        // Special case for windowSize=0: use exact sentence matching
-        if (windowSize == 0) {
-            Map<SentenceKey, DocSentenceMatch> sentenceMap = new HashMap<>();
-            
-            // Index first set by sentence key
-            for (DocSentenceMatch match : set1) {
-                SentenceKey key = new SentenceKey(match.documentId(), match.sentenceId());
-                sentenceMap.put(key, match);
-            }
-            
-            // Check second set against the map
-            for (DocSentenceMatch match2 : set2) {
-                SentenceKey key = new SentenceKey(match2.documentId(), match2.sentenceId());
-                DocSentenceMatch match1 = sentenceMap.get(key);
-                
-                if (match1 != null) {
-                    // Create a new match with combined positions
-                    DocSentenceMatch combined = new DocSentenceMatch(
-                        match1.documentId(), match1.sentenceId());
-                    
-                    // Copy positions from both matches
-                    copyPositions(match1, combined);
-                    copyPositions(match2, combined);
-                    
-                    result.add(combined);
-                }
-            }
-            
-            return result;
-        }
-        
-        // If windowSize > 0, use window-based matching
-        
         // Group matches by document ID
-        Map<Integer, List<DocSentenceMatch>> docToSentences1 = new HashMap<>();
-        Map<Integer, List<DocSentenceMatch>> docToSentences2 = new HashMap<>();
+        Map<Integer, List<DocSentenceMatch>> set1ByDoc = set1.stream()
+            .collect(Collectors.groupingBy(DocSentenceMatch::documentId));
         
-        // Group set1 matches by document
-        for (DocSentenceMatch match : set1) {
-            int docId = match.documentId();
-            docToSentences1.computeIfAbsent(docId, k -> new ArrayList<>()).add(match);
-        }
+        Map<Integer, List<DocSentenceMatch>> set2ByDoc = set2.stream()
+            .collect(Collectors.groupingBy(DocSentenceMatch::documentId));
         
-        // Group set2 matches by document
-        for (DocSentenceMatch match : set2) {
-            int docId = match.documentId();
-            docToSentences2.computeIfAbsent(docId, k -> new ArrayList<>()).add(match);
-        }
+        // Find documents in both sets
+        Set<Integer> docsInBoth = new HashSet<>(set1ByDoc.keySet());
+        docsInBoth.retainAll(set2ByDoc.keySet());
         
-        // Process each document that appears in both sets
-        for (Integer docId : docToSentences1.keySet()) {
-            List<DocSentenceMatch> sentences1 = docToSentences1.get(docId);
-            List<DocSentenceMatch> sentences2 = docToSentences2.get(docId);
+        // For each document in both sets, find sentences within window
+        for (Integer docId : docsInBoth) {
+            List<DocSentenceMatch> doc1Matches = set1ByDoc.get(docId);
+            List<DocSentenceMatch> doc2Matches = set2ByDoc.get(docId);
             
-            if (sentences2 == null) {
-                continue; // Document not in set2
-            }
-            
-            // For each sentence in set1, find matches within the window in set2
-            for (DocSentenceMatch match1 : sentences1) {
+            // For each sentence in doc1, find nearby sentences in doc2
+            for (DocSentenceMatch match1 : doc1Matches) {
                 int sentId1 = match1.sentenceId();
                 
-                for (DocSentenceMatch match2 : sentences2) {
+                for (DocSentenceMatch match2 : doc2Matches) {
                     int sentId2 = match2.sentenceId();
                     
-                    // Check if sentences are within the window
+                    // Check if sentences are within window
                     if (Math.abs(sentId1 - sentId2) <= windowSize) {
-                        // Match found within window - create one combined match
-                        // We use the earlier sentence ID as the anchor
-                        int anchorSentId = Math.min(sentId1, sentId2);
-                        DocSentenceMatch combined = new DocSentenceMatch(docId, anchorSentId);
+                        // For each pair within window, create a match at the later sentence
+                        int resultSentId = Math.max(sentId1, sentId2);
+                        
+                        DocSentenceMatch combined = new DocSentenceMatch(
+                            docId, resultSentId, match1.getSource()
+                        );
+                        
+                        // Copy positions from both matches
                         copyPositions(match1, combined);
                         copyPositions(match2, combined);
+                        
                         result.add(combined);
                     }
                 }
@@ -354,97 +411,113 @@ public final class LogicalExecutor implements ConditionExecutor<Logical> {
         
         return result;
     }
-
+    
     /**
-     * Combines two sets of matches using logical OR operation (union).
-     * Properly merges position information for overlapping matches.
+     * Unions two sets of matches, combining positions for matches with the same document/sentence ID.
      *
      * @param set1 First set of matches
      * @param set2 Second set of matches
-     * @return Union of the two sets with merged position information
+     * @return Union of the two sets
      */
     public Set<DocSentenceMatch> unionMatches(
             Set<DocSentenceMatch> set1,
             Set<DocSentenceMatch> set2) {
-
+        
         if (set1.isEmpty()) {
-            return new HashSet<>(set2);
+            return set2;
         }
-
+        
         if (set2.isEmpty()) {
-            return new HashSet<>(set1);
+            return set1;
         }
-
+        
+        // Determine if we're working with document or sentence granularity
+        boolean isSentenceGranularity = set1.iterator().next().isSentenceLevel();
+        
         Set<DocSentenceMatch> result = new HashSet<>();
-
-        // Determine granularity from first match in set1
-        boolean isSentenceLevel = set1.iterator().next().isSentenceLevel();
-
-        if (isSentenceLevel) {
-            // Sentence-level union
-            Map<SentenceKey, DocSentenceMatch> sentenceMap = new HashMap<>();
-
-            // Process first set
+        
+        if (isSentenceGranularity) {
+            // For sentence granularity, index by document ID and sentence ID
+            Map<SentenceKey, DocSentenceMatch> resultMap = new HashMap<>();
+            
+            // Add matches from set1
             for (DocSentenceMatch match : set1) {
                 SentenceKey key = new SentenceKey(match.documentId(), match.sentenceId());
-                sentenceMap.put(key, match);
+                resultMap.put(key, match);
             }
-
-            // Process second set, merging with first set when overlapping
-            for (DocSentenceMatch match2 : set2) {
-                SentenceKey key = new SentenceKey(match2.documentId(), match2.sentenceId());
-                DocSentenceMatch existing = sentenceMap.get(key);
-
+            
+            // Add matches from set2, combining positions if needed
+            for (DocSentenceMatch match : set2) {
+                SentenceKey key = new SentenceKey(match.documentId(), match.sentenceId());
+                DocSentenceMatch existing = resultMap.get(key);
+                
                 if (existing != null) {
-                    // Merge positions into existing match
-                    copyPositions(match2, existing);
+                    // Combine positions from both matches
+                    DocSentenceMatch combined = new DocSentenceMatch(
+                        existing.documentId(), 
+                        existing.sentenceId(), 
+                        existing.getSource()
+                    );
+                    
+                    // Copy positions from both matches
+                    copyPositions(existing, combined);
+                    copyPositions(match, combined);
+                    
+                    resultMap.put(key, combined);
                 } else {
-                    // Add new match to the map
-                    sentenceMap.put(key, match2);
+                    // No existing match, just add this one
+                    resultMap.put(key, match);
                 }
             }
-
-            // Convert map values to result set
-            result.addAll(sentenceMap.values());
+            
+            result.addAll(resultMap.values());
         } else {
-            // Document-level union
-            Map<Integer, DocSentenceMatch> documentMap = new HashMap<>();
-
-            // Process first set
+            // For document granularity, index by document ID
+            Map<Integer, DocSentenceMatch> resultMap = new HashMap<>();
+            
+            // Add matches from set1
             for (DocSentenceMatch match : set1) {
-                documentMap.put(match.documentId(), match);
+                resultMap.put(match.documentId(), match);
             }
-
-            // Process second set, merging with first set when overlapping
-            for (DocSentenceMatch match2 : set2) {
-                DocSentenceMatch existing = documentMap.get(match2.documentId());
-
+            
+            // Add matches from set2, combining positions if needed
+            for (DocSentenceMatch match : set2) {
+                DocSentenceMatch existing = resultMap.get(match.documentId());
+                
                 if (existing != null) {
-                    // Merge positions into existing match
-                    copyPositions(match2, existing);
+                    // Combine positions from both matches
+                    DocSentenceMatch combined = new DocSentenceMatch(
+                        existing.documentId(), 
+                        existing.getSource()
+                    );
+                    
+                    // Copy positions from both matches
+                    copyPositions(existing, combined);
+                    copyPositions(match, combined);
+                    
+                    resultMap.put(match.documentId(), combined);
                 } else {
-                    // Add new match to the map
-                    documentMap.put(match2.documentId(), match2);
+                    // No existing match, just add this one
+                    resultMap.put(match.documentId(), match);
                 }
             }
-
-            // Convert map values to result set
-            result.addAll(documentMap.values());
+            
+            result.addAll(resultMap.values());
         }
-
+        
         return result;
     }
-
+    
     /**
-     * Helper method to copy positions from one match to another
+     * Copies all positions from one match to another.
      */
     private void copyPositions(DocSentenceMatch from, DocSentenceMatch to) {
-        // Copy all positions from source to target
-        for (String key : from.getKeys()) {
-            to.addPositions(key, from.getPositions(key));
-        }
+        from.getAllPositions().forEach(to::addPositions);
     }
-
+    
+    /**
+     * Helper record for sentence identification.
+     */
     private record SentenceKey(int documentId, int sentenceId) {
         @Override
         public boolean equals(Object o) {

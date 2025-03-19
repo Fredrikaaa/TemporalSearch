@@ -1,7 +1,7 @@
 package com.example.query.model;
 
 import com.example.core.IndexAccess;
-import com.example.query.executor.VariableBindings;
+import com.example.query.binding.BindingContext;
 import com.example.query.sqlite.SqliteAccessor;
 import tech.tablesaw.api.StringColumn;
 import tech.tablesaw.api.Table;
@@ -9,9 +9,7 @@ import tech.tablesaw.columns.Column;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.HashSet;
-import java.util.ArrayList;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,15 +56,15 @@ public class SnippetColumn implements SelectColumn {
     
     @Override
     public void populateColumn(Table table, int rowIndex, DocSentenceMatch match, 
-                              VariableBindings variableBindings, Map<String, IndexAccess> indexes) {
+                              BindingContext bindingContext, Map<String, IndexAccess> indexes) {
         StringColumn column = (StringColumn) table.column(getColumnName());
         
         System.out.println("SnippetColumn: Populating column for variable: " + snippetNode.variable() + ", match: " + match);
         
         // Extract variable name without ? prefix
         String variableName = snippetNode.variable();
-        if (variableName.startsWith("?")) {
-            variableName = variableName.substring(1);
+        if (!variableName.startsWith("?")) {
+            variableName = "?" + variableName;
         }
         
         // Get the source for this document
@@ -77,41 +75,20 @@ public class SnippetColumn implements SelectColumn {
         String variableValue = null;
         int sentenceId = match.isSentenceLevel() ? match.sentenceId() : -1;
         
-        if (match.isSentenceLevel()) {
-            // For sentence-level match, use sentence-level bindings
-            Map<String, List<String>> sentVars = variableBindings.getValuesForSentence(documentId, sentenceId);
-            System.out.println("SnippetColumn: Sentence variables: " + sentVars);
-            List<String> values = sentVars.get(variableName);
-            if (values != null && !values.isEmpty()) {
-                variableValue = values.get(0);
-                System.out.println("SnippetColumn: Found sentence value: " + variableValue);
-            }
+        // Try to get a String value for this variable
+        Optional<String> valueOpt = bindingContext.getValue(variableName, String.class);
+        
+        if (valueOpt.isPresent()) {
+            variableValue = valueOpt.get();
+            System.out.println("SnippetColumn: Found value: " + variableValue);
         } else {
-            // For document-level match, first try document-level bindings
-            Map<String, List<String>> docVars = variableBindings.getValuesForDocument(documentId);
-            System.out.println("SnippetColumn: Document variables: " + docVars);
-            List<String> values = docVars.get(variableName);
-            if (values != null && !values.isEmpty()) {
+            // Try to get all values for this variable
+            List<String> values = bindingContext.getValues(variableName, String.class);
+            if (!values.isEmpty()) {
                 variableValue = values.get(0);
-                System.out.println("SnippetColumn: Found document value: " + variableValue);
+                System.out.println("SnippetColumn: Found value from list: " + variableValue);
             } else {
-                // If no document-level bindings, search for sentence-level bindings
-                System.out.println("SnippetColumn: No document-level bindings, checking all sentences for document: " + match.documentId());
-                
-                // Get all sentences with bindings for this document
-                for (VariableBindings.SentenceKey key : variableBindings.getSentenceKeys()) {
-                    if (key.getDocumentId() == match.documentId()) {
-                        Map<String, List<String>> sentVars = variableBindings.getValuesForSentence(key.getDocumentId(), key.getSentenceId());
-                        List<String> sentValues = sentVars.get(variableName);
-                        if (sentValues != null && !sentValues.isEmpty()) {
-                            // Use the first value we find
-                            variableValue = sentValues.get(0);
-                            sentenceId = key.getSentenceId(); // Use this sentence for context
-                            System.out.println("SnippetColumn: Found sentence-level binding in sentence " + key.getSentenceId() + ": " + variableValue);
-                            break; // Just use the first one we find
-                        }
-                    }
-                }
+                System.out.println("SnippetColumn: No value found for variable: " + variableName);
             }
         }
         

@@ -1,7 +1,7 @@
 package com.example.query.model;
 
 import com.example.core.IndexAccess;
-import com.example.query.executor.VariableBindings;
+import com.example.query.binding.BindingContext;
 import com.example.query.sqlite.SqliteAccessor;
 import tech.tablesaw.api.StringColumn;
 import tech.tablesaw.api.Table;
@@ -36,7 +36,7 @@ public class TitleColumn implements SelectColumn {
     
     @Override
     public void populateColumn(Table table, int rowIndex, DocSentenceMatch match, 
-                              VariableBindings variableBindings, Map<String, IndexAccess> indexes) {
+                              BindingContext bindingContext, Map<String, IndexAccess> indexes) {
         StringColumn column = (StringColumn) table.column(getColumnName());
         
         // Get the source for this document

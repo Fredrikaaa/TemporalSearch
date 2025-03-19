@@ -5,6 +5,7 @@ import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Condition;
 import com.example.query.model.condition.Not;
+import com.example.query.binding.BindingContext;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -36,7 +37,7 @@ public final class NotExecutor implements ConditionExecutor<Not> {
     
     @Override
     public Set<DocSentenceMatch> execute(Not condition, Map<String, IndexAccess> indexes,
-                               VariableBindings variableBindings, Query.Granularity granularity,
+                               BindingContext bindingContext, Query.Granularity granularity,
                                int granularitySize)
         throws QueryExecutionException {
         
@@ -45,9 +46,14 @@ public final class NotExecutor implements ConditionExecutor<Not> {
         
         // Execute inner condition
         Condition innerCondition = condition.condition();
+        
+        // NOT operations cannot bind variables (they remove matches, not add bindings)
+        // Use a temporary binding context to avoid polluting the main context
+        BindingContext tempContext = BindingContext.empty();
+        
         ConditionExecutor<Condition> executor = executorFactory.getExecutor(innerCondition);
         Set<DocSentenceMatch> innerMatches = executor.execute(
-            innerCondition, indexes, variableBindings, granularity, granularitySize);
+            innerCondition, indexes, tempContext, granularity, granularitySize);
         
         Condition negatedCondition = condition.condition();
         logger.debug("Executing NOT operation on condition: {} with granularity: {} and size: {}", 

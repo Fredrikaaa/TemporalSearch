@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 import com.example.core.IndexAccess;
 import com.example.core.Position;
 import com.example.core.PositionList;
+import com.example.query.binding.BindingContext;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Contains;
@@ -33,18 +34,18 @@ public class ContainsConditionExecutorTest {
     
     private ContainsExecutor executor;
     private Map<String, IndexAccess> indexes;
-    private VariableBindings variableBindings;
+    private BindingContext bindingContext;
     
     @BeforeEach
     void setUp() {
-        executor = new ContainsExecutor("testVar");
+        executor = new ContainsExecutor();
         
         indexes = new HashMap<>();
         indexes.put("unigram", mockUnigramIndex);
         indexes.put("bigram", mockBigramIndex);
         indexes.put("trigram", mockTrigramIndex);
         
-        variableBindings = new VariableBindings();
+        bindingContext = BindingContext.empty();
     }
     
     @Test
@@ -59,7 +60,7 @@ public class ContainsConditionExecutorTest {
         when(mockUnigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         verify(mockUnigramIndex).get(any());
@@ -87,7 +88,7 @@ public class ContainsConditionExecutorTest {
         when(mockBigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         verify(mockBigramIndex).get(any());
@@ -118,7 +119,7 @@ public class ContainsConditionExecutorTest {
         when(mockBigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         verify(mockBigramIndex).get(any());
@@ -146,7 +147,7 @@ public class ContainsConditionExecutorTest {
         when(mockTrigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         verify(mockTrigramIndex).get(any());
@@ -171,7 +172,7 @@ public class ContainsConditionExecutorTest {
         // This test will need to be updated when wildcard support is implemented
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         assertTrue(result.isEmpty());
@@ -186,7 +187,7 @@ public class ContainsConditionExecutorTest {
         when(mockUnigramIndex.get(any())).thenReturn(Optional.empty());
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
         
         // Verify
         verify(mockUnigramIndex).get(any());
@@ -201,7 +202,7 @@ public class ContainsConditionExecutorTest {
         // Execute and verify exception
         QueryExecutionException exception = assertThrows(
             QueryExecutionException.class,
-            () -> executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0)
+            () -> executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0)
         );
         
         assertEquals(QueryExecutionException.ErrorType.INVALID_CONDITION, exception.getErrorType());
@@ -216,7 +217,7 @@ public class ContainsConditionExecutorTest {
         // Execute and verify exception
         QueryExecutionException exception = assertThrows(
             QueryExecutionException.class,
-            () -> executor.execute(condition, emptyIndexes, variableBindings, Query.Granularity.DOCUMENT, 1)
+            () -> executor.execute(condition, emptyIndexes, bindingContext, Query.Granularity.DOCUMENT, 1)
         );
         
         // Verify the exception details
@@ -239,7 +240,7 @@ public class ContainsConditionExecutorTest {
         lenient().when(mockTrigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
         
         // Verify interactions with all indexes
         System.out.println("Unigram interactions: " + mockingDetails(mockUnigramIndex).getInvocations().size());

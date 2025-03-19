@@ -6,6 +6,7 @@ import com.example.core.PositionList;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Pos;
+import com.example.query.binding.BindingContext;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -27,15 +28,17 @@ public final class PosExecutor implements ConditionExecutor<Pos> {
     private static final Logger logger = LoggerFactory.getLogger(PosExecutor.class);
     
     private static final String POS_INDEX = "pos";
-    private final String variableName;
-
-    public PosExecutor(String variableName) {
-        this.variableName = variableName;
+    
+    /**
+     * Creates a new POS executor.
+     */
+    public PosExecutor() {
+        // No initialization required
     }
 
     @Override
     public Set<DocSentenceMatch> execute(Pos condition, Map<String, IndexAccess> indexes,
-                               VariableBindings variableBindings, Query.Granularity granularity,
+                               BindingContext bindingContext, Query.Granularity granularity,
                                int granularitySize)
         throws QueryExecutionException {
         
@@ -54,6 +57,7 @@ public final class PosExecutor implements ConditionExecutor<Pos> {
         String posTag = condition.posTag();
         String term = condition.term();
         boolean isVariable = condition.isVariable();
+        String variableName = condition.variableName();
         
         // Normalize POS tag to lowercase
         String normalizedPosTag = posTag.toLowerCase();
@@ -83,7 +87,7 @@ public final class PosExecutor implements ConditionExecutor<Pos> {
         try {
             if (isVariable) {
                 // Variable binding mode - extract terms with the given POS tag
-                result = executeVariableExtraction(normalizedPosTag, normalizedTerm, index, variableBindings, granularity);
+                result = executeVariableExtraction(normalizedPosTag, variableName, index, bindingContext, granularity);
             } else {
                 // Search mode - find documents with specific term and POS tag
                 result = executeTermSearch(normalizedPosTag, normalizedTerm, index, granularity);
@@ -107,23 +111,21 @@ public final class PosExecutor implements ConditionExecutor<Pos> {
      * This mode extracts all terms with the given POS tag and binds them to the variable.
      *
      * @param posTag The POS tag to extract
-     * @param variableName The variable name to bind to (without the ? prefix)
+     * @param variableName The variable name to bind to
      * @param index The index to search in
-     * @param variableBindings The variable bindings to update
+     * @param bindingContext The binding context to update
      * @param granularity Whether to return document or sentence level matches
      * @return Set of matches at the specified granularity level
      */
     private Set<DocSentenceMatch> executeVariableExtraction(String posTag, String variableName, IndexAccess index,
-                                                  VariableBindings variableBindings, Query.Granularity granularity) 
+                                                  BindingContext bindingContext, Query.Granularity granularity) 
         throws Exception {
         
         logger.debug("Extracting all terms with POS tag '{}' and binding to variable '{}' at {} granularity", 
                     posTag, variableName, granularity);
         
-        // Remove the ? from variable name if present
-        if (variableName.startsWith("?")) {
-            variableName = variableName.substring(1);
-        }
+        // Ensure variable name is properly formatted
+        String formattedVarName = ensureVariableName(variableName);
         
         Set<DocSentenceMatch> matches = new HashSet<>();
         
@@ -155,11 +157,16 @@ public final class PosExecutor implements ConditionExecutor<Pos> {
                 for (Position position : positions.getPositions()) {
                     int docId = position.getDocumentId();
                     int sentenceId = position.getSentenceId();
+                    int beginPos = position.getBeginPosition();
+                    int endPos = position.getEndPosition();
                     
-                    // Format: term@beginPos:endPos
-                    String valueWithPosition = term + "@" + position.getBeginPosition() + ":" + position.getEndPosition();
-                    variableBindings.addBinding(docId, variableName, valueWithPosition);
+                    // Create text span value
+                    TextSpan span = new TextSpan(term, beginPos, endPos);
                     
+                    // Add binding to context
+                    bindingContext.bindValue(formattedVarName, span);
+                    
+                    // Add match to results
                     if (granularity == Query.Granularity.DOCUMENT) {
                         matches.add(new DocSentenceMatch(docId));
                     } else {
@@ -213,7 +220,12 @@ public final class PosExecutor implements ConditionExecutor<Pos> {
             Map<Integer, DocSentenceMatch> docMatches = new HashMap<>();
             
             for (Position position : positionList.getPositions()) {
-                addDocumentMatch(position, docMatches, variableName);
+                int docId = position.getDocumentId();
+                DocSentenceMatch match = docMatches.computeIfAbsent(docId, 
+                    id -> new DocSentenceMatch(id));
+                
+                // Add the position to the match with a standard key
+                match.addPosition("match", position);
             }
             
             matches.addAll(docMatches.values());
@@ -222,7 +234,15 @@ public final class PosExecutor implements ConditionExecutor<Pos> {
             Map<SentenceKey, DocSentenceMatch> sentMatches = new HashMap<>();
             
             for (Position position : positionList.getPositions()) {
-                addSentenceMatch(position, sentMatches, variableName);
+                int docId = position.getDocumentId();
+                int sentId = position.getSentenceId();
+                
+                SentenceKey key = new SentenceKey(docId, sentId);
+                DocSentenceMatch match = sentMatches.computeIfAbsent(key, 
+                    k -> new DocSentenceMatch(docId, sentId));
+                
+                // Add the position to the match with a standard key
+                match.addPosition("match", position);
             }
             
             matches.addAll(sentMatches.values());
@@ -232,5 +252,49 @@ public final class PosExecutor implements ConditionExecutor<Pos> {
                 granularity == Query.Granularity.DOCUMENT ? "documents" : "sentences");
         
         return matches;
+    }
+    
+    /**
+     * Ensures that a variable name starts with ?.
+     * This is a utility method to normalize variable names.
+     * 
+     * @param variableName The variable name to check
+     * @return The variable name with ? prefix if needed
+     */
+    private String ensureVariableName(String variableName) {
+        if (variableName == null) {
+            return null;
+        }
+        return variableName.startsWith("?") ? variableName : "?" + variableName;
+    }
+    
+    /**
+     * Represents a text span with position information.
+     * This is used as the value type for variable bindings.
+     */
+    public record TextSpan(String text, int beginPosition, int endPosition) {
+        @Override
+        public String toString() {
+            return String.format("%s@%d:%d", text, beginPosition, endPosition);
+        }
+    }
+    
+    /**
+     * Helper record for sentence identification.
+     * This is a duplicate of the one in ConditionExecutor to maintain compatibility.
+     */
+    record SentenceKey(int documentId, int sentenceId) {
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            SentenceKey that = (SentenceKey) o;
+            return documentId == that.documentId && sentenceId == that.sentenceId;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(documentId, sentenceId);
+        }
     }
 } 

@@ -1,6 +1,6 @@
 package com.example.query.result;
 
-import com.example.query.executor.VariableBindings;
+import com.example.query.binding.BindingContext;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.core.IndexAccess;
@@ -28,7 +28,7 @@ class TableResultServiceTest {
     private TableResultService tableResultService;
     private Query mockQuery;
     private Set<DocSentenceMatch> mockMatches;
-    private VariableBindings mockVariableBindings;
+    private BindingContext mockBindingContext;
     private Map<String, IndexAccess> mockIndexes;
     
     @BeforeEach
@@ -39,7 +39,7 @@ class TableResultServiceTest {
         // Create mock objects
         mockQuery = mock(Query.class);
         mockMatches = new HashSet<>();
-        mockVariableBindings = mock(VariableBindings.class);
+        mockBindingContext = mock(BindingContext.class);
         mockIndexes = new HashMap<>();
         
         // Set up mock query
@@ -53,17 +53,15 @@ class TableResultServiceTest {
         mockMatches.add(match);
         
         // Set up variable bindings
-        when(mockVariableBindings.getValueWithFallback(eq(1), eq(0), eq("?person")))
+        when(mockBindingContext.getValue(eq("?person"), eq(String.class)))
             .thenReturn(Optional.of("John Smith"));
-        when(mockVariableBindings.getValueWithFallback(eq(1), eq(0), eq("?location")))
+        when(mockBindingContext.getValue(eq("?location"), eq(String.class)))
             .thenReturn(Optional.of("New York"));
         
-        // Set up variable names for document and sentence
-        Map<String, List<String>> docVars = new HashMap<>();
-        docVars.put("?person", List.of("John Smith"));
-        docVars.put("?location", List.of("New York"));
-        when(mockVariableBindings.getValuesForDocument(eq(1))).thenReturn(docVars);
-        when(mockVariableBindings.getValuesForSentence(eq(1), eq(0))).thenReturn(docVars);
+        // Set up variable names
+        when(mockBindingContext.getVariableNames()).thenReturn(Set.of("?person", "?location"));
+        when(mockBindingContext.getValues(eq("?person"), eq(String.class))).thenReturn(List.of("John Smith"));
+        when(mockBindingContext.getValues(eq("?location"), eq(String.class))).thenReturn(List.of("New York"));
         
         // Mock the table generation to return a simple table
         doAnswer(invocation -> {
@@ -77,7 +75,7 @@ class TableResultServiceTest {
     @DisplayName("Test generating a table from query results")
     void testGenerateTable() throws ResultGenerationException {
         // When
-        Table table = tableResultService.generateTable(mockQuery, mockMatches, mockVariableBindings, mockIndexes);
+        Table table = tableResultService.generateTable(mockQuery, mockMatches, mockBindingContext, mockIndexes);
         
         // Then
         assertNotNull(table, "Table should not be null");
@@ -89,7 +87,7 @@ class TableResultServiceTest {
     @DisplayName("Test exporting table to CSV format")
     void testExportTableToCsv(@TempDir Path tempDir) throws ResultGenerationException, IOException {
         // Given
-        Table table = tableResultService.generateTable(mockQuery, mockMatches, mockVariableBindings, mockIndexes);
+        Table table = tableResultService.generateTable(mockQuery, mockMatches, mockBindingContext, mockIndexes);
         File outputFile = tempDir.resolve("test-output.csv").toFile();
         
         // When
@@ -108,7 +106,7 @@ class TableResultServiceTest {
     @DisplayName("Test formatting table as string")
     void testFormatTable() throws ResultGenerationException {
         // Given
-        Table table = tableResultService.generateTable(mockQuery, mockMatches, mockVariableBindings, mockIndexes);
+        Table table = tableResultService.generateTable(mockQuery, mockMatches, mockBindingContext, mockIndexes);
         
         // When
         String formatted = tableResultService.formatTable(table);
@@ -134,16 +132,16 @@ class TableResultServiceTest {
             List.of(new VariableColumn("existingColumn")) // Only select existingColumn
         );
         
-        // Create a match and variable bindings
+        // Create a match and binding context
         DocSentenceMatch match = new DocSentenceMatch(1, "test");
         Set<DocSentenceMatch> matches = Set.of(match);
-        VariableBindings variableBindings = new VariableBindings();
-        variableBindings.addBinding(1, "existingColumn", "value");
+        BindingContext bindingContext = BindingContext.empty();
+        bindingContext.bindValue("?existingColumn", "value");
         
         // Verify that the exception is thrown
         ResultGenerationException exception = assertThrows(
             ResultGenerationException.class,
-            () -> realTableResultService.generateTable(query, matches, variableBindings, Map.of())
+            () -> realTableResultService.generateTable(query, matches, bindingContext, Map.of())
         );
         
         // Verify the exception message

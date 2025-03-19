@@ -70,4 +70,33 @@ public sealed interface Condition
     default VariableType getProducedVariableType() {
         return VariableType.ANY;
     }
+    
+    /**
+     * Determines if the condition can be executed with the current binding context.
+     * This is used for dependency-aware execution planning.
+     * 
+     * @param bindingContext The current binding context
+     * @return true if all required variables are available in the context, false otherwise
+     */
+    default boolean canExecute(BindingContext bindingContext) {
+        // By default, a condition can execute if all consumed variables are in the context
+        for (String var : getConsumedVariables()) {
+            if (!bindingContext.hasValue(var)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    
+    /**
+     * Prepares the binding context for variable production.
+     * This is called before execution to set up any necessary context.
+     * 
+     * @param bindingContext The binding context to prepare
+     * @return The updated binding context (may be the same instance or a new one)
+     */
+    default BindingContext prepareBindingContext(BindingContext bindingContext) {
+        // Default implementation returns the binding context unchanged
+        return bindingContext;
+    }
 } 

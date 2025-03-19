@@ -6,6 +6,7 @@ import com.example.core.PositionList;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Ner;
+import com.example.query.binding.BindingContext;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -28,15 +29,16 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
     private static final String NER_INDEX = "ner";
     private static final String DATE_INDEX = "ner_date";
 
-    private final String variableName;
-
-    public NerExecutor(String variableName) {
-        this.variableName = variableName;
+    /**
+     * Creates a new NER executor.
+     */
+    public NerExecutor() {
+        // No initialization required
     }
 
     @Override
     public Set<DocSentenceMatch> execute(Ner condition, Map<String, IndexAccess> indexes,
-                               VariableBindings variableBindings, Query.Granularity granularity,
+                               BindingContext bindingContext, Query.Granularity granularity,
                                int granularitySize)
         throws QueryExecutionException {
         
@@ -81,11 +83,11 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
         try {
             if (isVariable) {
                 // Variable binding mode - extract entities of the given type
-                result = executeVariableExtraction(normalizedEntityType, variableName, index, variableBindings, granularity);
+                result = executeVariableExtraction(normalizedEntityType, variableName, index, bindingContext, granularity);
                 
                 // Add debug logging to check variable bindings
-                logger.debug("After variable extraction for type '{}', variable '{}', variable bindings: {}", 
-                             normalizedEntityType, variableName, variableBindings);
+                logger.debug("After variable extraction for type '{}', variable '{}', binding context: {}", 
+                             normalizedEntityType, variableName, bindingContext);
             } else {
                 // Search mode - find documents with specific entity type
                 result = executeEntitySearch(normalizedEntityType, index, granularity);
@@ -111,21 +113,19 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
      * @param entityType The entity type to extract
      * @param variableName The variable name to bind to (without the ? prefix)
      * @param index The index to search in
-     * @param variableBindings The variable bindings to update
+     * @param bindingContext The binding context to update
      * @param granularity Whether to return document or sentence level matches
      * @return Set of matches at the specified granularity level
      */
     private Set<DocSentenceMatch> executeVariableExtraction(String entityType, String variableName, IndexAccess index,
-                                                  VariableBindings variableBindings, Query.Granularity granularity) 
+                                                  BindingContext bindingContext, Query.Granularity granularity) 
         throws Exception {
         
         logger.debug("Extracting all entities of type '{}' and binding to variable '{}' at {} granularity", 
                     entityType, variableName, granularity);
         
-        // Remove the ? from variable name if present
-        if (variableName.startsWith("?")) {
-            variableName = variableName.substring(1);
-        }
+        // Ensure variable name is properly formatted
+        variableName = ensureVariableName(variableName);
         
         Set<DocSentenceMatch> matches = new HashSet<>();
         
@@ -151,15 +151,14 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
                         int beginPosition = position.getBeginPosition();
                         int endPosition = position.getEndPosition();
                         
-                        // Format the value with position information: value@beginPos:endPos
-                        String valueWithPosition = String.format("%s@%d:%d", dateStr, beginPosition, endPosition);
+                        // Format the value with position information
+                        EntityValue entityValue = new EntityValue(dateStr, beginPosition, endPosition);
                         
-                        // Always add sentence-level binding for precise text extraction
-                        variableBindings.addBinding(docId, sentenceId, variableName, valueWithPosition);
+                        // Add the binding to the context
+                        bindingContext.bindValue(variableName, entityValue);
                         
-                        // For document granularity, also add a document-level binding
+                        // Add match to results based on granularity
                         if (granularity == Query.Granularity.DOCUMENT) {
-                            variableBindings.addBinding(docId, variableName, valueWithPosition);
                             matches.add(new DocSentenceMatch(docId));
                         } else {
                             matches.add(new DocSentenceMatch(docId, sentenceId));
@@ -190,7 +189,7 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
                     iterator.next(); // Move to next entry
                     
                     // Extract entity value (remove prefix)
-                    String entityValue = key.substring(prefix.length());
+                    String entityText = key.substring(prefix.length());
                     PositionList positions = PositionList.deserialize(valueBytes);
                     
                     // Bind entity value to variable for each document/sentence
@@ -200,15 +199,14 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
                         int beginPos = position.getBeginPosition();
                         int endPos = position.getEndPosition();
                         
-                        // Format the value with position information: value@beginPos:endPos
-                        String valueWithPosition = String.format("%s@%d:%d", entityValue, beginPos, endPos);
+                        // Create entity value object
+                        EntityValue entityValue = new EntityValue(entityText, beginPos, endPos);
                         
-                        // Always add sentence-level binding for precise text extraction
-                        variableBindings.addBinding(docId, sentenceId, variableName, valueWithPosition);
+                        // Add the binding to the context
+                        bindingContext.bindValue(variableName, entityValue);
                         
-                        // For document granularity, also add a document-level binding
+                        // Add match to results based on granularity
                         if (granularity == Query.Granularity.DOCUMENT) {
-                            variableBindings.addBinding(docId, variableName, valueWithPosition);
                             matches.add(new DocSentenceMatch(docId));
                         } else {
                             matches.add(new DocSentenceMatch(docId, sentenceId));
@@ -317,5 +315,27 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
         }
         
         return matches;
+    }
+    
+    /**
+     * Ensures that a variable name starts with ?.
+     * This is a utility method to normalize variable names.
+     * 
+     * @param variableName The variable name to check
+     * @return The variable name with ? prefix if needed
+     */
+    private String ensureVariableName(String variableName) {
+        return variableName.startsWith("?") ? variableName : "?" + variableName;
+    }
+    
+    /**
+     * Represents an entity value with position information.
+     * This is used as the value type for variable bindings.
+     */
+    public record EntityValue(String text, int beginPosition, int endPosition) {
+        @Override
+        public String toString() {
+            return String.format("%s@%d:%d", text, beginPosition, endPosition);
+        }
     }
 } 

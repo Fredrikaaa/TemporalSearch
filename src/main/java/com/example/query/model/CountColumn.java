@@ -1,7 +1,7 @@
 package com.example.query.model;
 
 import com.example.core.IndexAccess;
-import com.example.query.executor.VariableBindings;
+import com.example.query.binding.BindingContext;
 import tech.tablesaw.api.IntColumn;
 import tech.tablesaw.api.Table;
 import tech.tablesaw.columns.Column;
@@ -45,7 +45,7 @@ public class CountColumn implements SelectColumn {
     
     @Override
     public void populateColumn(Table table, int rowIndex, DocSentenceMatch match, 
-                              VariableBindings variableBindings, Map<String, IndexAccess> indexes) {
+                              BindingContext bindingContext, Map<String, IndexAccess> indexes) {
         // For simplicity, we'll just set a count of 1 for each match
         // In a real implementation, you would calculate the count based on the count node configuration
         IntColumn column = (IntColumn) table.column(getColumnName());

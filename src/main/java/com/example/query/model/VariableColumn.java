@@ -1,7 +1,7 @@
 package com.example.query.model;
 
 import com.example.core.IndexAccess;
-import com.example.query.executor.VariableBindings;
+import com.example.query.binding.BindingContext;
 import tech.tablesaw.api.StringColumn;
 import tech.tablesaw.api.Table;
 import tech.tablesaw.columns.Column;
@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.ArrayList;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,56 +55,33 @@ public class VariableColumn implements SelectColumn {
     
     @Override
     public void populateColumn(Table table, int rowIndex, DocSentenceMatch match, 
-                              VariableBindings variableBindings, Map<String, IndexAccess> indexes) {
+                              BindingContext bindingContext, Map<String, IndexAccess> indexes) {
         StringColumn column = (StringColumn) table.column(getColumnName());
         
         System.out.println("VariableColumn: Populating column for variable: " + variableName + ", match: " + match);
         
+        // Add ? prefix if needed
+        String varName = variableName.startsWith("?") ? variableName : "?" + variableName;
+        
+        // Try to get a String value for this variable
+        Optional<String> valueOpt = bindingContext.getValue(varName, String.class);
         String value = null;
-        if (match.isSentenceLevel()) {
-            // For sentence-level match, use sentence-level bindings
-            Map<String, List<String>> sentVars = variableBindings.getValuesForSentence(match.documentId(), match.sentenceId());
-            System.out.println("VariableColumn: Sentence variables: " + sentVars);
-            List<String> values = sentVars.get(variableName);
-            if (values != null && !values.isEmpty()) {
-                value = values.get(0);
-                System.out.println("VariableColumn: Found sentence value: " + value);
-            }
+        
+        if (valueOpt.isPresent()) {
+            value = valueOpt.get();
+            System.out.println("VariableColumn: Found value: " + value);
         } else {
-            // For document-level match, first try document-level bindings
-            Map<String, List<String>> docVars = variableBindings.getValuesForDocument(match.documentId());
-            System.out.println("VariableColumn: Document variables: " + docVars);
-            List<String> values = docVars.get(variableName);
-            
-            if (values != null && !values.isEmpty()) {
+            // Try to get all values for this variable
+            List<String> values = bindingContext.getValues(varName, String.class);
+            if (!values.isEmpty()) {
                 value = values.get(0);
-                System.out.println("VariableColumn: Found document value: " + value);
+                System.out.println("VariableColumn: Found value from list: " + value);
             } else {
-                // If no document-level bindings, consolidate all sentence-level bindings for this document
-                System.out.println("VariableColumn: No document-level bindings, checking all sentences for document: " + match.documentId());
-                
-                // Get all sentences with bindings for this document
-                Set<String> allValues = new HashSet<>();
-                for (VariableBindings.SentenceKey key : variableBindings.getSentenceKeys()) {
-                    if (key.getDocumentId() == match.documentId()) {
-                        Map<String, List<String>> sentVars = variableBindings.getValuesForSentence(key.getDocumentId(), key.getSentenceId());
-                        List<String> sentValues = sentVars.get(variableName);
-                        if (sentValues != null && !sentValues.isEmpty()) {
-                            allValues.addAll(sentValues);
-                            System.out.println("VariableColumn: Found sentence-level binding in sentence " + key.getSentenceId() + ": " + sentValues);
-                        }
-                    }
-                }
-                
-                if (!allValues.isEmpty()) {
-                    // Use the first value we found (or we could join them if multiple are needed)
-                    value = new ArrayList<>(allValues).get(0);
-                    System.out.println("VariableColumn: Using first sentence-level value: " + value);
-                }
+                System.out.println("VariableColumn: No value found for variable: " + varName);
             }
         }
         
-        // Extract the actual entity value from the format "term@beginPos:endPos"
+        // Extract the actual entity value from the format "term@beginPos:endPos" if present
         if (value != null) {
             int atIndex = value.indexOf('@');
             if (atIndex > 0) {

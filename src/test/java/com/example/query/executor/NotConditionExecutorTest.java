@@ -4,6 +4,7 @@ import com.example.core.IndexAccess;
 import com.example.core.IndexAccessException;
 import com.example.core.Position;
 import com.example.core.PositionList;
+import com.example.query.binding.BindingContext;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Contains;
@@ -65,7 +66,7 @@ class NotConditionExecutorTest {
         Set<DocSentenceMatch> results = notExecutor.execute(
             notCondition, 
             indexes, 
-            new VariableBindings(),
+            BindingContext.empty(),
             Query.Granularity.DOCUMENT,
             1
         );
@@ -94,7 +95,7 @@ class NotConditionExecutorTest {
         Set<DocSentenceMatch> results = notExecutor.execute(
             notCondition, 
             indexes, 
-            new VariableBindings(),
+            BindingContext.empty(),
             Query.Granularity.SENTENCE,
             1
         );

@@ -6,8 +6,9 @@ import com.example.core.PositionList;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Contains;
-import java.util.Objects;
+import com.example.query.binding.BindingContext;
 
+import java.util.Objects;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -34,15 +35,16 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
     private static final String TRIGRAM_INDEX = "trigram";
     private static final char DELIMITER = IndexAccess.NGRAM_DELIMITER;
 
-    private final String variableName;
-
-    public ContainsExecutor(String variableName) {
-        this.variableName = variableName;
+    /**
+     * Creates a new ContainsExecutor.
+     */
+    public ContainsExecutor() {
+        // No initialization required
     }
 
     @Override
     public Set<DocSentenceMatch> execute(Contains condition, Map<String, IndexAccess> indexes,
-                               VariableBindings variableBindings, Query.Granularity granularity,
+                               BindingContext bindingContext, Query.Granularity granularity,
                                int granularitySize) 
         throws QueryExecutionException {
         
@@ -77,6 +79,7 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
         
         // Determine if this is a variable binding
         boolean isVariable = condition.isVariable();
+        String variableName = condition.variableName();
         
         // Get the appropriate ngram index based on the size of the terms
         IndexAccess index = null;
@@ -103,7 +106,7 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
             // Execute search for each pattern and union the results
             for (String pattern : patterns) {
                 Set<DocSentenceMatch> patternMatches = executePatternSearch(
-                    pattern, isVariable, variableName, index, variableBindings, granularity);
+                    pattern, isVariable, variableName, index, bindingContext, granularity);
                 
                 if (!patternMatches.isEmpty()) {
                     matches.addAll(patternMatches);
@@ -204,12 +207,12 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
      * @param isVariable Whether this is a variable binding
      * @param variableName The variable name (if isVariable is true)
      * @param index The index to search in
-     * @param variableBindings The variable bindings to update
+     * @param bindingContext The binding context to update
      * @param granularity The granularity of the search
      * @return Set of matches at the specified granularity level
      */
     private Set<DocSentenceMatch> executePatternSearch(String pattern, boolean isVariable, String variableName,
-                                        IndexAccess index, VariableBindings variableBindings, 
+                                        IndexAccess index, BindingContext bindingContext, 
                                         Query.Granularity granularity)
         throws QueryExecutionException {
         
@@ -250,70 +253,108 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
             
             // Process positions based on granularity
             if (granularity == Query.Granularity.DOCUMENT) {
-                // Document granularity - group by document ID
-                Map<Integer, DocSentenceMatch> docMatches = new HashMap<>();
+                Map<Integer, DocSentenceMatch> documentMatches = new HashMap<>();
                 
                 for (Position position : positionList.getPositions()) {
-                    addDocumentMatch(position, docMatches, variableName);
+                    int docId = position.getDocumentId();
+                    DocSentenceMatch match = documentMatches.computeIfAbsent(docId, 
+                        id -> new DocSentenceMatch(id));
                     
-                    // Handle variable binding
+                    // Add the position to the match
+                    match.addPosition(isVariable ? variableName : "match", position);
+                    
+                    // Bind variable if this is a variable binding
                     if (isVariable) {
-                        bindVariable(variableName, pattern, position, variableBindings);
+                        bindVariable(variableName, normalizedPattern, position, bindingContext);
                     }
                 }
                 
-                matches.addAll(docMatches.values());
+                matches.addAll(documentMatches.values());
             } else {
-                // Sentence granularity - group by document ID and sentence ID
-                Map<SentenceKey, DocSentenceMatch> sentMatches = new HashMap<>();
+                Map<SentenceKey, DocSentenceMatch> sentenceMatches = new HashMap<>();
                 
                 for (Position position : positionList.getPositions()) {
-                    addSentenceMatch(position, sentMatches, variableName);
+                    int docId = position.getDocumentId();
+                    int sentId = position.getSentenceId();
                     
-                    // Handle variable binding
+                    SentenceKey key = new SentenceKey(docId, sentId);
+                    DocSentenceMatch match = sentenceMatches.computeIfAbsent(key, 
+                        k -> new DocSentenceMatch(docId, sentId));
+                    
+                    // Add the position to the match
+                    match.addPosition(isVariable ? variableName : "match", position);
+                    
+                    // Bind variable if this is a variable binding
                     if (isVariable) {
-                        bindVariable(variableName, pattern, position, variableBindings);
+                        bindVariable(variableName, normalizedPattern, position, bindingContext);
                     }
                 }
                 
-                matches.addAll(sentMatches.values());
+                matches.addAll(sentenceMatches.values());
             }
             
-            logger.debug("Found pattern '{}' in {} {}", normalizedPattern, matches.size(), 
-                        granularity == Query.Granularity.DOCUMENT ? "documents" : "sentences");
-                
             return matches;
         } catch (Exception e) {
             throw new QueryExecutionException(
-                "Error executing CONTAINS condition for pattern '" + normalizedPattern + "': " + e.getMessage(),
+                "Error searching for pattern: " + e.getMessage(),
                 e,
                 "CONTAINS(" + pattern + ")",
-                QueryExecutionException.ErrorType.INTERNAL_ERROR
+                QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR
             );
         }
     }
     
     /**
-     * Binds a variable to a position.
+     * Binds a variable for a text span.
      *
-     * @param variableName The name of the variable to bind
-     * @param term The term that matched
-     * @param position The position where the term was found
-     * @param variableBindings The variable bindings to update
+     * @param variableName The variable name
+     * @param term The matched term
+     * @param position The position of the match
+     * @param bindingContext The binding context to update
      */
     private void bindVariable(String variableName, String term, Position position, 
-                             VariableBindings variableBindings) {
-        int docId = position.getDocumentId();
-        int sentenceId = position.getSentenceId();
-        int beginPos = position.getBeginPosition();
-        int endPos = position.getEndPosition();
+                             BindingContext bindingContext) {
+        if (variableName == null) {
+            return;
+        }
         
-        // Format: term@beginPos:endPos
-        // This new format makes it easier to use character positions directly for highlighting
-        String valueWithPosition = term + "@" + beginPos + ":" + endPos;
+        // Make sure variable name has ? prefix
+        String formattedVarName = variableName.startsWith("?") ? variableName : "?" + variableName;
         
-        variableBindings.addBinding(docId, variableName, valueWithPosition);
-        logger.debug("Bound variable '{}' to '{}' in document {}", 
-                    variableName, valueWithPosition, docId);
+        // Create a text span value
+        TextSpan span = new TextSpan(term, position.getBeginPosition(), position.getEndPosition());
+        
+        // Add to binding context
+        bindingContext.bindValue(formattedVarName, span);
+    }
+    
+    /**
+     * Represents a text span with position information.
+     * This is used as the value type for variable bindings.
+     */
+    public record TextSpan(String text, int beginPosition, int endPosition) {
+        @Override
+        public String toString() {
+            return String.format("%s@%d:%d", text, beginPosition, endPosition);
+        }
+    }
+    
+    /**
+     * Helper record for sentence identification.
+     * This is a duplicate of the one in ConditionExecutor to maintain compatibility.
+     */
+    record SentenceKey(int documentId, int sentenceId) {
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            SentenceKey that = (SentenceKey) o;
+            return documentId == that.documentId && sentenceId == that.sentenceId;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(documentId, sentenceId);
+        }
     }
 } 

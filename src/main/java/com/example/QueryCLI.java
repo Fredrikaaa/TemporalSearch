@@ -11,6 +11,7 @@ import com.example.query.snippet.DatabaseConfig;
 import com.example.query.snippet.SnippetConfig;
 import com.example.core.*;
 import com.example.query.sqlite.SqliteAccessor;
+import com.example.query.binding.BindingContext;
 
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
@@ -107,7 +108,7 @@ public class QueryCLI {
                 logger.info("Query granularity: {} with size: {}", 
                     granularity, query.granularitySize().isPresent() ? query.granularitySize().get() : 0);
                 Set<DocSentenceMatch> matches = executor.execute(query, indexManager.getAllIndexes());
-                VariableBindings variableBindings = executor.getVariableBindings();
+                BindingContext bindingContext = executor.getBindingContext();
                 
                 // Display the total number of matches based on granularity
                 if (granularity == Query.Granularity.DOCUMENT) {
@@ -122,7 +123,7 @@ public class QueryCLI {
                 // 6. Generate results using TableResultService with corpus-specific database path
                 logger.debug("Generating result table");
                 Table resultTable = tableResultService.generateTable(
-                    query, matches, variableBindings, indexManager.getAllIndexes());
+                    query, matches, bindingContext, indexManager.getAllIndexes());
                 
                 // NOTE: We're now using Tablesaw's sorting capabilities directly
                 // The orderBy list in Query now contains Tablesaw-compatible sort strings

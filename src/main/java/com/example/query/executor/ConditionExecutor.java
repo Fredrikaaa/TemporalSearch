@@ -5,6 +5,7 @@ import com.example.core.Position;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Condition;
+import com.example.query.binding.BindingContext;
 
 import java.util.Map;
 import java.util.Objects;
@@ -31,14 +32,14 @@ public sealed interface ConditionExecutor<T extends Condition>
      *
      * @param condition The condition to execute
      * @param indexes Map of index name to IndexAccess
-     * @param variableBindings Current variable bindings to update
+     * @param bindingContext Current binding context to use and update
      * @param granularity Whether to return document or sentence level matches
      * @param granularitySize Window size for sentence granularity (0 = same sentence only, 1 = adjacent sentences, etc.)
      * @return Set of matches at the specified granularity level
      * @throws QueryExecutionException if execution fails
      */
     Set<DocSentenceMatch> execute(T condition, Map<String, IndexAccess> indexes,
-                         VariableBindings variableBindings, Query.Granularity granularity,
+                         BindingContext bindingContext, Query.Granularity granularity,
                          int granularitySize)
         throws QueryExecutionException;
 

@@ -1,7 +1,7 @@
 package com.example.query.model;
 
 import com.example.core.IndexAccess;
-import com.example.query.executor.VariableBindings;
+import com.example.query.binding.BindingContext;
 import tech.tablesaw.api.Table;
 import tech.tablesaw.columns.Column;
 
@@ -30,9 +30,9 @@ public interface SelectColumn {
      * @param table The table containing the column
      * @param rowIndex The row index to populate
      * @param match The document/sentence match
-     * @param variableBindings The variable bindings
+     * @param bindingContext The binding context
      * @param indexes The indexes for additional document information
      */
     void populateColumn(Table table, int rowIndex, DocSentenceMatch match, 
-                        VariableBindings variableBindings, Map<String, IndexAccess> indexes);
+                        BindingContext bindingContext, Map<String, IndexAccess> indexes);
 } 

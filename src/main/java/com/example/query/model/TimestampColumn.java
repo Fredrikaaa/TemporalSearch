@@ -1,7 +1,7 @@
 package com.example.query.model;
 
 import com.example.core.IndexAccess;
-import com.example.query.executor.VariableBindings;
+import com.example.query.binding.BindingContext;
 import com.example.query.sqlite.SqliteAccessor;
 import tech.tablesaw.api.StringColumn;
 import tech.tablesaw.api.Table;
@@ -12,7 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Represents a column that displays document timestamps.
+ * Represents a TIMESTAMP function in the SELECT clause of a query.
+ * This column displays the timestamp of when the document was indexed.
  */
 public class TimestampColumn implements SelectColumn {
     private static final Logger logger = LoggerFactory.getLogger(TimestampColumn.class);
@@ -36,7 +37,7 @@ public class TimestampColumn implements SelectColumn {
     
     @Override
     public void populateColumn(Table table, int rowIndex, DocSentenceMatch match, 
-                              VariableBindings variableBindings, Map<String, IndexAccess> indexes) {
+                              BindingContext bindingContext, Map<String, IndexAccess> indexes) {
         StringColumn column = (StringColumn) table.column(getColumnName());
         
         // Get the source for this document

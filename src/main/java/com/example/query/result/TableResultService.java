@@ -1,6 +1,6 @@
 package com.example.query.result;
 
-import com.example.query.executor.VariableBindings;
+import com.example.query.binding.BindingContext;
 import com.example.query.model.CountNode;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
@@ -45,7 +45,7 @@ public class TableResultService {
      * @param snippetConfig The snippet configuration to use
      */
     public TableResultService(SnippetConfig snippetConfig) {
-        this.snippetConfig = snippetConfig;
+        this.snippetConfig = SnippetConfig.DEFAULT;
         this.dbPath = DatabaseConfig.DEFAULT_DB_PATH;
     }
 
@@ -75,7 +75,7 @@ public class TableResultService {
      *
      * @param query The original query
      * @param matches Set of matching document/sentence matches
-     * @param variableBindings Variable bindings from query execution
+     * @param bindingContext The binding context from query execution
      * @param indexes Map of indexes to retrieve additional document information
      * @return A Tablesaw Table containing the query results
      * @throws ResultGenerationException if an error occurs
@@ -83,7 +83,7 @@ public class TableResultService {
     public Table generateTable(
             Query query,
             Set<DocSentenceMatch> matches,
-            VariableBindings variableBindings,
+            BindingContext bindingContext,
             Map<String, IndexAccess> indexes
     ) throws ResultGenerationException {
         Query.Granularity granularity = query.granularity();
@@ -146,7 +146,7 @@ public class TableResultService {
                 // Set values for each column
                 for (SelectColumn selectColumn : selectColumns) {
                     System.out.println("Populating column: " + selectColumn.getColumnName() + " for match: " + match);
-                    selectColumn.populateColumn(table, rowIndex, match, variableBindings, indexes);
+                    selectColumn.populateColumn(table, rowIndex, match, bindingContext, indexes);
                     // After populating, check what the value is
                     Column<?> col = table.column(selectColumn.getColumnName());
                     System.out.println("Column " + selectColumn.getColumnName() + " now has value: " + col.get(rowIndex));
@@ -233,13 +233,13 @@ public class TableResultService {
      *
      * @param countNode The COUNT node
      * @param matches The matches
-     * @param variableBindings The variable bindings
+     * @param bindingContext The binding context
      * @return A Tablesaw table with the count result
      */
     private Table generateCountTable(
             CountNode countNode,
             Set<DocSentenceMatch> matches,
-            VariableBindings variableBindings
+            BindingContext bindingContext
     ) {
         // Create a table with count and document_id columns
         IntColumn countColumn = IntColumn.create("count");

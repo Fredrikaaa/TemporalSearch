@@ -3,6 +3,7 @@ package com.example.query.executor;
 import com.example.core.IndexAccess;
 import com.example.core.Position;
 import com.example.core.PositionList;
+import com.example.query.binding.BindingContext;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Pos;
@@ -35,14 +36,14 @@ public class PosConditionExecutorTest {
     private IndexAccess posIndex;
     
     private Map<String, IndexAccess> indexes;
-    private VariableBindings variableBindings;
+    private BindingContext bindingContext;
 
     @BeforeEach
     void setUp() {
-        executor = new PosExecutor("testVar");
+        executor = new PosExecutor();
         indexes = new HashMap<>();
         indexes.put("pos", posIndex);
-        variableBindings = new VariableBindings();
+        bindingContext = BindingContext.empty();
     }
 
     @Test
@@ -61,7 +62,7 @@ public class PosConditionExecutorTest {
         when(posIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute the condition
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
         
         // Verify the results
         assertEquals(3, result.size());
@@ -87,7 +88,7 @@ public class PosConditionExecutorTest {
         when(posIndex.get(any())).thenReturn(Optional.empty());
         
         // Execute the condition
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0);
+        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
         
         // Verify the results are empty
         assertTrue(result.isEmpty());
@@ -103,7 +104,7 @@ public class PosConditionExecutorTest {
         
         // Execute the condition and expect an exception
         QueryExecutionException exception = assertThrows(QueryExecutionException.class, 
-            () -> executor.execute(condition, indexes, variableBindings, Query.Granularity.DOCUMENT, 0));
+            () -> executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0));
         
         // Verify the exception details
         assertEquals(QueryExecutionException.ErrorType.MISSING_INDEX, exception.getErrorType());

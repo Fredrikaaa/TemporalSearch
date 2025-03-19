@@ -11,9 +11,13 @@ import org.slf4j.LoggerFactory;
 public final class ConditionExecutorFactory {
     private static final Logger logger = LoggerFactory.getLogger(ConditionExecutorFactory.class);
     
-    // Logical and Not executors are singletons since they don't need variable names
+    // Executors are now all singletons since they don't need variable names
     private final LogicalExecutor logicalExecutor;
     private final NotExecutor notExecutor;
+    private final NerExecutor nerExecutor;
+    private final ContainsExecutor containsExecutor;
+    private final PosExecutor posExecutor;
+    private final DependencyExecutor dependencyExecutor;
     
     /**
      * Creates a new ConditionExecutorFactory with singleton executor instances.
@@ -23,13 +27,19 @@ public final class ConditionExecutorFactory {
         this.logicalExecutor = new LogicalExecutor(this);
         this.notExecutor = new NotExecutor(this);
         
+        // Other executors are now also singletons
+        this.nerExecutor = new NerExecutor();
+        this.containsExecutor = new ContainsExecutor();
+        this.posExecutor = new PosExecutor();
+        this.dependencyExecutor = new DependencyExecutor();
+        
         logger.debug("Initialized condition executor factory");
     }
     
     /**
      * Gets the appropriate executor for a condition using pattern matching.
-     * For conditions that support variable binding, creates a new executor instance
-     * with the variable name from the condition.
+     * All executors are now singletons since variable binding is done through
+     * the condition itself and the binding context.
      *
      * @param <T> The condition type
      * @param condition The condition
@@ -41,10 +51,10 @@ public final class ConditionExecutorFactory {
         logger.debug("Getting executor for condition type: {}", condition.getType());
         
         return (ConditionExecutor<T>) switch (condition) {
-            case Contains c -> new ContainsExecutor(c.variableName());
-            case Ner c -> new NerExecutor(c.variableName());
-            case Pos c -> new PosExecutor(c.variableName());
-            case Dependency c -> new DependencyExecutor(c.variableName());
+            case Contains c -> containsExecutor;
+            case Ner c -> nerExecutor;
+            case Pos c -> posExecutor;
+            case Dependency c -> dependencyExecutor;
             case Logical c -> logicalExecutor;
             case Not c -> notExecutor;
             case Temporal c -> throw new UnsupportedOperationException(
