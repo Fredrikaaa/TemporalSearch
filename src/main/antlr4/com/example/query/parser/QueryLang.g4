@@ -1,5 +1,13 @@
 grammar QueryLang;
 
+/*
+ * This grammar supports variable binding using the AS keyword pattern.
+ * Example: NER(PERSON) AS ?person
+ * The AS keyword followed by a variable name binds the result of a condition to a variable.
+ * All variables must be prefixed with ? character.
+ * Variables can be used in SELECT clause and subsequent WHERE conditions.
+ */
+
 // Lexer Rules (Tokens)
 // Keywords
 SELECT: 'SELECT';
@@ -150,10 +158,7 @@ singleCondition
     ;
 
 dateExpression
-    : DATE LPAREN var=variable COMMA comparisonOp year=NUMBER RPAREN        # OldDateComparisonExpression
-    | DATE LPAREN var=variable COMMA dateOperator dateValue
-      (RADIUS radius=NUMBER unit=timeUnit)? RPAREN                          # OldDateOperatorExpression
-    | DATE LPAREN comparisonOp year=NUMBER RPAREN (AS var=variable)?        # DateComparisonExpression
+    : DATE LPAREN comparisonOp year=NUMBER RPAREN (AS var=variable)?        # DateComparisonExpression
     | DATE LPAREN dateOperator dateValue
       (RADIUS radius=NUMBER unit=timeUnit)? RPAREN (AS var=variable)?       # DateOperatorExpression
     ;
@@ -195,7 +200,7 @@ limitClause
     ;
 
 nerExpression
-    : NER LPAREN type=entityType (COMMA target=entityTarget)? RPAREN (AS var=variable)?
+    : NER LPAREN type=entityType (COMMA termValue=term)? RPAREN (AS var=variable)?
     ;
 
 entityType
@@ -208,11 +213,6 @@ entityType
     | WILDCARD
     | STRING
     | IDENTIFIER
-    ;
-
-entityTarget 
-    : STRING
-    | variable
     ;
 
 containsExpression
@@ -254,7 +254,7 @@ comparisonOp
     ;
 
 posExpression
-    : POS LPAREN tag=posTag COMMA termValue=term RPAREN (AS var=variable)?
+    : POS LPAREN tag=posTag (COMMA termValue=term)? RPAREN (AS var=variable)?
     ;
 
 posTag

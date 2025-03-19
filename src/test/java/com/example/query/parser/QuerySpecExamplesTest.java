@@ -53,20 +53,20 @@ public class QuerySpecExamplesTest {
     @DisplayName("Basic query examples from spec")
     void testBasicQueryExamples() {
         // Simple query with CONTAINS
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE CONTAINS(\"artificial intelligence\")");
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE CONTAINS(\"artificial intelligence\") AS ?doc");
         
         // Query with variable binding in NER
-        assertSpecExampleValid("SELECT ?person FROM corpus WHERE NER(\"PERSON\", ?person)");
+        assertSpecExampleValid("SELECT ?person FROM corpus WHERE NER(\"PERSON\") AS ?person");
     }
 
     @Test
     @DisplayName("Snippet examples from spec")
     void testSnippetExamples() {
         // Basic snippet usage
-        assertSpecExampleValid("SELECT ?person, SNIPPET(?person) FROM corpus WHERE NER(\"PERSON\", ?person)");
+        assertSpecExampleValid("SELECT ?person, SNIPPET(?person) FROM corpus WHERE NER(\"PERSON\") AS ?person");
         
         // Snippet with custom window size
-        assertSpecExampleValid("SELECT ?person, SNIPPET(?person, WINDOW=10) FROM corpus WHERE NER(\"PERSON\", ?person)");
+        assertSpecExampleValid("SELECT ?person, SNIPPET(?person, WINDOW=10) FROM corpus WHERE NER(\"PERSON\") AS ?person");
     }
 
     @Test
@@ -82,7 +82,7 @@ public class QuerySpecExamplesTest {
         assertSpecExampleValid("SELECT COUNT(*) FROM corpus WHERE CONTAINS(\"neural network\")");
         
         // Count unique values of a variable
-        assertSpecExampleValid("SELECT COUNT(UNIQUE ?person) FROM corpus WHERE NER(\"PERSON\", ?person)");
+        assertSpecExampleValid("SELECT COUNT(UNIQUE ?person) FROM corpus WHERE NER(\"PERSON\") AS ?person");
         
         // Count documents
         assertSpecExampleValid("SELECT COUNT(DOCUMENTS) FROM corpus WHERE CONTAINS(\"machine learning\")");
@@ -130,30 +130,30 @@ public class QuerySpecExamplesTest {
         assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\") AS ?entity GRANULARITY DOCUMENT");
         
         // Sentence granularity
-        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY SENTENCE");
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\") AS ?entity GRANULARITY SENTENCE");
         
         // Sentence granularity with context size
-        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY SENTENCE 3");
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\") AS ?entity GRANULARITY SENTENCE 3");
     }
 
     @Test
     @DisplayName("Order by examples from spec")
     void testOrderByExamples() {
         // Simple order by
-        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company");
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\") AS ?company ORDER BY ?company");
         
         // Order by with direction
-        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company ASC");
-        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company DESC");
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\") AS ?company ORDER BY ?company ASC");
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\") AS ?company ORDER BY ?company DESC");
         
         // Multiple order by fields
-        assertSpecExampleValid("SELECT ?company, ?date FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company ASC, ?date DESC");
+        assertSpecExampleValid("SELECT ?company, ?date FROM corpus WHERE NER(\"ORGANIZATION\") AS ?company AND DATE(> 2000) AS ?date ORDER BY ?company ASC, ?date DESC");
     }
 
     @Test
     @DisplayName("Limit examples from spec")
     void testLimitExamples() {
-        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) LIMIT 10");
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\") AS ?entity LIMIT 10");
     }
 
     @Test
@@ -163,7 +163,7 @@ public class QuerySpecExamplesTest {
         assertSpecExampleValid(
             "SELECT ?person, SNIPPET(?person, WINDOW=5) " +
             "FROM corpus " +
-            "WHERE NER(\"PERSON\", ?person) AND DATE(?person, > 2000) " +
+            "WHERE NER(\"PERSON\") AS ?person AND DATE(> 2000) AS ?date " +
             "GRANULARITY SENTENCE 3 " +
             "ORDER BY ?person DESC " +
             "LIMIT 5"
@@ -173,7 +173,7 @@ public class QuerySpecExamplesTest {
         assertSpecExampleValid(
             "SELECT ?person, ?org, SNIPPET(?person), COUNT(UNIQUE ?org) " +
             "FROM corpus " +
-            "WHERE NER(\"PERSON\", ?person) AND NER(\"ORGANIZATION\", ?org) AND CONTAINS(\"founded\") " +
+            "WHERE NER(\"PERSON\") AS ?person AND NER(\"ORGANIZATION\") AS ?org AND CONTAINS(\"founded\") " +
             "GRANULARITY SENTENCE 2 " +
             "ORDER BY ?person ASC, ?org DESC " +
             "LIMIT 20"
@@ -183,43 +183,43 @@ public class QuerySpecExamplesTest {
     @Test
     @DisplayName("Basic variable binding examples should be valid")
     void basicVariableBindingExamplesShouldBeValid() {
-        assertSpecExampleValid("SELECT ?person FROM corpus WHERE NER(\"PERSON\", ?person)");
+        assertSpecExampleValid("SELECT ?person FROM corpus WHERE NER(\"PERSON\") AS ?person");
     }
 
     @Test
     @DisplayName("Snippet examples should be valid")
     void snippetExamplesShouldBeValid() {
-        assertSpecExampleValid("SELECT ?person, SNIPPET(?person) FROM corpus WHERE NER(\"PERSON\", ?person)");
-        assertSpecExampleValid("SELECT ?person, SNIPPET(?person, WINDOW=10) FROM corpus WHERE NER(\"PERSON\", ?person)");
+        assertSpecExampleValid("SELECT ?person, SNIPPET(?person) FROM corpus WHERE NER(\"PERSON\") AS ?person");
+        assertSpecExampleValid("SELECT ?person, SNIPPET(?person, WINDOW=10) FROM corpus WHERE NER(\"PERSON\") AS ?person");
     }
 
     @Test
     @DisplayName("Aggregation examples should be valid")
     void aggregationExamplesShouldBeValid() {
-        assertSpecExampleValid("SELECT COUNT(UNIQUE ?person) FROM corpus WHERE NER(\"PERSON\", ?person)");
+        assertSpecExampleValid("SELECT COUNT(UNIQUE ?person) FROM corpus WHERE NER(\"PERSON\") AS ?person");
     }
 
     @Test
     @DisplayName("Granularity examples should be valid")
     void granularityExamplesShouldBeValid() {
-        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY DOCUMENT");
-        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY SENTENCE");
-        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY SENTENCE 3");
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\") AS ?entity GRANULARITY DOCUMENT");
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\") AS ?entity GRANULARITY SENTENCE");
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\") AS ?entity GRANULARITY SENTENCE 3");
     }
 
     @Test
     @DisplayName("Order by examples should be valid")
     void orderByExamplesShouldBeValid() {
-        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company");
-        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company ASC");
-        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company DESC");
-        assertSpecExampleValid("SELECT ?company, ?date FROM corpus WHERE NER(\"ORGANIZATION\", ?company) ORDER BY ?company ASC, ?date DESC");
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\") AS ?company ORDER BY ?company");
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\") AS ?company ORDER BY ?company ASC");
+        assertSpecExampleValid("SELECT ?company FROM corpus WHERE NER(\"ORGANIZATION\") AS ?company ORDER BY ?company DESC");
+        assertSpecExampleValid("SELECT ?company, ?date FROM corpus WHERE NER(\"ORGANIZATION\") AS ?company AND DATE(> 2000) AS ?date ORDER BY ?company ASC, ?date DESC");
     }
 
     @Test
     @DisplayName("Limit examples should be valid")
     void limitExamplesShouldBeValid() {
-        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) LIMIT 10");
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\") AS ?entity LIMIT 10");
     }
 
     @Test
@@ -227,7 +227,7 @@ public class QuerySpecExamplesTest {
     void complexQueryExamplesShouldBeValid() {
         assertSpecExampleValid(
             "SELECT ?person, ?org FROM corpus " +
-            "WHERE NER(\"PERSON\", ?person) AND NER(\"ORGANIZATION\", ?org) AND CONTAINS(\"founded\") " +
+            "WHERE NER(\"PERSON\") AS ?person AND NER(\"ORGANIZATION\") AS ?org AND CONTAINS(\"founded\") " +
             "ORDER BY ?person"
         );
     }

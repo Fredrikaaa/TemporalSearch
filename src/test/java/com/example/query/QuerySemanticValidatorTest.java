@@ -3,6 +3,9 @@ package com.example.query;
 import com.example.query.model.*;
 import com.example.query.model.condition.Condition;
 import com.example.query.model.condition.Ner;
+import com.example.query.binding.VariableRegistry;
+import com.example.query.binding.VariableType;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -52,14 +55,18 @@ class QuerySemanticValidatorTest {
     @Test
     @DisplayName("Valid query with bound variable column should validate")
     void validQueryWithBoundVariableShouldValidate() {
+        // Create a registry and register the variable
+        VariableRegistry registry = new VariableRegistry();
+        registry.registerProducer("?person", VariableType.ENTITY, "NER");
+        
         // Create condition that binds a variable
-        Ner nerCondition = Ner.withVariable("PERSON", "?person");
+        Ner nerCondition = new Ner("PERSON", null, "?person", true);
         List<Condition> conditions = List.of(nerCondition);
         
         // Use that variable in SELECT
         List<SelectColumn> columns = List.of(new VariableColumn("person"));
         
-        Query query = createQuery(columns, conditions);
+        Query query = createQuery(columns, conditions, registry);
         
         assertDoesNotThrow(() -> validator.validate(query));
     }
@@ -67,15 +74,19 @@ class QuerySemanticValidatorTest {
     @Test
     @DisplayName("Valid query with snippet using bound variable should validate")
     void validQueryWithSnippetBoundVariableShouldValidate() {
+        // Create a registry and register the variable
+        VariableRegistry registry = new VariableRegistry();
+        registry.registerProducer("?person", VariableType.ENTITY, "NER");
+        
         // Create condition that binds a variable
-        Ner nerCondition = Ner.withVariable("PERSON", "?person");
+        Ner nerCondition = new Ner("PERSON", null, "?person", true);
         List<Condition> conditions = List.of(nerCondition);
         
         // Use that variable in a SNIPPET column
         SnippetNode snippetNode = new SnippetNode("?person");
         List<SelectColumn> columns = List.of(new SnippetColumn(snippetNode));
         
-        Query query = createQuery(columns, conditions);
+        Query query = createQuery(columns, conditions, registry);
         
         assertDoesNotThrow(() -> validator.validate(query));
     }
@@ -122,15 +133,19 @@ class QuerySemanticValidatorTest {
     @Test
     @DisplayName("Query with oversized snippet window should throw exception")
     void queryWithOversizedSnippetWindowShouldThrowException() {
+        // Create a registry and register the variable
+        VariableRegistry registry = new VariableRegistry();
+        registry.registerProducer("?person", VariableType.ENTITY, "NER");
+        
         // Create condition that binds a variable
-        Ner nerCondition = Ner.withVariable("PERSON", "?person");
+        Ner nerCondition = new Ner("PERSON", null, "?person", true);
         List<Condition> conditions = List.of(nerCondition);
         
         // Create a snippet with window size 5 (the maximum allowed by the constructor)
         SnippetNode snippetNode = new SnippetNode("?person", 5);
         List<SelectColumn> columns = List.of(new SnippetColumn(snippetNode));
         
-        Query query = createQuery(columns, conditions);
+        Query query = createQuery(columns, conditions, registry);
         
         // Since we can't create a SnippetNode with window size > 5 (constructor prevents it),
         // we're just verifying that a valid window size passes validation
@@ -160,6 +175,10 @@ class QuerySemanticValidatorTest {
         // Create a valid select column
         List<SelectColumn> columns = List.of(new CountColumn(CountNode.countAll()));
         
+        // Create a variable registry where the variable is registered as a consumer but not a producer
+        VariableRegistry registry = new VariableRegistry();
+        registry.registerConsumer("?person", VariableType.ENTITY, "ORDER_BY");
+        
         // Create a query with an unbound variable in ORDER BY
         Query query = new Query(
             "wikipedia",
@@ -168,7 +187,8 @@ class QuerySemanticValidatorTest {
             Optional.empty(),
             Query.Granularity.DOCUMENT,
             Optional.empty(),
-            columns
+            columns,
+            registry  // Registry with person as consumer only
         );
         
         QueryParseException exception = assertThrows(
@@ -176,13 +196,20 @@ class QuerySemanticValidatorTest {
             () -> validator.validate(query)
         );
         
-        assertTrue(exception.getMessage().contains("Unbound variable in ORDER BY"));
+        assertTrue(exception.getMessage().contains("Variable ?person is consumed but never produced"));
     }
     
     /**
-     * Helper method to create a Query object for testing
+     * Helper method to create a Query object for testing with an empty registry
      */
     private Query createQuery(List<SelectColumn> columns, List<Condition> conditions) {
+        return createQuery(columns, conditions, new VariableRegistry());
+    }
+    
+    /**
+     * Helper method to create a Query object for testing with a provided registry
+     */
+    private Query createQuery(List<SelectColumn> columns, List<Condition> conditions, VariableRegistry registry) {
         return new Query(
             "wikipedia",   // source
             conditions,    // conditions
@@ -190,7 +217,8 @@ class QuerySemanticValidatorTest {
             Optional.empty(),  // limit
             Query.Granularity.DOCUMENT,  // granularity
             Optional.empty(),  // granularitySize
-            columns  // selectColumns
+            columns,       // selectColumns
+            registry       // variable registry
         );
     }
 } 

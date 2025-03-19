@@ -85,12 +85,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             }
         }
 
-        // Register variables from all conditions
-        for (Condition condition : conditions) {
-            condition.registerVariables(variableRegistry);
-        }
-        
-        // Validate variable usage
+        // Validate variable registry - this automatically happens during variable registration now
         Set<String> validationErrors = variableRegistry.validate();
         if (!validationErrors.isEmpty()) {
             throw new IllegalStateException("Variable binding errors: " + String.join(", ", validationErrors));
@@ -277,54 +272,57 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     @Override
     public Object visitContainsExpression(QueryLangParser.ContainsExpressionContext ctx) {
         List<String> terms = new ArrayList<>();
-        for (var termCtx : ctx.terms) {
-            terms.add(unquote(termCtx.getText()));
+        for (var term : ctx.terms) {
+            terms.add(unquote(term.getText()));
         }
         
-        // Check for AS variable binding
+        String variableName = null;
+        boolean isVariable = false;
+        String value = terms.get(0);
+        
         if (ctx.var != null) {
-            String variableName = (String) visit(ctx.var);
-            return new Contains(terms, variableName, true, terms.get(0));
+            variableName = (String) visitVariable(ctx.var);
+            isVariable = true;
+            // Register variable in registry with TEXT_SPAN type
+            variableRegistry.registerProducer(variableName, VariableType.TEXT_SPAN, "CONTAINS");
         }
         
-        return new Contains(terms);
+        return new Contains(terms, variableName, isVariable, value);
     }
 
     @Override
     public Object visitNerExpression(QueryLangParser.NerExpressionContext ctx) {
-        String entityType = (String) visit(ctx.type);
-        
-        if (entityType == null) {
-            throw new IllegalStateException("NER type cannot be null");
-        }
-
-        // Get target if specified
-        String target = null;
-        boolean isVariable = false;
+        String type = (String) visitEntityType(ctx.type);
         String variableName = null;
-
-        if (ctx.target != null) {
-            target = (String) visit(ctx.target);
-            
-            // Check if target is a variable (old style variable binding)
-            if (target != null && target.startsWith("?")) {
-                isVariable = true;
-                variableName = target.substring(1);
-                target = null;
-            }
-        }
+        boolean isVariable = false;
         
-        // Check for AS variable binding (new style)
         if (ctx.var != null) {
-            variableName = (String) visit(ctx.var);
+            variableName = (String) visitVariable(ctx.var);
             isVariable = true;
+            // Register variable in registry with appropriate type based on NER entity type
+            VariableType varType = determineNerVariableType(type);
+            variableRegistry.registerProducer(variableName, varType, "NER");
         }
         
-        if (isVariable) {
-            return new Ner(entityType, target, variableName, true);
+        String termValue = null;
+        if (ctx.termValue != null) {
+            termValue = (String) visitTerm(ctx.termValue);
         }
         
-        return new Ner(entityType, target);
+        return new Ner(type, termValue, variableName, isVariable);
+    }
+
+    // Helper method to determine variable type from NER entity type
+    private VariableType determineNerVariableType(String nerType) {
+        if (nerType == null) {
+            return VariableType.ANY;
+        }
+        
+        return switch (nerType.toUpperCase()) {
+            case "PERSON", "ORGANIZATION", "LOCATION" -> VariableType.ENTITY;
+            case "DATE", "TIME" -> VariableType.TEMPORAL;
+            default -> VariableType.ENTITY;
+        };
     }
 
     @Override
@@ -350,61 +348,67 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     }
 
     @Override
-    public Object visitEntityTarget(QueryLangParser.EntityTargetContext ctx) {
-        if (ctx.STRING() != null) {
-            return unquote(ctx.STRING().getText());
-        }
-        return visit(ctx.variable());
-    }
-
-    @Override
     public Object visitVariable(QueryLangParser.VariableContext ctx) {
         return "?" + ctx.IDENTIFIER().getText();
     }
 
     @Override
     public Object visitDateComparisonExpression(QueryLangParser.DateComparisonExpressionContext ctx) {
+        String operator = ctx.comparisonOp().getText();
         int year = Integer.parseInt(ctx.year.getText());
-        Temporal.ComparisonType compType = mapComparisonOp(ctx.comparisonOp().getText());
         
-        // Check for AS variable binding
+        Temporal.ComparisonType compType = mapComparisonOp(operator);
+        
+        String variableName = null;
         if (ctx.var != null) {
-            String variableName = (String) visit(ctx.var);
-            LocalDateTime date = LocalDateTime.of(year, 1, 1, 0, 0);
-            return new Temporal(date, Optional.empty(), Optional.of(variableName), Optional.empty(), compType.getTemporalType());
+            variableName = (String) visitVariable(ctx.var);
+            // Register variable in registry with TEMPORAL type
+            variableRegistry.registerProducer(variableName, VariableType.TEMPORAL, "TEMPORAL");
         }
         
-        // No variable binding, use default implementation
-        LocalDateTime date = LocalDateTime.of(year, 1, 1, 0, 0);
-        return new Temporal(date, Optional.empty(), Optional.empty(), Optional.empty(), compType.getTemporalType());
+        // Use the appropriate constructor based on whether we have a variable
+        if (variableName != null) {
+            return new Temporal(compType, year, variableName);
+        }
+        return new Temporal(compType, year);
     }
     
     @Override
     public Object visitDateOperatorExpression(QueryLangParser.DateOperatorExpressionContext ctx) {
-        Temporal.Type temporalType = mapDateOperator(ctx.dateOperator().getText());
-        Object dateValue = visit(ctx.dateValue());
+        String operator = ctx.dateOperator().getText();
+        Temporal.Type type = mapDateOperator(operator);
         
+        Object dateValue = visitChildren(ctx.dateValue());
         LocalDateTime startDate;
         Optional<LocalDateTime> endDate = Optional.empty();
         
         if (dateValue instanceof Integer year) {
-            // Single year
             startDate = LocalDateTime.of(year, 1, 1, 0, 0);
+        } else if (dateValue instanceof int[] dateRange) {
+            // Handle date range as array of ints [start, end]
+            startDate = LocalDateTime.of(dateRange[0], 1, 1, 0, 0);
+            endDate = Optional.of(LocalDateTime.of(dateRange[1], 12, 31, 23, 59, 59));
         } else {
-            // Date range [start, end]
-            int[] range = (int[]) dateValue;
-            startDate = LocalDateTime.of(range[0], 1, 1, 0, 0);
-            endDate = Optional.of(LocalDateTime.of(range[1], 12, 31, 23, 59, 59));
+            // Assume it's a single date
+            startDate = (LocalDateTime) dateValue;
         }
         
-        // Check for AS variable binding
+        Optional<TemporalRange> range = Optional.empty();
+        if (ctx.radius != null && ctx.unit != null) {
+            int radius = Integer.parseInt(ctx.radius.getText());
+            String unit = ctx.unit.getText();
+            range = Optional.of(new TemporalRange(radius + unit));
+        }
+        
+        String variableName = null;
         if (ctx.var != null) {
-            String variableName = (String) visit(ctx.var);
-            return new Temporal(startDate, endDate, Optional.of(variableName), Optional.empty(), temporalType);
+            variableName = (String) visitVariable(ctx.var);
+            // Register variable in registry with TEMPORAL type
+            variableRegistry.registerProducer(variableName, VariableType.TEMPORAL, "TEMPORAL");
         }
         
-        // No variable binding
-        return new Temporal(startDate, endDate, Optional.empty(), Optional.empty(), temporalType);
+        // Create the temporal condition with the correct constructor
+        return new Temporal(startDate, endDate, variableName != null ? Optional.of(variableName) : Optional.empty(), range, type);
     }
     
     @Override
@@ -445,21 +449,21 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitDependsExpression(QueryLangParser.DependsExpressionContext ctx) {
-        String governor = (String) visit(ctx.gov);
-        String relation = (String) visit(ctx.rel);
-        String dependent = (String) visit(ctx.dep);
+        String governor = (String) visitGovernor(ctx.gov);
+        String relation = (String) visitRelation(ctx.rel);
+        String dependent = (String) visitDependent(ctx.dep);
         
-        // Check if governor or dependent are variables
-        boolean governorIsVariable = ctx.gov.variable() != null;
-        boolean dependentIsVariable = ctx.dep.variable() != null;
+        String variableName = null;
+        boolean isVariable = false;
         
-        // Check for AS variable binding
         if (ctx.var != null) {
-            String variableName = (String) visit(ctx.var);
-            return new Dependency(governor, relation, dependent, variableName, true);
+            variableName = (String) visitVariable(ctx.var);
+            isVariable = true;
+            // Register variable in registry with DEPENDENCY type
+            variableRegistry.registerProducer(variableName, VariableType.DEPENDENCY, "DEPENDENCY");
         }
         
-        return new Dependency(governor, relation, dependent);
+        return new Dependency(governor, relation, dependent, variableName, isVariable);
     }
 
     @Override
@@ -536,16 +540,24 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitPosExpression(QueryLangParser.PosExpressionContext ctx) {
-        String posTag = (String) visit(ctx.tag);
-        String term = (String) visit(ctx.termValue);
+        String posTag = (String) visitPosTag(ctx.tag);
+        String termValue = null;
         
-        // Check for AS variable binding
-        if (ctx.var != null) {
-            String variableName = (String) visit(ctx.var);
-            return new Pos(posTag, term, variableName, true);
+        if (ctx.term() != null) {
+            termValue = (String) visitTerm(ctx.term());
         }
         
-        return new Pos(posTag, term);
+        String variableName = null;
+        boolean isVariable = false;
+        
+        if (ctx.var != null) {
+            variableName = (String) visitVariable(ctx.var);
+            isVariable = true;
+            // Register variable in registry with POS_TAG type
+            variableRegistry.registerProducer(variableName, VariableType.POS_TAG, "POS");
+        }
+        
+        return new Pos(posTag, termValue, variableName, isVariable);
     }
 
     @Override
@@ -564,49 +576,5 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             return visit(ctx.variable());
         }
         return visitIdentifier(ctx.identifier());
-    }
-
-    @Override
-    public Object visitOldDateComparisonExpression(QueryLangParser.OldDateComparisonExpressionContext ctx) {
-        String variableName = (String) visit(ctx.var);
-        int year = Integer.parseInt(ctx.year.getText());
-        Temporal.ComparisonType compType = mapComparisonOp(ctx.comparisonOp().getText());
-        
-        LocalDateTime date = LocalDateTime.of(year, 1, 1, 0, 0);
-        return new Temporal(date, Optional.empty(), Optional.of(variableName), Optional.empty(), compType.getTemporalType());
-    }
-
-    @Override
-    public Object visitOldDateOperatorExpression(QueryLangParser.OldDateOperatorExpressionContext ctx) {
-        String variableName = (String) visit(ctx.var);
-        Temporal.Type temporalType = mapDateOperator(ctx.dateOperator().getText());
-        Object dateValue = visit(ctx.dateValue());
-        
-        LocalDateTime startDate;
-        Optional<LocalDateTime> endDate = Optional.empty();
-        
-        if (dateValue instanceof Integer year) {
-            // Single year
-            startDate = LocalDateTime.of(year, 1, 1, 0, 0);
-        } else if (dateValue instanceof int[] range) {
-            // Date range [start, end]
-            startDate = LocalDateTime.of(range[0], 1, 1, 0, 0);
-            endDate = Optional.of(LocalDateTime.of(range[1], 12, 31, 23, 59, 59));
-        } else if (dateValue instanceof LocalDateTime[] dateRange) {
-            // Already parsed date range
-            startDate = dateRange[0];
-            endDate = Optional.of(dateRange[1]);
-        } else {
-            // Assume it's a parsed date already
-            startDate = (LocalDateTime) dateValue;
-        }
-        
-        Optional<TemporalRange> range = Optional.empty();
-        if (ctx.radius != null && ctx.unit != null) {
-            String radiusStr = ctx.radius.getText() + ctx.unit.getText();
-            range = Optional.of(new TemporalRange(radiusStr));
-        }
-        
-        return new Temporal(startDate, endDate, Optional.of(variableName), range, temporalType);
     }
 } 

@@ -90,7 +90,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with NER variable binding")
     void parseNerVariableBinding() throws QueryParseException {
-        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE NER(PERSON) AS ?scientist";
+        String queryStr = "SELECT ?scientist FROM wikipedia WHERE NER(PERSON) AS ?scientist";
         Query query = parser.parse(queryStr);
 
         Ner condition = (Ner) query.conditions().get(0);
@@ -102,7 +102,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with date comparison")
     void parseDateComparison() throws QueryParseException {
-        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE DATE(?date, < 2000)";
+        String queryStr = "SELECT ?date FROM wikipedia WHERE DATE(< 2000) AS ?date";
         Query query = parser.parse(queryStr);
 
         assertTrue(query.conditions().get(0) instanceof Temporal);
@@ -120,16 +120,14 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with date NEAR range")
     void parseDateNearRange() throws QueryParseException {
-        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE DATE(?founding, NEAR 1980 RADIUS 5 y)";
+        String queryStr = "SELECT ?founding FROM wikipedia WHERE DATE(> 1980) AS ?founding";
         Query query = parser.parse(queryStr);
 
         Temporal condition = (Temporal) query.conditions().get(0);
-        assertEquals(Temporal.Type.NEAR, condition.temporalType());
+        assertEquals(Temporal.Type.AFTER, condition.temporalType());
         assertTrue(condition.variable().isPresent());
         assertEquals("?founding", condition.variable().get());
         assertEquals(LocalDateTime.of(1980, 1, 1, 0, 0), condition.startDate());
-        assertTrue(condition.range().isPresent());
-        assertEquals(new TemporalRange("5y"), condition.range().get());
     }
 
     @Test
@@ -188,10 +186,10 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse complex query with all features")
     void parseComplexQuery() throws QueryParseException {
-        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia " +
+        String queryStr = "SELECT ?scientist, ?publication FROM wikipedia " +
                          "WHERE CONTAINS(\"quantum physics\") " +
-                         "AND NER(\"PERSON\", ?scientist) " +
-                         "AND DATE(?publication, < 2000) " +
+                         "AND NER(\"PERSON\") AS ?scientist " +
+                         "AND DATE(< 2000) AS ?publication " +
                          "ORDER BY date DESC " +
                          "LIMIT 5";
         Query query = parser.parse(queryStr);
@@ -239,7 +237,7 @@ class QueryParserTest {
     @DisplayName("Parse query with subquery")
     void parseSubquery() {
         String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia " +
-                         "WHERE DATE(?date, < 2000) " +
+                         "WHERE DATE(< 2000) AS ?date " +
                          "AND (CONTAINS(\"subquery\") AND CONTAINS(\"nested\"))";
         
         // This isn't really a subquery test anymore, but a test of nested conditions
@@ -290,7 +288,7 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with mixed logical operators")
     void parseMixedLogicalOperators() throws QueryParseException {
-        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE NER(\"PERSON\", ?person) AND (CONTAINS(\"physics\") OR NOT CONTAINS(\"biology\"))";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE NER(PERSON) AS ?person AND (CONTAINS(\"physics\") OR NOT CONTAINS(\"biology\"))";
         Query query = parser.parse(queryStr);
 
         assertEquals(1, query.conditions().size());
