@@ -150,9 +150,12 @@ singleCondition
     ;
 
 dateExpression
-    : DATE LPAREN variable COMMA comparisonOp year=NUMBER RPAREN       # DateComparisonExpression
-    | DATE LPAREN variable COMMA dateOperator dateValue
-      (RADIUS radius=NUMBER unit=timeUnit)? RPAREN                     # DateOperatorExpression
+    : DATE LPAREN var=variable COMMA comparisonOp year=NUMBER RPAREN        # OldDateComparisonExpression
+    | DATE LPAREN var=variable COMMA dateOperator dateValue
+      (RADIUS radius=NUMBER unit=timeUnit)? RPAREN                          # OldDateOperatorExpression
+    | DATE LPAREN comparisonOp year=NUMBER RPAREN (AS var=variable)?        # DateComparisonExpression
+    | DATE LPAREN dateOperator dateValue
+      (RADIUS radius=NUMBER unit=timeUnit)? RPAREN (AS var=variable)?       # DateOperatorExpression
     ;
 
 dateOperator
@@ -192,7 +195,7 @@ limitClause
     ;
 
 nerExpression
-    : NER LPAREN type=entityType (COMMA target=entityTarget)? RPAREN
+    : NER LPAREN type=entityType (COMMA target=entityTarget)? RPAREN (AS var=variable)?
     ;
 
 entityType
@@ -213,12 +216,11 @@ entityTarget
     ;
 
 containsExpression
-    : CONTAINS LPAREN variable COMMA terms+=STRING RPAREN                        # ContainsWithVariableExpression
-    | CONTAINS LPAREN terms+=STRING (COMMA terms+=STRING)* RPAREN                # ContainsWithoutVariableExpression
+    : CONTAINS LPAREN terms+=STRING (COMMA terms+=STRING)* RPAREN (AS var=variable)?
     ;
 
 dependsExpression
-    : DEPENDS LPAREN gov=governor COMMA rel=relation COMMA dep=dependent RPAREN
+    : DEPENDS LPAREN gov=governor COMMA rel=relation COMMA dep=dependent RPAREN (AS var=variable)?
     ;
 
 governor
@@ -252,7 +254,7 @@ comparisonOp
     ;
 
 posExpression
-    : POS LPAREN tag=posTag COMMA termValue=term RPAREN
+    : POS LPAREN tag=posTag COMMA termValue=term RPAREN (AS var=variable)?
     ;
 
 posTag

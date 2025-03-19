@@ -42,4 +42,42 @@ class ContainsConditionTest {
         String nullValue = null;
         assertThrows(NullPointerException.class, () -> new Contains(nullValue));
     }
+    
+    @Test
+    @DisplayName("Variable binding constructor should set fields correctly")
+    void variableBindingConstructorShouldSetFieldsCorrectly() {
+        String term = "test value";
+        String variableName = "match";
+        Contains condition = new Contains(term, variableName, true);
+        
+        assertEquals(term, condition.getValue());
+        assertEquals(variableName, condition.variableName());
+        assertTrue(condition.isVariable());
+    }
+    
+    @Test
+    @DisplayName("toString should format with variable correctly (AS-based style)")
+    void toStringShouldFormatWithVariableCorrectly() {
+        String term = "test value";
+        String variableName = "match";
+        Contains condition = new Contains(term, variableName, true);
+        
+        String str = condition.toString();
+        assertEquals("CONTAINS(test value) AS ?match", str);
+    }
+    
+    @Test
+    @DisplayName("getProducedVariables should return variable when isVariable is true")
+    void getProducedVariablesShouldReturnVariableWhenIsVariableIsTrue() {
+        Contains condition = new Contains("keyword", "match", true);
+        assertEquals(1, condition.getProducedVariables().size());
+        assertTrue(condition.getProducedVariables().contains("match"));
+    }
+    
+    @Test
+    @DisplayName("getProducedVariables should return empty set when isVariable is false")
+    void getProducedVariablesShouldReturnEmptySetWhenIsVariableIsFalse() {
+        Contains condition = new Contains("keyword");
+        assertTrue(condition.getProducedVariables().isEmpty());
+    }
 } 

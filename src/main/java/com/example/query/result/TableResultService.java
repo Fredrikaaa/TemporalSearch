@@ -141,10 +141,15 @@ public class TableResultService {
                 // Add a new row
                 int rowIndex = table.rowCount();
                 table.appendRow();
+                System.out.println("Added row " + rowIndex + " for match: " + match);
                 
                 // Set values for each column
                 for (SelectColumn selectColumn : selectColumns) {
+                    System.out.println("Populating column: " + selectColumn.getColumnName() + " for match: " + match);
                     selectColumn.populateColumn(table, rowIndex, match, variableBindings, indexes);
+                    // After populating, check what the value is
+                    Column<?> col = table.column(selectColumn.getColumnName());
+                    System.out.println("Column " + selectColumn.getColumnName() + " now has value: " + col.get(rowIndex));
                 }
                 
                 // Set document_id

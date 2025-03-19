@@ -153,9 +153,13 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
                         
                         // Format the value with position information: value@beginPos:endPos
                         String valueWithPosition = String.format("%s@%d:%d", dateStr, beginPosition, endPosition);
+                        
+                        // Always add sentence-level binding for precise text extraction
                         variableBindings.addBinding(docId, sentenceId, variableName, valueWithPosition);
                         
+                        // For document granularity, also add a document-level binding
                         if (granularity == Query.Granularity.DOCUMENT) {
+                            variableBindings.addBinding(docId, variableName, valueWithPosition);
                             matches.add(new DocSentenceMatch(docId));
                         } else {
                             matches.add(new DocSentenceMatch(docId, sentenceId));
@@ -198,9 +202,13 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
                         
                         // Format the value with position information: value@beginPos:endPos
                         String valueWithPosition = String.format("%s@%d:%d", entityValue, beginPos, endPos);
+                        
+                        // Always add sentence-level binding for precise text extraction
                         variableBindings.addBinding(docId, sentenceId, variableName, valueWithPosition);
                         
+                        // For document granularity, also add a document-level binding
                         if (granularity == Query.Granularity.DOCUMENT) {
+                            variableBindings.addBinding(docId, variableName, valueWithPosition);
                             matches.add(new DocSentenceMatch(docId));
                         } else {
                             matches.add(new DocSentenceMatch(docId, sentenceId));

@@ -5,12 +5,13 @@ import com.example.query.model.condition.Condition;
 import com.example.query.model.condition.Contains;
 import com.example.query.model.condition.Dependency;
 import com.example.query.model.condition.Logical;
+import com.example.query.model.condition.Logical.LogicalOperator;
 import com.example.query.model.condition.Ner;
 import com.example.query.model.condition.Not;
 import com.example.query.model.condition.Pos;
 import com.example.query.model.condition.Temporal;
-import com.example.query.model.TitleColumn;
-import com.example.query.model.TimestampColumn;
+import com.example.query.binding.VariableRegistry;
+import com.example.query.binding.VariableType;
 
 import org.antlr.v4.runtime.tree.ParseTree;
 
@@ -20,6 +21,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Visitor implementation that builds a Query model from the parse tree.
@@ -29,11 +31,14 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ISO_DATE;
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ISO_DATE_TIME;
     
+    // Variable registry for tracking variables
+    private final VariableRegistry variableRegistry = new VariableRegistry();
+    
     /**
      * Creates a new QueryModelBuilder.
      */
     public QueryModelBuilder() {
-        // No parameters needed with SqliteAccessor singleton
+        // No parameters needed
     }
     
     @Override
@@ -68,19 +73,30 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         if (ctx.limitClause() != null) {
             limit = Optional.of(Integer.parseInt(ctx.limitClause().count.getText()));
         }
-        
+
         if (ctx.granularityClause() != null) {
             if (ctx.granularityClause().DOCUMENT() != null) {
                 granularity = Query.Granularity.DOCUMENT;
-            } else if (ctx.granularityClause().SENTENCE() != null) {
+            } else {
                 granularity = Query.Granularity.SENTENCE;
                 if (ctx.granularityClause().NUMBER() != null) {
                     granularitySize = Optional.of(Integer.parseInt(ctx.granularityClause().NUMBER().getText()));
                 }
             }
         }
+
+        // Register variables from all conditions
+        for (Condition condition : conditions) {
+            condition.registerVariables(variableRegistry);
+        }
         
-        return new Query(source, conditions, orderColumns, limit, granularity, granularitySize, selectColumns);
+        // Validate variable usage
+        Set<String> validationErrors = variableRegistry.validate();
+        if (!validationErrors.isEmpty()) {
+            throw new IllegalStateException("Variable binding errors: " + String.join(", ", validationErrors));
+        }
+
+        return new Query(source, conditions, orderColumns, limit, granularity, granularitySize, selectColumns, variableRegistry);
     }
 
     @Override
@@ -259,48 +275,56 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     }
 
     @Override
-    public Object visitContainsWithVariableExpression(QueryLangParser.ContainsWithVariableExpressionContext ctx) {
-        String variableName = (String) visit(ctx.variable());
-        String term = unquote(ctx.terms.get(0).getText());
-        
-        // Remove the ? prefix from variable name if present
-        if (variableName.startsWith("?")) {
-            variableName = variableName.substring(1);
-        }
-        
-        return new Contains(variableName, term);
-    }
-
-    @Override
-    public Object visitContainsWithoutVariableExpression(QueryLangParser.ContainsWithoutVariableExpressionContext ctx) {
+    public Object visitContainsExpression(QueryLangParser.ContainsExpressionContext ctx) {
         List<String> terms = new ArrayList<>();
         for (var termCtx : ctx.terms) {
             terms.add(unquote(termCtx.getText()));
         }
+        
+        // Check for AS variable binding
+        if (ctx.var != null) {
+            String variableName = (String) visit(ctx.var);
+            return new Contains(terms, variableName, true, terms.get(0));
+        }
+        
         return new Contains(terms);
     }
 
     @Override
     public Object visitNerExpression(QueryLangParser.NerExpressionContext ctx) {
-        String type = (String) visit(ctx.entityType());
+        String entityType = (String) visit(ctx.type);
         
-        if (type == null) {
+        if (entityType == null) {
             throw new IllegalStateException("NER type cannot be null");
         }
 
-        // Handle optional target
-        if (ctx.entityTarget() == null) {
-            return Ner.of(type);
-        }
+        // Get target if specified
+        String target = null;
+        boolean isVariable = false;
+        String variableName = null;
 
-        String target = (String) visit(ctx.entityTarget());
-        
-        // If target is a variable, it's a variable binding condition
-        if (ctx.entityTarget().variable() != null) {
-            return Ner.withVariable(type, target);
-        } else {
-            return Ner.of(type);
+        if (ctx.target != null) {
+            target = (String) visit(ctx.target);
+            
+            // Check if target is a variable (old style variable binding)
+            if (target != null && target.startsWith("?")) {
+                isVariable = true;
+                variableName = target.substring(1);
+                target = null;
+            }
         }
+        
+        // Check for AS variable binding (new style)
+        if (ctx.var != null) {
+            variableName = (String) visit(ctx.var);
+            isVariable = true;
+        }
+        
+        if (isVariable) {
+            return new Ner(entityType, target, variableName, true);
+        }
+        
+        return new Ner(entityType, target);
     }
 
     @Override
@@ -340,42 +364,47 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitDateComparisonExpression(QueryLangParser.DateComparisonExpressionContext ctx) {
-        String variable = (String) visit(ctx.variable());
         int year = Integer.parseInt(ctx.year.getText());
         Temporal.ComparisonType compType = mapComparisonOp(ctx.comparisonOp().getText());
         
-        return new Temporal(compType, variable, year);
+        // Check for AS variable binding
+        if (ctx.var != null) {
+            String variableName = (String) visit(ctx.var);
+            LocalDateTime date = LocalDateTime.of(year, 1, 1, 0, 0);
+            return new Temporal(date, Optional.empty(), Optional.of(variableName), Optional.empty(), compType.getTemporalType());
+        }
+        
+        // No variable binding, use default implementation
+        LocalDateTime date = LocalDateTime.of(year, 1, 1, 0, 0);
+        return new Temporal(date, Optional.empty(), Optional.empty(), Optional.empty(), compType.getTemporalType());
     }
     
     @Override
     public Object visitDateOperatorExpression(QueryLangParser.DateOperatorExpressionContext ctx) {
-        String variable = (String) visit(ctx.variable());
-        Temporal.Type type = mapDateOperator(ctx.dateOperator().getText());
+        Temporal.Type temporalType = mapDateOperator(ctx.dateOperator().getText());
+        Object dateValue = visit(ctx.dateValue());
         
-        // Process the date value
-        Object dateValueResult = visit(ctx.dateValue());
-        LocalDateTime startDate = null;
+        LocalDateTime startDate;
         Optional<LocalDateTime> endDate = Optional.empty();
         
-        if (dateValueResult instanceof LocalDateTime) {
-            startDate = (LocalDateTime) dateValueResult;
-        } else if (dateValueResult instanceof LocalDateTime[] dateRange) {
-            startDate = dateRange[0];
-            endDate = Optional.of(dateRange[1]);
-        }
-        
-        // Handle radius if present
-        if (ctx.radius != null) {
-            String radiusValue = ctx.radius.getText() + ctx.unit.getText();
-            return new Temporal(type, variable, startDate, radiusValue);
-        }
-        
-        if (endDate.isPresent()) {
-            // TODO: Properly handle date ranges
-            return new Temporal(type, variable, startDate);
+        if (dateValue instanceof Integer year) {
+            // Single year
+            startDate = LocalDateTime.of(year, 1, 1, 0, 0);
         } else {
-            return new Temporal(type, variable, startDate);
+            // Date range [start, end]
+            int[] range = (int[]) dateValue;
+            startDate = LocalDateTime.of(range[0], 1, 1, 0, 0);
+            endDate = Optional.of(LocalDateTime.of(range[1], 12, 31, 23, 59, 59));
         }
+        
+        // Check for AS variable binding
+        if (ctx.var != null) {
+            String variableName = (String) visit(ctx.var);
+            return new Temporal(startDate, endDate, Optional.of(variableName), Optional.empty(), temporalType);
+        }
+        
+        // No variable binding
+        return new Temporal(startDate, endDate, Optional.empty(), Optional.empty(), temporalType);
     }
     
     @Override
@@ -416,29 +445,21 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitDependsExpression(QueryLangParser.DependsExpressionContext ctx) {
-        String governor = (String) visit(ctx.governor());
-        String relation = (String) visit(ctx.relation());
-        String dependent = (String) visit(ctx.dependent());
+        String governor = (String) visit(ctx.gov);
+        String relation = (String) visit(ctx.rel);
+        String dependent = (String) visit(ctx.dep);
         
-        if (governor == null || relation == null || dependent == null) {
-            throw new IllegalStateException("DEPENDS components cannot be null");
+        // Check if governor or dependent are variables
+        boolean governorIsVariable = ctx.gov.variable() != null;
+        boolean dependentIsVariable = ctx.dep.variable() != null;
+        
+        // Check for AS variable binding
+        if (ctx.var != null) {
+            String variableName = (String) visit(ctx.var);
+            return new Dependency(governor, relation, dependent, variableName, true);
         }
-
-        // Check if any of the components is a variable
-        boolean hasVariable = ctx.governor().variable() != null || 
-                            ctx.dependent().variable() != null;
-
-        if (hasVariable) {
-            String variableName;
-            if (ctx.governor().variable() != null) {
-                variableName = governor.substring(1); // Remove the ? prefix
-            } else {
-                variableName = dependent.substring(1); // Remove the ? prefix
-            }
-            return new Dependency(variableName, governor, relation, dependent);
-        } else {
-            return new Dependency(governor, relation, dependent);
-        }
+        
+        return new Dependency(governor, relation, dependent);
     }
 
     @Override
@@ -515,20 +536,16 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitPosExpression(QueryLangParser.PosExpressionContext ctx) {
-        String posTag = (String) visit(ctx.posTag());
-        String term = (String) visit(ctx.term());
+        String posTag = (String) visit(ctx.tag);
+        String term = (String) visit(ctx.termValue);
         
-        if (posTag == null || term == null) {
-            throw new IllegalStateException("POS tag and term cannot be null");
+        // Check for AS variable binding
+        if (ctx.var != null) {
+            String variableName = (String) visit(ctx.var);
+            return new Pos(posTag, term, variableName, true);
         }
-
-        // Check if term is a variable
-        if (ctx.term().variable() != null) {
-            String variableName = term.substring(1); // Remove the ? prefix
-            return new Pos(variableName, posTag, term);
-        } else {
-            return new Pos(posTag, term);
-        }
+        
+        return new Pos(posTag, term);
     }
 
     @Override
@@ -547,5 +564,49 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             return visit(ctx.variable());
         }
         return visitIdentifier(ctx.identifier());
+    }
+
+    @Override
+    public Object visitOldDateComparisonExpression(QueryLangParser.OldDateComparisonExpressionContext ctx) {
+        String variableName = (String) visit(ctx.var);
+        int year = Integer.parseInt(ctx.year.getText());
+        Temporal.ComparisonType compType = mapComparisonOp(ctx.comparisonOp().getText());
+        
+        LocalDateTime date = LocalDateTime.of(year, 1, 1, 0, 0);
+        return new Temporal(date, Optional.empty(), Optional.of(variableName), Optional.empty(), compType.getTemporalType());
+    }
+
+    @Override
+    public Object visitOldDateOperatorExpression(QueryLangParser.OldDateOperatorExpressionContext ctx) {
+        String variableName = (String) visit(ctx.var);
+        Temporal.Type temporalType = mapDateOperator(ctx.dateOperator().getText());
+        Object dateValue = visit(ctx.dateValue());
+        
+        LocalDateTime startDate;
+        Optional<LocalDateTime> endDate = Optional.empty();
+        
+        if (dateValue instanceof Integer year) {
+            // Single year
+            startDate = LocalDateTime.of(year, 1, 1, 0, 0);
+        } else if (dateValue instanceof int[] range) {
+            // Date range [start, end]
+            startDate = LocalDateTime.of(range[0], 1, 1, 0, 0);
+            endDate = Optional.of(LocalDateTime.of(range[1], 12, 31, 23, 59, 59));
+        } else if (dateValue instanceof LocalDateTime[] dateRange) {
+            // Already parsed date range
+            startDate = dateRange[0];
+            endDate = Optional.of(dateRange[1]);
+        } else {
+            // Assume it's a parsed date already
+            startDate = (LocalDateTime) dateValue;
+        }
+        
+        Optional<TemporalRange> range = Optional.empty();
+        if (ctx.radius != null && ctx.unit != null) {
+            String radiusStr = ctx.radius.getText() + ctx.unit.getText();
+            range = Optional.of(new TemporalRange(radiusStr));
+        }
+        
+        return new Temporal(startDate, endDate, Optional.of(variableName), range, temporalType);
     }
 } 

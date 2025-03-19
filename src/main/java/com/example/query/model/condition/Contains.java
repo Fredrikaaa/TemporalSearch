@@ -3,6 +3,10 @@ package com.example.query.model.condition;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+
+import com.example.query.binding.VariableRegistry;
+import com.example.query.binding.VariableType;
 
 /**
  * Represents a CONTAINS condition in the query language.
@@ -53,13 +57,13 @@ public record Contains(
     /**
      * Creates a condition with a variable binding and a term.
      * 
-     * @param variableName The variable name to bind results to
      * @param term The search term
+     * @param variableName The variable name to bind results to
+     * @param isVariable Whether this condition binds to a variable
      */
-    public Contains(String variableName, String term) {
+    public Contains(String term, String variableName, boolean isVariable) {
         this(Collections.singletonList(Objects.requireNonNull(term, "term cannot be null")), 
-             Objects.requireNonNull(variableName, "variableName cannot be null"), 
-             true, term);
+             variableName, isVariable, term);
     }
 
     /**
@@ -103,9 +107,29 @@ public record Contains(
     public String getType() {
         return "CONTAINS";
     }
+    
+    @Override
+    public Set<String> getProducedVariables() {
+        return isVariable ? Set.of(variableName) : Collections.emptySet();
+    }
+    
+    @Override
+    public VariableType getProducedVariableType() {
+        return VariableType.TEXT_SPAN;
+    }
+    
+    @Override
+    public void registerVariables(VariableRegistry registry) {
+        if (isVariable) {
+            registry.registerProducer(variableName, getProducedVariableType(), getType());
+        }
+    }
 
     @Override
     public String toString() {
+        if (isVariable) {
+            return String.format("CONTAINS(%s) AS ?%s", String.join(", ", terms), variableName);
+        }
         return String.format("CONTAINS(%s)", String.join(", ", terms));
     }
 } 

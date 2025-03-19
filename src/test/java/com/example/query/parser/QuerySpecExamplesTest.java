@@ -92,42 +92,42 @@ public class QuerySpecExamplesTest {
     @DisplayName("Date comparison examples from spec")
     void testDateComparisonExamples() {
         // Greater than comparison
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, > 1990)");
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(> 1990) AS ?doc");
         
         // Less than comparison
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, < 2000)");
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(< 2000) AS ?doc");
         
         // Equals comparison
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, == 1995)");
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(== 1995) AS ?doc");
         
         // Greater than or equal comparison
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, >= 1995)");
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(>= 1995) AS ?doc");
         
         // Less than or equal comparison
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, <= 2005)");
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(<= 2005) AS ?doc");
     }
 
     @Test
     @DisplayName("Complex date operations examples from spec")
     void testComplexDateOperationsExamples() {
         // Contains date range
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, CONTAINS [1990, 2000])");
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(CONTAINS [1990, 2000]) AS ?doc");
         
         // Contained by date
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, CONTAINED_BY 2000)");
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(CONTAINED_BY 2000) AS ?doc");
         
         // Intersect with date range
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, INTERSECT [1990, 2000])");
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(INTERSECT [1990, 2000]) AS ?doc");
         
         // Near date with radius
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(?doc, NEAR 2000 RADIUS 5y)");
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(NEAR 2000 RADIUS 5y) AS ?doc");
     }
 
     @Test
     @DisplayName("Granularity examples from spec")
     void testGranularityExamples() {
         // Document granularity
-        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY DOCUMENT");
+        assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\") AS ?entity GRANULARITY DOCUMENT");
         
         // Sentence granularity
         assertSpecExampleValid("SELECT ?entity FROM corpus WHERE NER(\"ORGANIZATION\", ?entity) GRANULARITY SENTENCE");

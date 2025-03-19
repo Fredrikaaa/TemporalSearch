@@ -100,19 +100,19 @@ public class QuerySemanticValidator {
      * First pass to collect all bound variables for later validation.
      */
     private void collectBoundVariables(Condition condition) {
-        if (condition instanceof Ner nerCondition) {
-            if (nerCondition.isVariable()) {
-                // Add with ? prefix for consistency
-                boundVariables.add("?" + nerCondition.variableName());
-            }
-        } else if (condition instanceof Logical logicalCondition) {
+        // Check for variables produced by the condition
+        boundVariables.addAll(condition.getProducedVariables().stream()
+            .map(name -> name.startsWith("?") ? name : "?" + name)
+            .toList());
+        
+        // Handle nested conditions in Logical and Not
+        if (condition instanceof Logical logicalCondition) {
             for (Condition subCondition : logicalCondition.conditions()) {
                 collectBoundVariables(subCondition);
             }
         } else if (condition instanceof Not notCondition) {
             collectBoundVariables(notCondition.condition());
         }
-        // Other condition types that might bind variables can be added here
     }
     
     /**
@@ -127,7 +127,12 @@ public class QuerySemanticValidator {
             if (column instanceof SnippetColumn snippetColumn) {
                 validateSnippetNode(snippetColumn.getSnippetNode());
             } else if (column instanceof VariableColumn variableColumn) {
-                String variable = "?" + variableColumn.getVariableName();
+                String variableName = variableColumn.getVariableName();
+                // Ensure consistent format for variable names (with single ? prefix)
+                String variable = variableName.startsWith("?") ? variableName : "?" + variableName;
+                
+                logger.debug("Validating SELECT variable: {} against bound variables: {}", variable, boundVariables);
+                
                 if (!boundVariables.contains(variable)) {
                     throw new QueryParseException(String.format(
                         "Unbound variable in SELECT: %s. Variables must be bound in WHERE clause.",

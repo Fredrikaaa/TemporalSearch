@@ -90,12 +90,12 @@ class QueryParserTest {
     @Test
     @DisplayName("Parse query with NER variable binding")
     void parseNerVariableBinding() throws QueryParseException {
-        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE NER(PERSON, ?scientist)";
+        String queryStr = "SELECT COUNT(DOCUMENTS) FROM wikipedia WHERE NER(PERSON) AS ?scientist";
         Query query = parser.parse(queryStr);
 
         Ner condition = (Ner) query.conditions().get(0);
         assertEquals("PERSON", condition.entityType());
-        assertEquals("scientist", condition.variableName());
+        assertEquals("?scientist", condition.variableName());
         assertTrue(condition.isVariable());
     }
 

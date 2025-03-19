@@ -1,9 +1,13 @@
 package com.example.query.model.condition;
 
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
+import com.example.query.binding.VariableRegistry;
+import com.example.query.binding.VariableType;
 import com.example.query.model.TemporalRange;
 
 /**
@@ -64,12 +68,23 @@ public record Temporal(
     }
     
     /**
-     * Constructor for simple date comparison with a variable.
+     * Constructor for simple date comparison.
      */
-    public Temporal(ComparisonType comparisonType, String variable, int year) {
+    public Temporal(ComparisonType comparisonType, int year) {
         this(LocalDateTime.of(year, 1, 1, 0, 0),
              Optional.empty(),
-             Optional.of(variable),
+             Optional.empty(),
+             Optional.empty(),
+             comparisonType.getTemporalType());
+    }
+    
+    /**
+     * Constructor for simple date comparison with a variable.
+     */
+    public Temporal(ComparisonType comparisonType, int year, String variableName) {
+        this(LocalDateTime.of(year, 1, 1, 0, 0),
+             Optional.empty(),
+             Optional.of(variableName),
              Optional.empty(),
              comparisonType.getTemporalType());
     }
@@ -96,24 +111,10 @@ public record Temporal(
     }
     
     /**
-     * Constructor for variable-only condition.
+     * Constructor for temporal condition with range and variable.
      */
-    public Temporal(String variable) {
-        this(null, null, Optional.empty(), Optional.empty(), null);
-    }
-    
-    /**
-     * Constructor for variable comparison condition.
-     */
-    public Temporal(Type type, String variable, LocalDateTime compareDate) {
-        this(compareDate, Optional.empty(), Optional.of(variable), Optional.empty(), type);
-    }
-    
-    /**
-     * Constructor for variable comparison condition with range.
-     */
-    public Temporal(Type type, String variable, LocalDateTime compareDate, String range) {
-        this(compareDate, Optional.empty(), Optional.of(variable), Optional.of(new TemporalRange(range)), type);
+    public Temporal(Type type, LocalDateTime date, Optional<TemporalRange> range, String variableName) {
+        this(date, Optional.empty(), Optional.of(variableName), range, type);
     }
     
     @Override
@@ -122,12 +123,71 @@ public record Temporal(
     }
     
     @Override
+    public Set<String> getProducedVariables() {
+        return variable.isPresent() ? Set.of(variable.get()) : Collections.emptySet();
+    }
+    
+    @Override
+    public VariableType getProducedVariableType() {
+        return VariableType.TEMPORAL;
+    }
+    
+    @Override
+    public void registerVariables(VariableRegistry registry) {
+        if (variable.isPresent()) {
+            registry.registerProducer(variable.get(), getProducedVariableType(), getType());
+        }
+    }
+    
+    @Override
     public String toString() {
-        return String.format("TEMPORAL(%s, %s%s%s)", 
-            temporalType,
-            startDate,
-            endDate.map(d -> ", " + d).orElse(""),
-            variable.map(v -> ", var=" + v).orElse("")
-        );
+        StringBuilder sb = new StringBuilder("DATE(");
+        
+        // Format based on temporal type
+        switch (temporalType) {
+            case BEFORE:
+                sb.append("< ").append(startDate.getYear());
+                break;
+            case AFTER:
+                sb.append("> ").append(startDate.getYear());
+                break;
+            case BEFORE_EQUAL:
+                sb.append("<= ").append(startDate.getYear());
+                break;
+            case AFTER_EQUAL:
+                sb.append(">= ").append(startDate.getYear());
+                break;
+            case EQUAL:
+                sb.append("== ").append(startDate.getYear());
+                break;
+            case CONTAINS:
+            case CONTAINED_BY:
+            case INTERSECT:
+                sb.append(temporalType.name()).append(" ");
+                if (endDate.isPresent()) {
+                    sb.append("[").append(startDate.getYear()).append(", ").append(endDate.get().getYear()).append("]");
+                } else {
+                    sb.append(startDate.getYear());
+                }
+                break;
+            case NEAR:
+                sb.append("NEAR ").append(startDate.getYear());
+                range.ifPresent(r -> sb.append(" RADIUS ").append(r.toString()));
+                break;
+            case BETWEEN:
+                if (endDate.isPresent()) {
+                    sb.append("BETWEEN ").append(startDate.getYear()).append(" AND ").append(endDate.get().getYear());
+                }
+                break;
+        }
+        
+        sb.append(")");
+        
+        // Add variable if present
+        if (variable.isPresent()) {
+            sb.append(" AS ?").append(variable.get());
+        }
+        
+        return sb.toString();
     }
 } 

@@ -1,7 +1,11 @@
 package com.example.query.model.condition;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+
+import com.example.query.binding.VariableRegistry;
 
 /**
  * Represents a logical operation (AND, OR) between multiple conditions.
@@ -52,7 +56,46 @@ public record Logical(
     }
     
     @Override
+    public Set<String> getProducedVariables() {
+        Set<String> producedVariables = new HashSet<>();
+        for (Condition condition : conditions) {
+            producedVariables.addAll(condition.getProducedVariables());
+        }
+        return producedVariables;
+    }
+    
+    @Override
+    public Set<String> getConsumedVariables() {
+        Set<String> consumedVariables = new HashSet<>();
+        for (Condition condition : conditions) {
+            consumedVariables.addAll(condition.getConsumedVariables());
+        }
+        return consumedVariables;
+    }
+    
+    @Override
+    public void registerVariables(VariableRegistry registry) {
+        // Register variables from all child conditions
+        for (Condition condition : conditions) {
+            condition.registerVariables(registry);
+        }
+    }
+    
+    @Override
     public String toString() {
-        return String.format("LogicalCondition{operator=%s, conditions=%s}", operator, conditions);
+        StringBuilder sb = new StringBuilder();
+        sb.append("(");
+        
+        boolean first = true;
+        for (Condition condition : conditions) {
+            if (!first) {
+                sb.append(" ").append(operator.name()).append(" ");
+            }
+            sb.append(condition.toString());
+            first = false;
+        }
+        
+        sb.append(")");
+        return sb.toString();
     }
 } 

@@ -343,22 +343,119 @@ public class VariableBindings {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append("VariableBindings:\n");
+        sb.append("VariableBindings Summary:\n");
         
-        sb.append("Document bindings:\n");
-        for (Map.Entry<Integer, Map<String, List<String>>> entry : documentBindings.entrySet()) {
-            sb.append("  Doc ").append(entry.getKey()).append(":\n");
-            for (Map.Entry<String, List<String>> varEntry : entry.getValue().entrySet()) {
-                sb.append("    ").append(varEntry.getKey()).append(" = ").append(varEntry.getValue()).append("\n");
+        // Document bindings summary
+        int docBindingsCount = documentBindings.size();
+        sb.append("Document bindings: ").append(docBindingsCount).append(" documents\n");
+        
+        // Only show first few document bindings if there are many
+        int docBindingsToShow = Math.min(docBindingsCount, 3);
+        int docBindingsShown = 0;
+        
+        if (docBindingsCount > 0) {
+            sb.append("Sample document bindings:\n");
+            for (Map.Entry<Integer, Map<String, List<String>>> entry : documentBindings.entrySet()) {
+                if (docBindingsShown >= docBindingsToShow) break;
+                
+                sb.append("  Doc ").append(entry.getKey()).append(": ");
+                
+                // Count variables for this document
+                int varCount = entry.getValue().size();
+                sb.append(varCount).append(" variables");
+                
+                // Show first few variables if any exist
+                if (varCount > 0) {
+                    sb.append(" (");
+                    int varsShown = 0;
+                    for (Map.Entry<String, List<String>> varEntry : entry.getValue().entrySet()) {
+                        if (varsShown > 0) sb.append(", ");
+                        if (varsShown >= 2) {
+                            sb.append("...");
+                            break;
+                        }
+                        
+                        // Show variable name and count of values
+                        sb.append(varEntry.getKey()).append(": ")
+                          .append(varEntry.getValue().size()).append(" values");
+                        
+                        varsShown++;
+                    }
+                    sb.append(")");
+                }
+                
+                sb.append("\n");
+                docBindingsShown++;
+            }
+            
+            if (docBindingsCount > docBindingsToShow) {
+                sb.append("  ... and ").append(docBindingsCount - docBindingsToShow)
+                  .append(" more documents\n");
             }
         }
         
-        sb.append("Sentence bindings:\n");
-        for (Map.Entry<SentenceKey, Map<String, List<String>>> entry : sentenceBindings.entrySet()) {
-            sb.append("  Doc ").append(entry.getKey().documentId)
-              .append(", Sent ").append(entry.getKey().sentenceId).append(":\n");
-            for (Map.Entry<String, List<String>> varEntry : entry.getValue().entrySet()) {
-                sb.append("    ").append(varEntry.getKey()).append(" = ").append(varEntry.getValue()).append("\n");
+        // Sentence bindings summary
+        int sentKeyCount = sentenceBindings.size();
+        sb.append("Sentence bindings: ").append(sentKeyCount).append(" sentences\n");
+        
+        // Only show first few sentence bindings if there are many
+        int sentBindingsToShow = Math.min(sentKeyCount, 3);
+        int sentBindingsShown = 0;
+        
+        if (sentKeyCount > 0) {
+            sb.append("Sample sentence bindings:\n");
+            for (Map.Entry<SentenceKey, Map<String, List<String>>> entry : sentenceBindings.entrySet()) {
+                if (sentBindingsShown >= sentBindingsToShow) break;
+                
+                SentenceKey key = entry.getKey();
+                sb.append("  Doc ").append(key.documentId)
+                  .append(", Sent ").append(key.sentenceId).append(": ");
+                
+                // Count variables for this sentence
+                int varCount = entry.getValue().size();
+                sb.append(varCount).append(" variables");
+                
+                // Show first few variables if any exist
+                if (varCount > 0) {
+                    sb.append(" (");
+                    int varsShown = 0;
+                    for (Map.Entry<String, List<String>> varEntry : entry.getValue().entrySet()) {
+                        if (varsShown > 0) sb.append(", ");
+                        if (varsShown >= 2) {
+                            sb.append("...");
+                            break;
+                        }
+                        
+                        // Show variable name and first value (truncated if needed)
+                        String varName = varEntry.getKey();
+                        List<String> values = varEntry.getValue();
+                        
+                        sb.append(varName).append(": ");
+                        if (values.isEmpty()) {
+                            sb.append("no values");
+                        } else {
+                            String value = values.get(0);
+                            if (value.length() > 20) {
+                                value = value.substring(0, 17) + "...";
+                            }
+                            sb.append("\"").append(value).append("\"");
+                            if (values.size() > 1) {
+                                sb.append(" +").append(values.size() - 1).append(" more");
+                            }
+                        }
+                        
+                        varsShown++;
+                    }
+                    sb.append(")");
+                }
+                
+                sb.append("\n");
+                sentBindingsShown++;
+            }
+            
+            if (sentKeyCount > sentBindingsToShow) {
+                sb.append("  ... and ").append(sentKeyCount - sentBindingsToShow)
+                  .append(" more sentences\n");
             }
         }
         

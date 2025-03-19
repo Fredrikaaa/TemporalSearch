@@ -1,6 +1,11 @@
 package com.example.query.model.condition;
 
+import java.util.Collections;
 import java.util.Objects;
+import java.util.Set;
+
+import com.example.query.binding.VariableRegistry;
+import com.example.query.binding.VariableType;
 
 /**
  * Represents a Part of Speech (POS) condition in the query language.
@@ -35,7 +40,7 @@ public record Pos(
     /**
      * Creates a new POS condition with variable binding.
      */
-    public Pos(String variableName, String posTag, String term) {
+    public Pos(String posTag, String term, String variableName) {
         this(posTag, term, variableName, true);
     }
 
@@ -59,9 +64,26 @@ public record Pos(
     }
     
     @Override
+    public Set<String> getProducedVariables() {
+        return isVariable ? Set.of(variableName) : Collections.emptySet();
+    }
+    
+    @Override
+    public VariableType getProducedVariableType() {
+        return VariableType.POS_TAG;
+    }
+    
+    @Override
+    public void registerVariables(VariableRegistry registry) {
+        if (isVariable) {
+            registry.registerProducer(variableName, getProducedVariableType(), getType());
+        }
+    }
+    
+    @Override
     public String toString() {
         if (isVariable) {
-            return String.format("POS(%s, %s, %s)", variableName, posTag, term);
+            return String.format("POS(%s, %s) AS ?%s", posTag, term, variableName);
         }
         return String.format("POS(%s, %s)", posTag, term);
     }

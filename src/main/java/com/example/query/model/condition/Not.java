@@ -1,6 +1,9 @@
 package com.example.query.model.condition;
 
 import java.util.Objects;
+import java.util.Set;
+
+import com.example.query.binding.VariableRegistry;
 
 /**
  * Represents a logical negation (NOT) of a condition.
@@ -22,7 +25,18 @@ public record Not(
     }
     
     @Override
+    public Set<String> getConsumedVariables() {
+        return condition.getConsumedVariables();
+    }
+    
+    @Override
+    public void registerVariables(VariableRegistry registry) {
+        // Register variables from inner condition
+        condition.registerVariables(registry);
+    }
+    
+    @Override
     public String toString() {
-        return String.format("NotCondition{condition=%s}", condition);
+        return "NOT " + condition.toString();
     }
 } 

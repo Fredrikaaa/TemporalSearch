@@ -1,6 +1,11 @@
 package com.example.query.model.condition;
 
+import java.util.Collections;
 import java.util.Objects;
+import java.util.Set;
+
+import com.example.query.binding.VariableRegistry;
+import com.example.query.binding.VariableType;
 
 /**
  * Represents a dependency condition in the query language.
@@ -36,8 +41,13 @@ public record Dependency(
 
     /**
      * Creates a new dependency condition with variable binding.
+     * 
+     * @param governor The governor term
+     * @param relation The dependency relation
+     * @param dependent The dependent term
+     * @param variableName The variable name to bind the dependency to
      */
-    public Dependency(String variableName, String governor, String relation, String dependent) {
+    public Dependency(String governor, String relation, String dependent, String variableName) {
         this(governor, relation, dependent, variableName, true);
     }
 
@@ -61,10 +71,27 @@ public record Dependency(
     }
     
     @Override
+    public Set<String> getProducedVariables() {
+        return isVariable ? Set.of(variableName) : Collections.emptySet();
+    }
+    
+    @Override
+    public VariableType getProducedVariableType() {
+        return VariableType.DEPENDENCY;
+    }
+    
+    @Override
+    public void registerVariables(VariableRegistry registry) {
+        if (isVariable) {
+            registry.registerProducer(variableName, getProducedVariableType(), getType());
+        }
+    }
+    
+    @Override
     public String toString() {
         if (isVariable) {
-            return String.format("DEPENDENCY(%s, %s, %s, %s)", variableName, governor, relation, dependent);
+            return String.format("DEPENDS(%s, %s, %s) AS ?%s", governor, relation, dependent, variableName);
         }
-        return String.format("DEPENDENCY(%s, %s, %s)", governor, relation, dependent);
+        return String.format("DEPENDS(%s, %s, %s)", governor, relation, dependent);
     }
 } 

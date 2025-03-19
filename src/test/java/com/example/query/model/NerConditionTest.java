@@ -15,12 +15,12 @@ class NerConditionTest {
     @Test
     @DisplayName("Constructor should set fields correctly")
     void constructorShouldSetFields() {
-        String type = "PERSON";
+        String entityType = "PERSON";
         String variableName = "scientist";
 
-        Ner condition = new Ner(type, variableName);
+        Ner condition = new Ner(entityType, null, variableName, true);
 
-        assertEquals(type, condition.entityType());
+        assertEquals(entityType, condition.entityType());
         assertEquals(variableName, condition.variableName());
         assertTrue(condition.isVariable());
     }
@@ -28,21 +28,21 @@ class NerConditionTest {
     @Test
     @DisplayName("getType should return NER")
     void getTypeShouldReturnNer() {
-        Ner condition = Ner.of("PERSON");
+        Ner condition = new Ner("PERSON");
         assertEquals("NER", condition.getType());
     }
 
     @Test
     @DisplayName("toString should include all fields")
     void toStringShouldIncludeAllFields() {
-        String type = "ORGANIZATION";
-        String variableName = "company";
+        String entityType = "ORGANIZATION";
+        String target = "Google";
 
-        Ner condition = new Ner(type, variableName);
+        Ner condition = new Ner(entityType, target);
         String str = condition.toString();
 
-        assertTrue(str.contains(type));
-        assertTrue(str.contains(variableName));
+        assertTrue(str.contains(entityType));
+        assertTrue(str.contains(target));
         assertTrue(str.contains("NER"));
     }
 
@@ -50,7 +50,7 @@ class NerConditionTest {
     @DisplayName("Constructor should not accept null type")
     void constructorShouldNotAcceptNullType() {
         assertThrows(NullPointerException.class, 
-            () -> new Ner(null, "varName"));
+            () -> new Ner(null, "varName", true));
     }
 
     @ParameterizedTest
@@ -60,60 +60,71 @@ class NerConditionTest {
     })
     @DisplayName("Constructor should accept all supported NER types")
     void constructorShouldAcceptSupportedNerTypes(String type) {
-        Ner condition = Ner.of(type);
+        Ner condition = new Ner(type);
         assertEquals(type, condition.entityType());
     }
 
     @Test
-    @DisplayName("Entity type should be normalized to uppercase")
-    void entityTypeShouldBeNormalizedToUppercase() {
-        Ner condition = Ner.of("person");
+    @DisplayName("Basic constructor should create condition without variable")
+    void basicConstructorShouldCreateConditionWithoutVariable() {
+        Ner condition = new Ner("PERSON");
         assertEquals("PERSON", condition.entityType());
+        assertNull(condition.variableName());
+        assertFalse(condition.isVariable());
     }
-
+    
     @Test
-    @DisplayName("of() should create condition without variable")
-    void ofShouldCreateConditionWithoutVariable() {
-        Ner condition = Ner.of("PERSON");
+    @DisplayName("Constructor with target should set target correctly")
+    void constructorWithTargetShouldSetTargetCorrectly() {
+        Ner condition = new Ner("PERSON", "John Doe");
         assertEquals("PERSON", condition.entityType());
+        assertEquals("John Doe", condition.target());
         assertNull(condition.variableName());
         assertFalse(condition.isVariable());
     }
 
     @Test
-    @DisplayName("withVariable() should create condition with variable")
-    void withVariableShouldCreateConditionWithVariable() {
-        Ner condition = Ner.withVariable("PERSON", "?scientist");
+    @DisplayName("Constructor with variable should create condition with variable")
+    void constructorWithVariableShouldCreateConditionWithVariable() {
+        Ner condition = new Ner("PERSON", null, "scientist", true);
         assertEquals("PERSON", condition.entityType());
         assertEquals("scientist", condition.variableName());
         assertTrue(condition.isVariable());
     }
 
     @Test
-    @DisplayName("withVariable() should require ? prefix")
-    void withVariableShouldRequireQuestionMarkPrefix() {
-        assertThrows(IllegalArgumentException.class,
-            () -> Ner.withVariable("PERSON", "scientist"));
-    }
-
-    @Test
-    @DisplayName("withVariable() should normalize entity type")
-    void withVariableShouldNormalizeEntityType() {
-        Ner condition = Ner.withVariable("person", "?scientist");
-        assertEquals("PERSON", condition.entityType());
-    }
-
-    @Test
     @DisplayName("toString should format without variable correctly")
     void toStringShouldFormatWithoutVariableCorrectly() {
-        Ner condition = Ner.of("PERSON");
+        Ner condition = new Ner("PERSON");
         assertEquals("NER(PERSON)", condition.toString());
     }
 
     @Test
-    @DisplayName("toString should format with variable correctly")
+    @DisplayName("toString should format with target correctly")
+    void toStringShouldFormatWithTargetCorrectly() {
+        Ner condition = new Ner("PERSON", "John Doe");
+        assertEquals("NER(PERSON, John Doe)", condition.toString());
+    }
+    
+    @Test
+    @DisplayName("toString should format with variable correctly (new AS-based style)")
     void toStringShouldFormatWithVariableCorrectly() {
-        Ner condition = Ner.withVariable("PERSON", "?scientist");
-        assertEquals("NER(PERSON, ?scientist)", condition.toString());
+        Ner condition = new Ner("PERSON", null, "scientist", true);
+        assertEquals("NER(PERSON) AS ?scientist", condition.toString());
+    }
+    
+    @Test
+    @DisplayName("getProducedVariables should return variable when isVariable is true")
+    void getProducedVariablesShouldReturnVariableWhenIsVariableIsTrue() {
+        Ner condition = new Ner("PERSON", null, "scientist", true);
+        assertEquals(1, condition.getProducedVariables().size());
+        assertTrue(condition.getProducedVariables().contains("scientist"));
+    }
+    
+    @Test
+    @DisplayName("getProducedVariables should return empty set when isVariable is false")
+    void getProducedVariablesShouldReturnEmptySetWhenIsVariableIsFalse() {
+        Ner condition = new Ner("PERSON");
+        assertTrue(condition.getProducedVariables().isEmpty());
     }
 } 
