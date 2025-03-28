@@ -3,15 +3,30 @@
     <!-- Silence the startup messages -->
     <statusListener class="ch.qos.logback.core.status.NopStatusListener" />
 
-    <!-- Console appender only for test failures -->
+    <!-- Console appender with detailed pattern -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} %-5level - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
     <!-- Disable file appenders during tests -->
     <appender name="NULL" class="ch.qos.logback.core.helpers.NOPAppender"/>
+
+    <!-- Enable DEBUG level for binding-related classes -->
+    <logger name="com.example.query.binding" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+    
+    <!-- Enable DEBUG level for dependency condition -->
+    <logger name="com.example.query.model.condition.Dependency" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+    
+    <!-- Enable DEBUG level for parser -->
+    <logger name="com.example.query.parser" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
 
     <!-- Pipeline specific logging -->
     <logger name="com.example.Pipeline" level="WARN" additivity="false">
@@ -28,7 +43,7 @@
         <appender-ref ref="CONSOLE"/>
     </logger>
 
-    <logger name="com.example.index" level="WARN">
+    <logger name="com.example.index" level="DEBUG">
         <appender-ref ref="CONSOLE"/>
     </logger>
 
@@ -37,8 +52,38 @@
     <logger name="com.example.logging.IndexingMetrics" level="OFF"/>
     <logger name="com.example.index" level="OFF"/>
 
-    <!-- Root logger -->
-    <root level="OFF">
+    <!-- Enable CoreNLP logging -->
+    <logger name="edu.stanford.nlp" level="INFO" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+
+    <!-- Enable detailed logging for our test classes -->
+    <logger name="com.example.PipelineTest" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+
+    <!-- Enable annotation package logging -->
+    <logger name="com.example.annotation" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+
+    <!-- Enable query package logging -->
+    <logger name="com.example.query" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+
+    <!-- Enable index package logging -->
+    <logger name="com.example.index" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+
+    <!-- Enable core package logging -->
+    <logger name="com.example.core" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+
+    <!-- Root logger - set to INFO to see general application logs -->
+    <root level="INFO">
         <appender-ref ref="CONSOLE"/>
     </root>
 </configuration> 

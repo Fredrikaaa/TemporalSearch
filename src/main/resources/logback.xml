@@ -4,7 +4,7 @@
     
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-            <level>DEBUG</level>
+            <level>INFO</level>
         </filter>
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} %-5level - %msg%n</pattern>
@@ -50,7 +50,7 @@
     </logger>
 
     <!-- Debug logging for query executor -->
-    <logger name="com.example.query.executor" level="DEBUG" additivity="false">
+    <logger name="com.example.query.executor" level="INFO" additivity="false">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>
     </logger>
@@ -62,5 +62,5 @@
     </root>
 
     <!-- Application logging -->
-    <logger name="com.example" level="${logging.level:-WARN}" />
+    <logger name="com.example" level="INFO" />
 </configuration>
