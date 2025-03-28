@@ -139,6 +139,8 @@ public final class LogicalExecutor implements ConditionExecutor<Logical> {
         // Merge the final working context back to the original
         bindingContext = workingContext;
         
+        logger.debug("AND execution complete with {} matches", result != null ? result.size() : 0);
+        
         return result != null ? result : new HashSet<>();
     }
     
@@ -191,6 +193,8 @@ public final class LogicalExecutor implements ConditionExecutor<Logical> {
         
         // Update the original binding context with all bindings from all conditions
         bindingContext = combinedContext;
+        
+        logger.debug("OR execution complete with {} matches", result.size());
         
         return result;
     }
@@ -510,9 +514,13 @@ public final class LogicalExecutor implements ConditionExecutor<Logical> {
     
     /**
      * Copies all positions from one match to another.
+     * Also copies variable values.
      */
     private void copyPositions(DocSentenceMatch from, DocSentenceMatch to) {
         from.getAllPositions().forEach(to::addPositions);
+        
+        // Copy variable values from 'from' to 'to'
+        from.getVariableValues().forEach(to::setVariableValue);
     }
     
     /**

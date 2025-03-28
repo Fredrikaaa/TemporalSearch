@@ -1,7 +1,5 @@
 package com.example.query.model;
 
-import com.example.query.snippet.SnippetConfig;
-
 /**
  * Represents a SNIPPET expression in the SELECT clause of a query.
  * This node captures the variable to extract a snippet for and the optional window size.
@@ -13,7 +11,7 @@ public record SnippetNode(
     boolean showSentenceBoundaries
 ) {
     
-    public static final int DEFAULT_WINDOW_SIZE = 3;  // Default 3 sentence window (was 1)
+    public static final int DEFAULT_WINDOW_SIZE = 3;
     public static final String DEFAULT_HIGHLIGHT_STYLE = "**";  // Default bold highlighting
     public static final boolean DEFAULT_SHOW_SENTENCE_BOUNDARIES = false;
     
@@ -44,14 +42,6 @@ public record SnippetNode(
         if (highlightStyle == null || highlightStyle.isEmpty()) {
             throw new IllegalArgumentException("highlightStyle must not be null or empty");
         }
-    }
-    
-    /**
-     * Creates a SnippetConfig from this node's settings
-     * @return A SnippetConfig with this node's settings
-     */
-    public SnippetConfig toSnippetConfig() {
-        return new SnippetConfig(windowSize, highlightStyle, showSentenceBoundaries);
     }
 
     @Override

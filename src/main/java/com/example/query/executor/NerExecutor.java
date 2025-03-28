@@ -107,15 +107,15 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
     }
     
     /**
-     * Executes a variable extraction for a specific entity type.
-     * This mode extracts all entities of the given type and binds them to the variable.
+     * Executes variable extraction for a specific entity type.
+     * This mode finds all entities of the given type and binds them to a variable.
      *
      * @param entityType The entity type to extract
-     * @param variableName The variable name to bind to (without the ? prefix)
+     * @param variableName The variable name to bind entities to
      * @param index The index to search in
-     * @param bindingContext The binding context to update
+     * @param bindingContext The binding context for variable bindings
      * @param granularity Whether to return document or sentence level matches
-     * @return Set of matches at the specified granularity level
+     * @return Set of document/sentence matches with entity bindings
      */
     private Set<DocSentenceMatch> executeVariableExtraction(String entityType, String variableName, IndexAccess index,
                                                   BindingContext bindingContext, Query.Granularity granularity) 
@@ -151,18 +151,28 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
                         int beginPosition = position.getBeginPosition();
                         int endPosition = position.getEndPosition();
                         
-                        // Format the value with position information
-                        EntityValue entityValue = new EntityValue(dateStr, beginPosition, endPosition);
+                        // Create a match with tracking info
+                        DocSentenceMatch match;
+                        if (granularity == Query.Granularity.DOCUMENT) {
+                            match = new DocSentenceMatch(docId);
+                        } else {
+                            match = new DocSentenceMatch(docId, sentenceId);
+                        }
                         
-                        // Add the binding to the context
+                        // Format the value with position information
+                        MatchedEntityValue entityValue = new MatchedEntityValue(dateStr, beginPosition, endPosition, docId, sentenceId);
+                        
+                        // Add the binding to the context (global)
                         bindingContext.bindValue(variableName, entityValue);
                         
-                        // Add match to results based on granularity
-                        if (granularity == Query.Granularity.DOCUMENT) {
-                            matches.add(new DocSentenceMatch(docId));
-                        } else {
-                            matches.add(new DocSentenceMatch(docId, sentenceId));
-                        }
+                        // Also set the value directly on the match object (local)
+                        match.setVariableValue(variableName, entityValue);
+                        
+                        logger.debug("Bound DATE value '{}' at doc:{}, sent:{}, pos:{}:{} to {}", 
+                                    dateStr, docId, sentenceId, beginPosition, endPosition, variableName);
+                        
+                        // Add match to results
+                        matches.add(match);
                     }
                 }
             }
@@ -190,6 +200,10 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
                     
                     // Extract entity value (remove prefix)
                     String entityText = key.substring(prefix.length());
+                    
+                    // Log the raw entity text found in the index
+                    logger.debug("Found raw {} entity in index: '{}'", entityType, entityText);
+                    
                     PositionList positions = PositionList.deserialize(valueBytes);
                     
                     // Bind entity value to variable for each document/sentence
@@ -199,18 +213,28 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
                         int beginPos = position.getBeginPosition();
                         int endPos = position.getEndPosition();
                         
-                        // Create entity value object
-                        EntityValue entityValue = new EntityValue(entityText, beginPos, endPos);
+                        // Create a match with tracking info
+                        DocSentenceMatch match;
+                        if (granularity == Query.Granularity.DOCUMENT) {
+                            match = new DocSentenceMatch(docId);
+                        } else {
+                            match = new DocSentenceMatch(docId, sentenceId);
+                        }
                         
-                        // Add the binding to the context
+                        // Create entity value object with document and sentence IDs
+                        MatchedEntityValue entityValue = new MatchedEntityValue(entityText, beginPos, endPos, docId, sentenceId);
+                        
+                        // Add the binding to the global context
                         bindingContext.bindValue(variableName, entityValue);
                         
-                        // Add match to results based on granularity
-                        if (granularity == Query.Granularity.DOCUMENT) {
-                            matches.add(new DocSentenceMatch(docId));
-                        } else {
-                            matches.add(new DocSentenceMatch(docId, sentenceId));
-                        }
+                        // Also set the value directly on the match object (local)
+                        match.setVariableValue(variableName, entityValue);
+                        
+                        logger.debug("Bound {} value '{}' at doc:{}, sent:{}, pos:{}:{} to {}", 
+                                    entityType, entityText, docId, sentenceId, beginPos, endPos, variableName);
+                        
+                        // Add match to results
+                        matches.add(match);
                     }
                 }
             }
@@ -332,7 +356,7 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
      * Represents an entity value with position information.
      * This is used as the value type for variable bindings.
      */
-    public record EntityValue(String text, int beginPosition, int endPosition) {
+    public record MatchedEntityValue(String text, int beginPosition, int endPosition, int documentId, int sentenceId) {
         @Override
         public String toString() {
             return String.format("%s@%d:%d", text, beginPosition, endPosition);

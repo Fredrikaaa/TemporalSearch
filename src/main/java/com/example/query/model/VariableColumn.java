@@ -2,15 +2,13 @@ package com.example.query.model;
 
 import com.example.core.IndexAccess;
 import com.example.query.binding.BindingContext;
+import com.example.query.executor.NerExecutor;
 import tech.tablesaw.api.StringColumn;
 import tech.tablesaw.api.Table;
 import tech.tablesaw.columns.Column;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.HashSet;
-import java.util.ArrayList;
 import java.util.Optional;
 
 import org.slf4j.Logger;
@@ -58,38 +56,77 @@ public class VariableColumn implements SelectColumn {
                               BindingContext bindingContext, Map<String, IndexAccess> indexes) {
         StringColumn column = (StringColumn) table.column(getColumnName());
         
-        System.out.println("VariableColumn: Populating column for variable: " + variableName + ", match: " + match);
+        logger.debug("Populating column for variable: {} for match: {}", variableName, match);
         
         // Add ? prefix if needed
         String varName = variableName.startsWith("?") ? variableName : "?" + variableName;
         
-        // Try to get a String value for this variable
-        Optional<String> valueOpt = bindingContext.getValue(varName, String.class);
+        // Try to get value specifically for this match first
         String value = null;
+        try {
+            // Check if this match has a specific value for this variable
+            Object matchValue = match.getVariableValue(varName);
+            if (matchValue != null) {
+                if (matchValue instanceof NerExecutor.MatchedEntityValue entityValue) {
+                    // Get text from MatchedEntityValue
+                    value = entityValue.text();
+                    logger.debug("Found match-specific MatchedEntityValue: {}", value);
+                } else if (matchValue instanceof String) {
+                    value = (String) matchValue;
+                    logger.debug("Found match-specific String value: {}", value);
+                } else {
+                    value = matchValue.toString();
+                    logger.debug("Found match-specific value (converted to string): {}", value);
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Error extracting match-specific variable value: {}", e.getMessage());
+        }
         
-        if (valueOpt.isPresent()) {
-            value = valueOpt.get();
-            System.out.println("VariableColumn: Found value: " + value);
-        } else {
-            // Try to get all values for this variable
-            List<String> values = bindingContext.getValues(varName, String.class);
-            if (!values.isEmpty()) {
-                value = values.get(0);
-                System.out.println("VariableColumn: Found value from list: " + value);
-            } else {
-                System.out.println("VariableColumn: No value found for variable: " + varName);
+        // If no match-specific value, try the global binding context
+        if (value == null) {
+            try {
+                // Try to get a MatchedEntityValue from binding context
+                Optional<NerExecutor.MatchedEntityValue> entityValueOpt = 
+                    bindingContext.getValue(varName, NerExecutor.MatchedEntityValue.class);
+                
+                if (entityValueOpt.isPresent()) {
+                    NerExecutor.MatchedEntityValue entityValue = entityValueOpt.get();
+                    value = entityValue.text();
+                    logger.debug("Found MatchedEntityValue from binding context: {}", value);
+                } else {
+                    // Try to get a String value
+                    Optional<String> stringOpt = bindingContext.getValue(varName, String.class);
+                    if (stringOpt.isPresent()) {
+                        value = stringOpt.get();
+                        logger.debug("Found String value from binding context: {}", value);
+                    } else {
+                        // Try to get all values for this variable
+                        List<Object> values = bindingContext.getValues(varName, Object.class);
+                        if (!values.isEmpty()) {
+                            Object obj = values.get(0);
+                            if (obj instanceof NerExecutor.MatchedEntityValue entityValue) {
+                                value = entityValue.text();
+                                logger.debug("Found MatchedEntityValue from binding context list: {}", value);
+                            } else if (obj instanceof String) {
+                                value = (String) obj;
+                                logger.debug("Found String value from binding context list: {}", value);
+                            } else {
+                                value = obj.toString();
+                                logger.debug("Found value (converted to string) from binding context list: {}", value);
+                            }
+                        } else {
+                            logger.debug("No value found for variable: {}", varName);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("Error extracting variable value from binding context: {}", e);
             }
         }
         
-        // Extract the actual entity value from the format "term@beginPos:endPos" if present
-        if (value != null) {
-            int atIndex = value.indexOf('@');
-            if (atIndex > 0) {
-                value = value.substring(0, atIndex);
-                System.out.println("VariableColumn: Extracted value: " + value);
-            }
-        } else {
-            System.out.println("VariableColumn: No value found for variable: " + variableName);
+        if (value == null) {
+            logger.debug("No value found for variable: {}", variableName);
         }
         
         column.set(rowIndex, value);

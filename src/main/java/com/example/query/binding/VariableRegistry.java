@@ -10,11 +10,16 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Registry for all variables in a query.
  * Tracks both producer and consumer variables.
  */
 public class VariableRegistry {
+    private static final Logger logger = LoggerFactory.getLogger(VariableRegistry.class);
+    
     // Map of variable name to producers
     private final Map<String, Set<ProducerVariable>> producers = new ConcurrentHashMap<>();
     
@@ -35,6 +40,9 @@ public class VariableRegistry {
         
         producers.computeIfAbsent(formattedName, k -> ConcurrentHashMap.newKeySet())
                 .add(var);
+        
+        logger.debug("Registered producer variable: {} with type {} from condition {}", 
+                    formattedName, type, conditionType);
                 
         return var;
     }
@@ -53,6 +61,9 @@ public class VariableRegistry {
         
         consumers.computeIfAbsent(formattedName, k -> ConcurrentHashMap.newKeySet())
                 .add(var);
+        
+        logger.debug("Registered consumer variable: {} with type {} from condition {}", 
+                    formattedName, type, conditionType);
                 
         return var;
     }
@@ -65,9 +76,9 @@ public class VariableRegistry {
      */
     public Set<ProducerVariable> getProducers(String name) {
         String formattedName = Variable.formatName(name);
-        return Collections.unmodifiableSet(
-            producers.getOrDefault(formattedName, Collections.emptySet())
-        );
+        Set<ProducerVariable> result = producers.getOrDefault(formattedName, Collections.emptySet());
+        logger.debug("getProducers('{}') returning {} producers", formattedName, result.size());
+        return Collections.unmodifiableSet(result);
     }
     
     /**
@@ -78,9 +89,9 @@ public class VariableRegistry {
      */
     public Set<ConsumerVariable> getConsumers(String name) {
         String formattedName = Variable.formatName(name);
-        return Collections.unmodifiableSet(
-            consumers.getOrDefault(formattedName, Collections.emptySet())
-        );
+        Set<ConsumerVariable> result = consumers.getOrDefault(formattedName, Collections.emptySet());
+        logger.debug("getConsumers('{}') returning {} consumers", formattedName, result.size());
+        return Collections.unmodifiableSet(result);
     }
     
     /**
@@ -91,7 +102,9 @@ public class VariableRegistry {
      */
     public boolean isProduced(String name) {
         String formattedName = Variable.formatName(name);
-        return producers.containsKey(formattedName) && !producers.get(formattedName).isEmpty();
+        boolean result = producers.containsKey(formattedName) && !producers.get(formattedName).isEmpty();
+        logger.debug("isProduced('{}') returning {}", formattedName, result);
+        return result;
     }
     
     /**
@@ -103,6 +116,7 @@ public class VariableRegistry {
         Set<String> allNames = new HashSet<>();
         allNames.addAll(producers.keySet());
         allNames.addAll(consumers.keySet());
+        logger.debug("getAllVariableNames() returning {} variables: {}", allNames.size(), allNames);
         return Collections.unmodifiableSet(allNames);
     }
     
@@ -192,6 +206,11 @@ public class VariableRegistry {
             }
         }
         
+        logger.debug("Validate() result: {} errors", errors.size());
+        if (!errors.isEmpty()) {
+            logger.debug("Validation errors: {}", errors);
+        }
+        
         return errors;
     }
     
@@ -201,5 +220,6 @@ public class VariableRegistry {
     public void clear() {
         producers.clear();
         consumers.clear();
+        logger.debug("Registry cleared");
     }
 } 

@@ -217,14 +217,16 @@ public class QueryExecutor {
                     match.documentId(), 
                     match.sentenceId(), 
                     match.getAllPositions(), 
-                    source
+                    source,
+                    match.getVariableValues()
                 );
             } else {
                 newMatch = new DocSentenceMatch(
                     match.documentId(), 
                     -1,  // Document-level match
                     match.getAllPositions(), 
-                    source
+                    source,
+                    match.getVariableValues()
                 );
             }
             

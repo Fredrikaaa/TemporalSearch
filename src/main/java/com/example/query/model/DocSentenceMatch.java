@@ -16,7 +16,8 @@ public record DocSentenceMatch(
     int documentId,
     int sentenceId,  // -1 for document-level matches
     Map<String, Set<Position>> matchPositions,
-    String source    // The source of this match (e.g., "wikipedia")
+    String source,    // The source of this match (e.g., "wikipedia"),
+    Map<String, Object> variableValues  // Variable values specific to this match
 ) {
     /**
      * Constructor for sentence-level match.
@@ -25,7 +26,7 @@ public record DocSentenceMatch(
      * @param sentenceId The sentence ID
      */
     public DocSentenceMatch(int documentId, int sentenceId) {
-        this(documentId, sentenceId, new HashMap<>(), null);
+        this(documentId, sentenceId, new HashMap<>(), null, new HashMap<>());
     }
 
     /**
@@ -45,7 +46,7 @@ public record DocSentenceMatch(
      * @param source The source of this match
      */
     public DocSentenceMatch(int documentId, int sentenceId, String source) {
-        this(documentId, sentenceId, new HashMap<>(), source);
+        this(documentId, sentenceId, new HashMap<>(), source, new HashMap<>());
     }
 
     /**
@@ -55,7 +56,7 @@ public record DocSentenceMatch(
      * @param source The source of this match
      */
     public DocSentenceMatch(int documentId, String source) {
-        this(documentId, -1, new HashMap<>(), source);
+        this(documentId, -1, new HashMap<>(), source, new HashMap<>());
     }
 
     /**
@@ -63,6 +64,7 @@ public record DocSentenceMatch(
      */
     public DocSentenceMatch {
         matchPositions = matchPositions != null ? new HashMap<>(matchPositions) : new HashMap<>();
+        variableValues = variableValues != null ? new HashMap<>(variableValues) : new HashMap<>();
     }
 
     /**
@@ -133,6 +135,45 @@ public record DocSentenceMatch(
     public Set<String> getKeys() {
         return matchPositions.keySet();
     }
+    
+    /**
+     * Sets a variable value specific to this match.
+     * 
+     * @param variableName The variable name
+     * @param value The value to set
+     */
+    public void setVariableValue(String variableName, Object value) {
+        if (variableName == null || value == null) {
+            return;
+        }
+        // Ensure variable name has ? prefix
+        String normalizedVarName = variableName.startsWith("?") ? variableName : "?" + variableName;
+        variableValues.put(normalizedVarName, value);
+    }
+    
+    /**
+     * Gets a variable value specific to this match.
+     * 
+     * @param variableName The variable name
+     * @return The variable value, or null if not found
+     */
+    public Object getVariableValue(String variableName) {
+        if (variableName == null) {
+            return null;
+        }
+        // Ensure variable name has ? prefix
+        String normalizedVarName = variableName.startsWith("?") ? variableName : "?" + variableName;
+        return variableValues.get(normalizedVarName);
+    }
+    
+    /**
+     * Gets all variable values for this match.
+     * 
+     * @return Map of variable name to value
+     */
+    public Map<String, Object> getVariableValues() {
+        return Collections.unmodifiableMap(variableValues);
+    }
 
     public void mergePositions(DocSentenceMatch other) {
         other.matchPositions.forEach((key, positions) -> 
@@ -141,6 +182,9 @@ public record DocSentenceMatch(
                 return a;
             })
         );
+        
+        // Also merge variable values
+        other.variableValues.forEach(this::setVariableValue);
     }
 
     @Override
@@ -150,6 +194,7 @@ public record DocSentenceMatch(
                 ", sentenceId=" + sentenceId +
                 ", keys=" + matchPositions.keySet() +
                 ", positionCount=" + matchPositions.values().stream().mapToInt(Set::size).sum() +
+                ", variables=" + variableValues.keySet() +
                 '}';
     }
 } 
