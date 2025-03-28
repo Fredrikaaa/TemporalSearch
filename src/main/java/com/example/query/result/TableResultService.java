@@ -7,7 +7,6 @@ import com.example.query.model.Query;
 import com.example.query.model.SelectColumn;
 import com.example.core.IndexAccess;
 import com.example.query.snippet.DatabaseConfig;
-import com.example.query.snippet.SnippetConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tech.tablesaw.api.*;
@@ -27,25 +26,12 @@ import java.util.*;
  */
 public class TableResultService {
     private static final Logger logger = LoggerFactory.getLogger(TableResultService.class);
-    private final SnippetConfig snippetConfig;
     private final String dbPath;
-    private Connection dbConnection;
 
     /**
      * Creates a new TableResultService with default configuration.
      */
     public TableResultService() {
-        this.snippetConfig = SnippetConfig.DEFAULT;
-        this.dbPath = DatabaseConfig.DEFAULT_DB_PATH;
-    }
-
-    /**
-     * Creates a new TableResultService with custom snippet configuration.
-     *
-     * @param snippetConfig The snippet configuration to use
-     */
-    public TableResultService(SnippetConfig snippetConfig) {
-        this.snippetConfig = SnippetConfig.DEFAULT;
         this.dbPath = DatabaseConfig.DEFAULT_DB_PATH;
     }
 
@@ -55,18 +41,6 @@ public class TableResultService {
      * @param dbPath The path to the database file
      */
     public TableResultService(String dbPath) {
-        this.snippetConfig = SnippetConfig.DEFAULT;
-        this.dbPath = dbPath;
-    }
-
-    /**
-     * Creates a new TableResultService with custom snippet configuration and database path.
-     *
-     * @param snippetConfig The snippet configuration to use
-     * @param dbPath The path to the database file
-     */
-    public TableResultService(SnippetConfig snippetConfig, String dbPath) {
-        this.snippetConfig = snippetConfig;
         this.dbPath = dbPath;
     }
 
@@ -141,15 +115,15 @@ public class TableResultService {
                 // Add a new row
                 int rowIndex = table.rowCount();
                 table.appendRow();
-                System.out.println("Added row " + rowIndex + " for match: " + match);
+                logger.debug("Added row {} for match: {}", rowIndex, match);
                 
                 // Set values for each column
                 for (SelectColumn selectColumn : selectColumns) {
-                    System.out.println("Populating column: " + selectColumn.getColumnName() + " for match: " + match);
+                    logger.debug("Populating column: {} for match: {}", selectColumn.getColumnName(), match);
                     selectColumn.populateColumn(table, rowIndex, match, bindingContext, indexes);
                     // After populating, check what the value is
                     Column<?> col = table.column(selectColumn.getColumnName());
-                    System.out.println("Column " + selectColumn.getColumnName() + " now has value: " + col.get(rowIndex));
+                    logger.debug("Column {} now has value: {}", selectColumn.getColumnName(), col.get(rowIndex));
                 }
                 
                 // Set document_id
@@ -187,8 +161,6 @@ public class TableResultService {
                     "table_result_service",
                     ResultGenerationException.ErrorType.INTERNAL_ERROR
             );
-        } finally {
-            closeDbConnection();
         }
     }
 
@@ -226,40 +198,6 @@ public class TableResultService {
         
         logger.debug("Sorting table on columns: {}", Arrays.toString(columns));
         return table.sortOn(columns);
-    }
-
-    /**
-     * Generates a count table for a COUNT query.
-     *
-     * @param countNode The COUNT node
-     * @param matches The matches
-     * @param bindingContext The binding context
-     * @return A Tablesaw table with the count result
-     */
-    private Table generateCountTable(
-            CountNode countNode,
-            Set<DocSentenceMatch> matches,
-            BindingContext bindingContext
-    ) {
-        // Create a table with count and document_id columns
-        IntColumn countColumn = IntColumn.create("count");
-        StringColumn docIdColumn = StringColumn.create("document_id");
-        Table table = Table.create("CountResult", countColumn, docIdColumn);
-        
-        // Calculate the count - just count all matches for simplicity
-        int count = matches.size();
-        
-        // Add the count to the table
-        if (count > 0) {
-            countColumn.append(count);
-            docIdColumn.append("all");
-        } else {
-            // Add a row with count 0 to ensure the table is not empty
-            countColumn.append(0);
-            docIdColumn.append("all");
-        }
-        
-        return table;
     }
 
     /**
@@ -313,33 +251,5 @@ public class TableResultService {
         }
         
         return sb.toString();
-    }
-
-    /**
-     * Closes the database connection if it's open.
-     */
-    private void closeDbConnection() {
-        if (dbConnection != null) {
-            try {
-                dbConnection.close();
-                dbConnection = null;
-            } catch (SQLException e) {
-                logger.warn("Error closing database connection: {}", e.getMessage());
-            }
-        }
-    }
-
-    /**
-     * Gets or creates a database connection.
-     *
-     * @return The database connection
-     * @throws SQLException if an error occurs
-     */
-    private Connection getDbConnection() throws SQLException {
-        if (dbConnection == null || dbConnection.isClosed()) {
-            String jdbcUrl = "jdbc:sqlite:" + dbPath;
-            dbConnection = DriverManager.getConnection(jdbcUrl);
-        }
-        return dbConnection;
     }
 } 
