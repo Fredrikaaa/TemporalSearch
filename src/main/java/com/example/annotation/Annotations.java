@@ -20,13 +20,15 @@ public class Annotations {
     private final int batchSize;
     private final int threads;
     private final boolean overwrite;
+    private final Integer limit;
     private final StanfordCoreNLP pipeline;
 
-    public Annotations(Path dbFile, int batchSize, int threads, boolean overwrite) {
+    public Annotations(Path dbFile, int batchSize, int threads, boolean overwrite, Integer limit) {
         this.dbFile = dbFile;
         this.batchSize = batchSize;
         this.threads = threads;
         this.overwrite = overwrite;
+        this.limit = limit;
         
         // Create optimized CoreNLP configuration
         CoreNLPConfig config = new CoreNLPConfig(threads);
@@ -37,17 +39,38 @@ public class Annotations {
     public void processDocuments() throws Exception {
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbFile)) {
             createTables(conn, overwrite);
-            String query = buildQuery(overwrite, null);
+            
+            String query = buildQuery(overwrite, limit);
+            
+            // First count total documents to process for progress tracking
+            int totalDocuments = 0;
+            try (Statement countStmt = conn.createStatement();
+                 ResultSet countRs = countStmt.executeQuery("SELECT COUNT(*) FROM (" + query + ")")) {
+                if (countRs.next()) {
+                    totalDocuments = countRs.getInt(1);
+                }
+            }
+            
+            logger.info("Found {} documents to process", totalDocuments);
             
             try (Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery(query)) {
+                 ResultSet rs = stmt.executeQuery(query);
+                 ProgressBar pb = new ProgressBar("Processing documents", totalDocuments)) {
                 
+                int processed = 0;
                 while (rs.next()) {
                     int documentId = rs.getInt("document_id");
                     String text = rs.getString("text");
                     
                     AnnotationResult result = processTextWithCoreNLP(pipeline, text, documentId);
                     insertData(conn, result.annotations, result.dependencies);
+                    
+                    pb.step();
+                    processed++;
+                    
+                    if (processed % 10 == 0) {
+                        pb.setExtraMessage(String.format("(%d/%d)", processed, totalDocuments));
+                    }
                 }
             }
         }
@@ -102,19 +125,6 @@ public class Annotations {
                         )
                     """);
         }
-    }
-
-    /**
-     * Get default properties for CoreNLP pipeline
-     * 
-     * @return Properties configured for our NLP processing requirements
-     */
-    private static Properties getDefaultCoreNLPProperties() {
-        Properties props = new Properties();
-        props.setProperty("annotators", "tokenize,ssplit,pos,lemma,ner,depparse");
-        props.setProperty("ner.applyNumericClassifiers", "true");
-        props.setProperty("ner.useSUTime", "true");
-        return props;
     }
 
     /**
@@ -251,83 +261,6 @@ public class Annotations {
         return query.toString();
     }
 
-    private static void processDatabase(String dbFile, int batchSize, boolean overwrite,
-            int threads, Integer limit) throws SQLException {
-        logger.info("Starting database processing with {} threads", threads);
-        
-        // Create optimized CoreNLP configuration
-        CoreNLPConfig config = new CoreNLPConfig(threads);
-        StanfordCoreNLP pipeline = config.createPipeline();
-        logger.info("Created CoreNLP pipeline with optimized configuration");
-
-        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbFile)) {
-            // Enable WAL mode for better concurrent access
-            try (Statement pragma = conn.createStatement()) {
-                pragma.execute("PRAGMA journal_mode=WAL");
-                pragma.execute("PRAGMA synchronous=NORMAL");
-                pragma.execute("PRAGMA temp_store=MEMORY");
-                pragma.execute("PRAGMA cache_size=-2000"); // Use 2GB cache
-                logger.debug("Configured SQLite optimizations");
-            }
-
-            conn.setAutoCommit(false); // Enable transaction mode
-            createTables(conn, overwrite);
-
-            String countQuery = "SELECT COUNT(*) FROM (" + buildQuery(overwrite, limit) + ")";
-            int totalDocuments;
-
-            try (Statement stmt = conn.createStatement();
-                    ResultSet rs = stmt.executeQuery(countQuery)) {
-                totalDocuments = rs.getInt(1);
-            }
-            logger.info("Found {} documents to process", totalDocuments);
-
-            int processedDocuments = 0;
-            int batchCount = 0;
-            List<Map<String, Object>> batchAnnotations = new ArrayList<>();
-            List<Map<String, Object>> batchDependencies = new ArrayList<>();
-
-            try (ProgressBar pb = new ProgressBar("Processing articles", totalDocuments)) {
-                String query = buildQuery(overwrite, limit);
-
-                try (Statement readStmt = conn.createStatement()) {
-                    readStmt.setFetchSize(batchSize);
-                    ResultSet rs = readStmt.executeQuery(query);
-
-                    while (rs.next() && processedDocuments < totalDocuments) {
-                        int documentId = rs.getInt("document_id");
-                        String text = rs.getString("text");
-
-                        AnnotationResult result = processTextWithCoreNLP(pipeline, text, documentId);
-                        batchAnnotations.addAll(result.annotations);
-                        batchDependencies.addAll(result.dependencies);
-
-                        batchCount++;
-                        processedDocuments++;
-                        pb.step();
-
-                        // Batch insert when we reach batch size
-                        if (batchCount >= batchSize) {
-                            insertData(conn, batchAnnotations, batchDependencies);
-                            conn.commit();
-                            batchAnnotations.clear();
-                            batchDependencies.clear();
-                            batchCount = 0;
-                        }
-                    }
-
-                    // Insert any remaining items in the batch
-                    if (!batchAnnotations.isEmpty()) {
-                        insertData(conn, batchAnnotations, batchDependencies);
-                        conn.commit();
-                    }
-                }
-            }
-
-            System.out.printf("%nProcessed %d articles.%n", processedDocuments);
-        }
-    }
-
     public static void main(String[] args) {
         // Create parser with required and optional flags
         ArgumentParser parser = ArgumentParsers.newFor("Annotations").build()
@@ -358,13 +291,18 @@ public class Annotations {
 
         try {
             Namespace ns = parser.parseArgs(args);
-
-            processDatabase(
-                    ns.getString("db"),
-                    ns.getInt("batch_size"),
-                    ns.getBoolean("overwrite"),
-                    ns.getInt("threads"),
-                    ns.get("limit"));
+            
+            // Create a single instance of Annotations with the pipeline
+            Annotations annotations = new Annotations(
+                Path.of(ns.getString("db")),
+                ns.getInt("batch_size"),
+                ns.getInt("threads"),
+                ns.getBoolean("overwrite"),
+                ns.getInt("limit")
+            );
+            
+            // Use the instance method instead of static method
+            annotations.processDocuments();
 
             System.out.printf("Processing complete. Data stored in database: %s%n", ns.getString("db"));
 
