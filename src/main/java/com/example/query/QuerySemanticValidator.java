@@ -32,12 +32,12 @@ public class QuerySemanticValidator {
         
         // Get the variable registry from the query
         VariableRegistry registry = query.variableRegistry();
-        
-        // The registry's validate method already checks that all consumed variables are produced
-        Set<String> registryErrors = registry.validate();
-        if (!registryErrors.isEmpty()) {
-            throw new QueryParseException("Variable validation errors: " + String.join(", ", registryErrors));
+        if (registry == null) {
+            throw new QueryParseException("Query does not have a variable registry");
         }
+        
+        // Validate variable dependencies and types
+        validateVariableDependencies(registry);
         
         // Validate select columns
         validateSelectColumns(query, registry);
@@ -58,6 +58,21 @@ public class QuerySemanticValidator {
     }
     
     /**
+     * Validates variable dependencies ensuring all consumed variables are produced.
+     * Also performs type checking on variable usage.
+     */
+    private void validateVariableDependencies(VariableRegistry registry) throws QueryParseException {
+        // The registry's validate method checks that all consumed variables are produced
+        Set<String> registryErrors = registry.validate();
+        if (!registryErrors.isEmpty()) {
+            throw new QueryParseException("Variable validation errors: " + String.join(", ", registryErrors));
+        }
+        
+        // Additional dependency checks could be added here if needed
+        // For now, we rely on the registry's validate method
+    }
+    
+    /**
      * Validates the select columns, ensuring all column references are valid.
      */
     private void validateSelectColumns(Query query, VariableRegistry registry) throws QueryParseException {
@@ -69,7 +84,10 @@ public class QuerySemanticValidator {
         
         for (SelectColumn column : query.selectColumns()) {
             if (column instanceof VariableColumn variableColumn) {
-                String variableName = Variable.formatName(variableColumn.getVariableName());
+                String variableName = variableColumn.getVariableName();
+                
+                // Ensure variable name is properly formatted with ? prefix
+                variableName = Variable.formatName(variableName);
                 
                 logger.debug("Validating SELECT variable: {} against registry variables: {}", 
                              variableName, allVariables);
@@ -91,8 +109,14 @@ public class QuerySemanticValidator {
                 
             } else if (column instanceof SnippetColumn snippetColumn) {
                 validateSnippetNode(snippetColumn.getSnippetNode(), registry);
+            } else if (column instanceof CountColumn countColumn) {
+                CountNode countNode = countColumn.getCountNode();
+                if (countNode.type() == CountNode.CountType.UNIQUE) {
+                    validateCountUniqueNode(countNode, registry);
+                }
+                // Other COUNT types don't need validation
             }
-            // Other column types (TITLE, TIMESTAMP, COUNT) don't need special validation
+            // Other column types (TITLE, TIMESTAMP) don't need special validation
         }
     }
     
@@ -103,9 +127,44 @@ public class QuerySemanticValidator {
         String variable = Variable.formatName(snippetNode.variable());
         
         // Check if variable is bound
-        if (!registry.isProduced(variable)) {
+        if (!registry.getAllVariableNames().contains(variable)) {
             throw new QueryParseException(String.format(
                 "Unbound variable in SNIPPET: %s. Variables must be bound in WHERE clause.",
+                variable
+            ));
+        }
+        
+        // Check if variable is produced and not just consumed
+        if (!registry.isProduced(variable)) {
+            throw new QueryParseException(String.format(
+                "Variable %s in SNIPPET is consumed but not produced in any condition",
+                variable
+            ));
+        }
+    }
+    
+    /**
+     * Validates a COUNT(UNIQUE ?var) expression.
+     */
+    private void validateCountUniqueNode(CountNode countNode, VariableRegistry registry) throws QueryParseException {
+        if (!countNode.variable().isPresent()) {
+            throw new QueryParseException("COUNT(UNIQUE) must specify a variable");
+        }
+        
+        String variable = Variable.formatName(countNode.variable().get());
+        
+        // Check if variable is bound
+        if (!registry.getAllVariableNames().contains(variable)) {
+            throw new QueryParseException(String.format(
+                "Unbound variable in COUNT: %s. Variables must be bound in WHERE clause.",
+                variable
+            ));
+        }
+        
+        // Check if variable is produced
+        if (!registry.isProduced(variable)) {
+            throw new QueryParseException(String.format(
+                "Variable %s in COUNT is consumed but not produced in any condition",
                 variable
             ));
         }
