@@ -463,6 +463,15 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             variableRegistry.registerProducer(variableName, VariableType.DEPENDENCY, "DEPENDENCY");
         }
         
+        // Register consumed variables directly
+        if (governor != null && governor.startsWith("?")) {
+            variableRegistry.registerConsumer(governor, VariableType.ANY, "DEPENDENCY");
+        }
+        
+        if (dependent != null && dependent.startsWith("?")) {
+            variableRegistry.registerConsumer(dependent, VariableType.ANY, "DEPENDENCY");
+        }
+        
         return new Dependency(governor, relation, dependent, variableName, isVariable);
     }
 

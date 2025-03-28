@@ -6,6 +6,12 @@ grammar QueryLang;
  * The AS keyword followed by a variable name binds the result of a condition to a variable.
  * All variables must be prefixed with ? character.
  * Variables can be used in SELECT clause and subsequent WHERE conditions.
+ * 
+ * Variable binding flow:
+ * 1. Variables are produced by conditions using the AS ?var syntax
+ * 2. Variables can be consumed by other conditions that reference them
+ * 3. Variables can be used in the SELECT clause to display results
+ * 4. Type safety is enforced through the VariableRegistry
  */
 
 // Lexer Rules (Tokens)
