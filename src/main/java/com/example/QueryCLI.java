@@ -8,7 +8,6 @@ import com.example.query.model.column.ColumnSpec;
 import com.example.query.model.column.ColumnType;
 import com.example.query.result.*;
 import com.example.query.snippet.DatabaseConfig;
-import com.example.query.snippet.SnippetConfig;
 import com.example.core.*;
 import com.example.query.sqlite.SqliteAccessor;
 import com.example.query.binding.BindingContext;
@@ -38,7 +37,6 @@ public class QueryCLI {
     private final QueryParser parser;
     private final QuerySemanticValidator validator;
     private final QueryExecutor executor;
-    private final SnippetConfig snippetConfig;
 
     /**
      * Creates a new QueryCLI instance.
@@ -50,7 +48,6 @@ public class QueryCLI {
         this.parser = new QueryParser();
         this.validator = new QuerySemanticValidator();
         this.executor = new QueryExecutor(new ConditionExecutorFactory());
-        this.snippetConfig = SnippetConfig.DEFAULT;
         
         // Initialize the SqliteAccessor singleton
         SqliteAccessor.initialize(indexBaseDir.toString());
@@ -95,7 +92,7 @@ public class QueryCLI {
             }
             
             // Create a new TableResultService with the corpus-specific database path
-            TableResultService tableResultService = new TableResultService(snippetConfig, corpusDbPath);
+            TableResultService tableResultService = new TableResultService(corpusDbPath);
             logger.info("Using corpus-specific database at: {}", corpusDbPath);
             
             // 4. Create IndexManager for the resolved path

@@ -38,7 +38,7 @@ public class IndexConfig {
         private boolean preserveExistingIndex = false;
         private long sizeThresholdForConfirmation = 1024 * 1024 * 1024; // 1GB
         private Integer limit = null;
-        private int batchSize = 1000000; // Default batch size
+        private int batchSize = 100000; // Default batch size
         
         public Builder withPreserveExistingIndex(boolean preserve) {
             this.preserveExistingIndex = preserve;

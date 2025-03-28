@@ -143,6 +143,7 @@ public class Pipeline {
         
         // Set debug mode
         if (ns.getBoolean("debug")) {
+            
             System.setProperty("DEBUG_MODE", "true");
         }
 

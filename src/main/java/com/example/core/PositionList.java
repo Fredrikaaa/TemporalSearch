@@ -7,6 +7,8 @@ import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.example.logging.LogSampler;
+import com.example.index.StitchPosition;
+import com.example.index.AnnotationType;
 
 /**
  * Manages collections of Position objects with efficient compression and serialization capabilities.
@@ -76,9 +78,9 @@ public class PositionList {
                 timestamps[i] = pos.getTimestamp().toEpochDay();
                 
                 // Store position type and synonym ID if applicable
-                if (pos instanceof com.example.index.StitchPosition) {
-                    positionTypes[i] = com.example.index.StitchPosition.POSITION_TYPE;
-                    synonymIds[i] = ((com.example.index.StitchPosition) pos).getSynonymId();
+                if (pos instanceof StitchPosition) {
+                    positionTypes[i] = StitchPosition.POSITION_TYPE;
+                    synonymIds[i] = ((StitchPosition) pos).getSynonymId();
                     hasSpecialPositions = true;
                 } else {
                     positionTypes[i] = 0; // Regular position
@@ -294,14 +296,15 @@ public class PositionList {
 
             // Create Position objects
             for (int i = 0; i < count; i++) {
-                if (hasSpecialPositions && positionTypes[i] == com.example.index.StitchPosition.POSITION_TYPE) {
-                    // Create StitchPosition
-                    result.add(new com.example.index.StitchPosition(
+                if (hasSpecialPositions && positionTypes[i] == StitchPosition.POSITION_TYPE) {
+                    // Create StitchPosition with DATE type for backward compatibility
+                    result.add(new StitchPosition(
                         docIds[i],
                         sentenceIds[i],
                         beginPositions[i],
                         endPositions[i],
                         LocalDate.ofEpochDay(timestamps[i]),
+                        AnnotationType.DATE, // Default to DATE for backward compatibility
                         synonymIds[i]
                     ));
                 } else {

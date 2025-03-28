@@ -3,8 +3,6 @@ package com.example.query.model;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.example.query.snippet.SnippetConfig;
-
 public class SnippetNodeTest {
 
     @Test
@@ -80,16 +78,6 @@ public class SnippetNodeTest {
             new SnippetNode("var", 1, "", false);
         });
         assertTrue(exception.getMessage().contains("highlightStyle must not be null or empty"));
-    }
-
-    @Test
-    public void testToSnippetConfig() {
-        SnippetNode node = new SnippetNode("var", 2, "__", true);
-        SnippetConfig config = node.toSnippetConfig();
-        
-        assertEquals(2, config.windowSize());
-        assertEquals("__", config.highlightStyle());
-        assertTrue(config.showSentenceBoundaries());
     }
 
     @Test
