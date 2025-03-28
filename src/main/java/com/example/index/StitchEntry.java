@@ -3,8 +3,8 @@ package com.example.index;
 import java.time.LocalDate;
 
 /**
- * Represents an entry in the stitch index, containing either an ngram or a date value.
- * For ngrams, synonymId will be -1. For dates, it will be a valid ID from the date_synonyms table.
+ * Represents an entry in the stitch index, containing a unigram and its associated annotation.
+ * The annotation type (DATE, NER, POS, DEPENDENCY) determines how this entry is processed.
  */
 public record StitchEntry(
     int documentId,
@@ -12,8 +12,9 @@ public record StitchEntry(
     int beginChar,
     int endChar,
     LocalDate timestamp,
-    String value,        // The actual text (ngram or YYYY-MM-DD date)
-    int synonymId        // -1 for ngrams, valid ID for dates from date_synonyms table
+    String value,         // The unigram text
+    AnnotationType type,  // The type of annotation (DATE, NER, POS, DEPENDENCY)
+    int synonymId         // ID from the appropriate synonym table
 ) implements IndexEntry {
     @Override
     public int getDocumentId() {
