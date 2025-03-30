@@ -17,16 +17,12 @@ import java.nio.file.Path;
 public class Annotations {
     private static final Logger logger = LoggerFactory.getLogger(Annotations.class);
     private final Path dbFile;
-    private final int batchSize;
-    private final int threads;
     private final boolean overwrite;
     private final Integer limit;
     private final StanfordCoreNLP pipeline;
-
-    public Annotations(Path dbFile, int batchSize, int threads, boolean overwrite, Integer limit) {
+    
+    public Annotations(Path dbFile, int threads, boolean overwrite, Integer limit) {
         this.dbFile = dbFile;
-        this.batchSize = batchSize;
-        this.threads = threads;
         this.overwrite = overwrite;
         this.limit = limit;
         
@@ -214,8 +210,8 @@ public class Annotations {
                 PreparedStatement dependencyStmt = conn.prepareStatement(dependencySQL)) {
 
             // Use larger batch sizes for better performance
-            annotationStmt.setFetchSize(1000);
-            dependencyStmt.setFetchSize(1000);
+            annotationStmt.setFetchSize(10000);
+            dependencyStmt.setFetchSize(10000);
 
             for (Map<String, Object> annotation : annotations) {
                 annotationStmt.setInt(1, (Integer) annotation.get("document_id"));
@@ -271,11 +267,6 @@ public class Annotations {
                 .required(true)
                 .help("SQLite database file path");
 
-        parser.addArgument("-b", "--batch_size")
-                .setDefault(500)
-                .type(Integer.class)
-                .help("Batch size for processing (default: 500)");
-
         parser.addArgument("-o", "--overwrite")
                 .action(net.sourceforge.argparse4j.impl.Arguments.storeTrue())
                 .help("Overwrite existing annotations (default: False)");
@@ -295,7 +286,6 @@ public class Annotations {
             // Create a single instance of Annotations with the pipeline
             Annotations annotations = new Annotations(
                 Path.of(ns.getString("db")),
-                ns.getInt("batch_size"),
                 ns.getInt("threads"),
                 ns.getBoolean("overwrite"),
                 ns.getInt("limit")

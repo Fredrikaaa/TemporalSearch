@@ -198,8 +198,6 @@ public class Pipeline {
             List<String> annotationArgs = new ArrayList<>();
             annotationArgs.add("-d");
             annotationArgs.add(dbPath);
-            annotationArgs.add("-b");
-            annotationArgs.add(ns.getInt("batch_size").toString());
             annotationArgs.add("-t");
             annotationArgs.add(ns.getInt("threads").toString());
             
