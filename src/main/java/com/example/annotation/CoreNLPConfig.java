@@ -16,8 +16,8 @@ public class CoreNLPConfig {
     // Default thread count if not specified
     private static final int DEFAULT_THREADS = Runtime.getRuntime().availableProcessors();
     
-    // Maximum lengths for different components to prevent OOM
-    private static final int MAX_SENTENCE_LENGTH = 150;
+    // Maximum lengths for different components to prevent OOM and speed up processing
+    private static final int MAX_SENTENCE_LENGTH = 120;
     
     // Model paths
     private static final String SR_PARSER_MODEL = "stanford-english-extra-corenlp-models-current/edu/stanford/nlp/models/srparser/englishSR.ser.gz";
@@ -58,7 +58,7 @@ public class CoreNLPConfig {
         Properties props = new Properties();
         
         // Core annotators - only what we actually use in Annotations.java
-        props.setProperty("annotators", "tokenize,ssplit,pos,lemma,ner,parse");
+        props.setProperty("annotators", "tokenize,ssplit,pos,lemma,ner,depparse");
         props.setProperty("threads", String.valueOf(threads));
         
         // Check if SR parser model exists and use it if available

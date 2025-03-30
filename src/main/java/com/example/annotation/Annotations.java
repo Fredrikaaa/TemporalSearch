@@ -54,9 +54,23 @@ public class Annotations {
                  ProgressBar pb = new ProgressBar("Processing documents", totalDocuments)) {
                 
                 int processed = 0;
+                int skipped = 0;
                 while (rs.next()) {
                     int documentId = rs.getInt("document_id");
                     String text = rs.getString("text");
+                    
+                    // Skip documents above 15,000 characters
+                    if (text.length() > 15000) {
+                        logger.info("Skipping document {} with length {}", documentId, text.length());
+                        skipped++;
+                        pb.step();
+                        processed++;
+                        continue;
+                    }
+                    
+                    // TODO: Implement chunking for large documents instead of skipping them
+                    // This would involve breaking the text into manageable chunks, processing each chunk
+                    // separately, and then combining the results, while maintaining correct offsets
                     
                     AnnotationResult result = processTextWithCoreNLP(pipeline, text, documentId);
                     insertData(conn, result.annotations, result.dependencies);
@@ -67,6 +81,10 @@ public class Annotations {
                     if (processed % 10 == 0) {
                         pb.setExtraMessage(String.format("(%d/%d)", processed, totalDocuments));
                     }
+                }
+                
+                if (skipped > 0) {
+                    logger.info("Skipped {} documents over 15,000 characters", skipped);
                 }
             }
         }
