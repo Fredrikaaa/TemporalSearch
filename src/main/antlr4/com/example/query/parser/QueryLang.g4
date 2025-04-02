@@ -12,6 +12,11 @@ grammar QueryLang;
  * 2. Variables can be consumed by other conditions that reference them
  * 3. Variables can be used in the SELECT clause to display results
  * 4. Type safety is enforced through the VariableRegistry
+ * 
+ * This grammar also supports subqueries and joins:
+ * - Subqueries are defined using parentheses around a full query
+ * - Joins are specified using the JOIN keyword
+ * - Temporal join conditions use predicates like CONTAINS, CONTAINED_BY, INTERSECT
  */
 
 // Lexer Rules (Tokens)
@@ -48,6 +53,11 @@ AS: 'AS';
 COUNT: 'COUNT';
 UNIQUE: 'UNIQUE';
 DOCUMENTS: 'DOCUMENTS';
+JOIN: 'JOIN';
+ON: 'ON';
+INNER: 'INNER';
+LEFT: 'LEFT';
+RIGHT: 'RIGHT';
 
 // NER types
 PERSON: 'PERSON';
@@ -91,6 +101,7 @@ BLOCK_COMMENT: '/*' .*? '*/' -> skip;
 query
     : SELECT selectList
       FROM identifier
+      joinClause*
       whereClause?
       granularityClause?
       orderByClause?
@@ -103,11 +114,11 @@ selectList
     ;
 
 selectColumn
-    : variable                    # VariableColumn
-    | snippetExpression           # SnippetColumn
-    | titleExpression            # TitleColumn
-    | timestampExpression        # TimestampColumn
-    | countExpression            # CountColumn
+    : variable                                  # VariableColumn
+    | snippetExpression                         # SnippetColumn
+    | titleExpression                           # TitleColumn
+    | timestampExpression                       # TimestampColumn
+    | countExpression                           # CountColumn
     ;
 
 snippetExpression
@@ -198,7 +209,11 @@ orderByClause
 // The visitor implementation converts this to strings with "-" prefix for DESC order
 // Example: "column_name" for ASC, "-column_name" for DESC
 orderSpec
-    : (identifier | variable) (ASC | DESC)?
+    : (qualifiedIdentifier | identifier | variable) (ASC | DESC)?
+    ;
+
+qualifiedIdentifier
+    : identifier '.' (identifier | variable)
     ;
 
 limitClause
@@ -252,11 +267,58 @@ variable
 
 identifier
     : IDENTIFIER
-    | STRING
     ;
 
 comparisonOp
-    : LT | GT | LE | GE | EQ
+    : LT
+    | GT
+    | LE
+    | GE
+    | EQ
+    | EQUALS
+    ;
+
+term
+    : STRING
+    | variable
+    | identifier
+    ;
+
+// Subquery and join syntax
+joinClause
+    : joinType? JOIN subquery ON joinCondition
+    ;
+
+joinType
+    : INNER
+    | LEFT
+    | RIGHT
+    ;
+
+subquery
+    : LPAREN
+      SELECT selectList
+      FROM identifier
+      whereClause?
+      RPAREN
+      AS alias=identifier
+    ;
+
+joinCondition
+    : leftColumn=joinColumn temporalOp rightColumn=joinColumn
+      (WINDOW window=NUMBER)?
+    ;
+
+joinColumn
+    : qualifiedIdentifier
+    | variable
+    ;
+
+temporalOp
+    : CONTAINS
+    | CONTAINED_BY
+    | INTERSECT
+    | NEAR
     ;
 
 posExpression
@@ -265,11 +327,5 @@ posExpression
 
 posTag
     : STRING
-    | identifier
-    ;
-
-term
-    : STRING
-    | variable
     | identifier
     ; 

@@ -54,10 +54,25 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         Query.Granularity granularity = Query.Granularity.DOCUMENT;
         Optional<Integer> granularitySize = Optional.empty();
         List<SelectColumn> selectColumns = new ArrayList<>();
+        List<SubquerySpec> subqueries = new ArrayList<>();
+        Optional<JoinCondition> joinCondition = Optional.empty();
 
         // Extract select columns
         if (ctx.selectList() != null) {
             selectColumns = visitSelectList(ctx.selectList());
+        }
+
+        // Process join clauses if present
+        if (ctx.joinClause() != null && !ctx.joinClause().isEmpty()) {
+            for (QueryLangParser.JoinClauseContext joinCtx : ctx.joinClause()) {
+                Object[] joinResult = (Object[]) visit(joinCtx);
+                SubquerySpec subquery = (SubquerySpec) joinResult[0];
+                JoinCondition jc = (JoinCondition) joinResult[1];
+                
+                subqueries.add(subquery);
+                // Use the last join condition
+                joinCondition = Optional.of(jc);
+            }
         }
 
         if (ctx.whereClause() != null) {
@@ -91,7 +106,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             throw new IllegalStateException("Variable binding errors: " + String.join(", ", validationErrors));
         }
 
-        return new Query(source, conditions, orderColumns, limit, granularity, granularitySize, selectColumns, variableRegistry);
+        return new Query(source, conditions, orderColumns, limit, granularity, granularitySize, selectColumns, variableRegistry, subqueries, joinCondition);
     }
 
     @Override
@@ -263,9 +278,6 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitIdentifier(QueryLangParser.IdentifierContext ctx) {
-        if (ctx.STRING() != null) {
-            return unquote(ctx.STRING().getText());
-        }
         return ctx.IDENTIFIER().getText();
     }
 
@@ -585,5 +597,143 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             return visit(ctx.variable());
         }
         return visitIdentifier(ctx.identifier());
+    }
+
+    public Query buildSubquery(ParseTree tree) {
+        // Create a new QueryModelBuilder for the subquery to isolate variable bindings
+        QueryModelBuilder subqueryBuilder = new QueryModelBuilder();
+        return (Query) subqueryBuilder.visit(tree);
+    }
+
+    @Override
+    public Object visitSubquery(QueryLangParser.SubqueryContext ctx) {
+        // Get the source from the first identifier in the list
+        String source = ctx.identifier(0).getText();
+        
+        // Create a new QueryModelBuilder for the subquery to isolate the variable scope
+        QueryModelBuilder subqueryBuilder = new QueryModelBuilder();
+        
+        List<SelectColumn> selectColumns = subqueryBuilder.visitSelectList(ctx.selectList());
+        
+        List<Condition> conditions = new ArrayList<>();
+        if (ctx.whereClause() != null) {
+            conditions.addAll(subqueryBuilder.visitConditionList(ctx.whereClause().conditionList()));
+        }
+        
+        // Create a subquery with minimal settings since additional settings will be ignored
+        Query subquery = new Query(
+            source,
+            conditions,
+            List.of(),
+            Optional.empty(),
+            Query.Granularity.DOCUMENT,
+            Optional.empty(),
+            selectColumns,
+            subqueryBuilder.variableRegistry
+        );
+        
+        // Get the alias (which is the second identifier, or identified by the alias label)
+        String alias = ctx.alias.getText();
+        
+        // Return the SubquerySpec
+        return new SubquerySpec(subquery, alias);
+    }
+
+    @Override
+    public Object visitJoinClause(QueryLangParser.JoinClauseContext ctx) {
+        // Get the subquery
+        SubquerySpec subquery = (SubquerySpec) visit(ctx.subquery());
+        
+        // Get the join condition
+        JoinCondition joinCondition = (JoinCondition) visit(ctx.joinCondition());
+        
+        // Get the join type - defaults to INNER if not specified
+        JoinCondition.JoinType joinType = JoinCondition.JoinType.INNER;
+        if (ctx.joinType() != null) {
+            if (ctx.joinType().LEFT() != null) {
+                joinType = JoinCondition.JoinType.LEFT;
+            } else if (ctx.joinType().RIGHT() != null) {
+                joinType = JoinCondition.JoinType.RIGHT;
+            }
+        }
+        
+        // Update the join condition with the correct join type
+        joinCondition = new JoinCondition(
+            joinCondition.leftColumn(),
+            joinCondition.rightColumn(),
+            joinType,
+            joinCondition.temporalPredicate(),
+            joinCondition.proximityWindow()
+        );
+        
+        // Return both the subquery and the join condition as a pair
+        return new Object[] { subquery, joinCondition };
+    }
+
+    @Override
+    public Object visitJoinCondition(QueryLangParser.JoinConditionContext ctx) {
+        // Get the left and right columns
+        String leftColumn = (String) visit(ctx.leftColumn);
+        String rightColumn = (String) visit(ctx.rightColumn);
+        
+        // Get the temporal operator
+        TemporalPredicate temporalPredicate = mapTemporalOperator(ctx.temporalOp().getText());
+        
+        // Check if there's a window specification
+        Optional<Integer> proximityWindow = Optional.empty();
+        if (ctx.window != null) {
+            proximityWindow = Optional.of(Integer.parseInt(ctx.window.getText()));
+        }
+        
+        // Create and return the join condition
+        return new JoinCondition(
+            leftColumn,
+            rightColumn,
+            JoinCondition.JoinType.INNER, // default, will be updated in visitJoinClause
+            temporalPredicate,
+            proximityWindow
+        );
+    }
+
+    @Override
+    public Object visitTemporalOp(QueryLangParser.TemporalOpContext ctx) {
+        return ctx.getText();
+    }
+
+    @Override
+    public Object visitQualifiedIdentifier(QueryLangParser.QualifiedIdentifierContext ctx) {
+        String tableName = ctx.identifier(0).getText();
+        String columnName;
+        
+        // Check if the right part is an identifier or a variable
+        if (ctx.getChild(2) instanceof QueryLangParser.IdentifierContext) {
+            columnName = ((QueryLangParser.IdentifierContext) ctx.getChild(2)).getText();
+        } else {
+            // Must be a variable
+            columnName = (String) visit(ctx.getChild(2));
+        }
+        
+        return tableName + "." + columnName;
+    }
+
+    // Helper method to map temporal operators to TemporalPredicate enum
+    private TemporalPredicate mapTemporalOperator(String operator) {
+        return switch (operator) {
+            case "CONTAINS" -> TemporalPredicate.CONTAINS;
+            case "CONTAINED_BY" -> TemporalPredicate.CONTAINED_BY;
+            case "INTERSECT" -> TemporalPredicate.INTERSECT;
+            case "NEAR" -> TemporalPredicate.PROXIMITY;
+            default -> throw new IllegalStateException("Invalid temporal operator: " + operator);
+        };
+    }
+
+    @Override
+    public Object visitJoinColumn(QueryLangParser.JoinColumnContext ctx) {
+        if (ctx.qualifiedIdentifier() != null) {
+            return visit(ctx.qualifiedIdentifier());
+        } else if (ctx.variable() != null) {
+            return visit(ctx.variable());
+        }
+        throw new IllegalStateException("Invalid join column type");
     }
 } 

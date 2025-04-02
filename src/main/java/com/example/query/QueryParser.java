@@ -19,9 +19,6 @@ public class QueryParser {
     private static class ThrowingErrorListener extends BaseErrorListener {
         @Override
         public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-            if (msg.contains("extraneous input '}'")) {
-                throw new UnsupportedOperationException("Subqueries are not yet supported");
-            }
             throw new RuntimeException("Syntax error at position " + charPositionInLine + ": " + msg);
         }
     }
@@ -70,6 +67,31 @@ public class QueryParser {
             String message = e.getMessage();
             if (message != null && message.startsWith("Failed to parse query: ")) {
                 message = message.substring("Failed to parse query: ".length());
+            }
+            throw new QueryParseException(message, e);
+        }
+    }
+
+    /**
+     * Parses a subquery within a parent query.
+     * This is used by the parser visitor when processing JOIN clauses.
+     *
+     * @param subqueryTree The parse tree for the subquery
+     * @return The parsed Query object for the subquery
+     */
+    public Query parseSubquery(ParseTree subqueryTree) throws QueryParseException {
+        try {
+            // Convert the subquery parse tree to our model objects
+            QueryModelBuilder visitor = new QueryModelBuilder();
+            Query subquery = visitor.buildSubquery(subqueryTree);
+            
+            logger.debug("Successfully parsed subquery: {}", subquery);
+            return subquery;
+        } catch (RuntimeException e) {
+            logger.error("Error parsing subquery", e);
+            String message = e.getMessage();
+            if (message != null && message.startsWith("Failed to parse subquery: ")) {
+                message = message.substring("Failed to parse subquery: ".length());
             }
             throw new QueryParseException(message, e);
         }

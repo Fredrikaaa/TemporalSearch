@@ -20,6 +20,9 @@ public class QuerySemanticValidator {
     
     // Maximum allowed snippet window size (sentences)
     private static final int MAX_SNIPPET_WINDOW_SIZE = 5;
+    
+    // Maximum proximity window for temporal joins
+    private static final int MAX_TEMPORAL_PROXIMITY_WINDOW = 365;
 
     /**
      * Validates a query for semantic correctness.
@@ -53,6 +56,12 @@ public class QuerySemanticValidator {
         
         // Validate snippet window sizes
         validateSnippetWindowSizes(query);
+        
+        // Validate subqueries and join conditions if present
+        if (query.hasSubqueries()) {
+            validateSubqueries(query);
+            validateJoinConditions(query);
+        }
         
         logger.debug("Semantic validation completed successfully");
     }
@@ -196,5 +205,68 @@ public class QuerySemanticValidator {
         if (limit <= 0) {
             throw new QueryParseException("LIMIT value must be greater than 0");
         }
+    }
+    
+    /**
+     * Validates all subqueries in a query.
+     * Each subquery is validated independently.
+     */
+    private void validateSubqueries(Query query) throws QueryParseException {
+        for (SubquerySpec subquery : query.subqueries()) {
+            // Validate the subquery itself
+            validate(subquery.subquery());
+            
+            // Validate the alias (should be non-empty, but this is already checked in the constructor)
+            if (subquery.alias().isEmpty()) {
+                throw new QueryParseException("Subquery alias cannot be empty");
+            }
+            
+            // Validate projected columns if specified
+            subquery.projectedColumns().ifPresent(columns -> {
+                if (columns.isEmpty()) {
+                    throw new RuntimeException(new QueryParseException("Subquery projected columns list cannot be empty"));
+                }
+                
+                // Verify that all projected columns exist in the subquery
+                // This would require more context about column availability in subqueries
+                // For now, we'll defer this validation until execution time
+            });
+        }
+    }
+    
+    /**
+     * Validates join conditions between the main query and subqueries.
+     */
+    private void validateJoinConditions(Query query) throws QueryParseException {
+        // Join condition is required if there are subqueries
+        if (!query.subqueries().isEmpty() && query.joinCondition().isEmpty()) {
+            throw new QueryParseException("Query with subqueries must have a join condition");
+        }
+        
+        // Validate the join condition if present
+        query.joinCondition().ifPresent(joinCondition -> {
+            // Validate left column exists in main query
+            // This would require more context about available columns
+            // For Phase 1, we'll defer this validation
+            
+            // Validate right column exists in subquery
+            // This would require more context about available columns
+            // For Phase 1, we'll defer this validation
+            
+            // Validate proximity window if applicable
+            if (joinCondition.temporalPredicate() == TemporalPredicate.PROXIMITY) {
+                joinCondition.proximityWindow().ifPresent(window -> {
+                    if (window <= 0) {
+                        throw new RuntimeException(new QueryParseException("Proximity window must be greater than 0"));
+                    }
+                    
+                    if (window > MAX_TEMPORAL_PROXIMITY_WINDOW) {
+                        throw new RuntimeException(new QueryParseException(
+                            String.format("Proximity window %d exceeds maximum allowed size of %d days", 
+                                         window, MAX_TEMPORAL_PROXIMITY_WINDOW)));
+                    }
+                });
+            }
+        });
     }
 } 

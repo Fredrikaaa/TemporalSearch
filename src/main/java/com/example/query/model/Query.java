@@ -20,6 +20,8 @@ import com.example.query.model.condition.Condition;
  * - Optional granularity size
  * - List of columns to select
  * - Variable binding metadata
+ * - Optional subqueries
+ * - Optional join condition
  */
 public record Query(
     String source,
@@ -29,7 +31,9 @@ public record Query(
     Granularity granularity,
     Optional<Integer> granularitySize,
     List<SelectColumn> selectColumns,
-    VariableRegistry variableRegistry
+    VariableRegistry variableRegistry,
+    List<SubquerySpec> subqueries,
+    Optional<JoinCondition> joinCondition
 ) {
     public enum Granularity {
         DOCUMENT,
@@ -48,36 +52,39 @@ public record Query(
         Objects.requireNonNull(granularitySize, "Granularity size cannot be null");
         Objects.requireNonNull(selectColumns, "Select columns cannot be null");
         Objects.requireNonNull(variableRegistry, "Variable registry cannot be null");
+        Objects.requireNonNull(subqueries, "Subqueries cannot be null");
+        Objects.requireNonNull(joinCondition, "Join condition cannot be null");
 
         // Make defensive copies
         conditions = List.copyOf(conditions);
         orderBy = List.copyOf(orderBy);
         selectColumns = List.copyOf(selectColumns);
+        subqueries = List.copyOf(subqueries);
     }
 
     /**
      * Creates a query with just a source.
      */
     public Query(String source) {
-        this(source, List.of(), List.of(), Optional.empty(), Granularity.DOCUMENT, Optional.empty(), List.of(), new VariableRegistry());
+        this(source, List.of(), List.of(), Optional.empty(), Granularity.DOCUMENT, Optional.empty(), List.of(), new VariableRegistry(), List.of(), Optional.empty());
     }
 
     /**
      * Creates a query with source and conditions.
      */
     public Query(String source, List<Condition> conditions) {
-        this(source, conditions, List.of(), Optional.empty(), Granularity.DOCUMENT, Optional.empty(), List.of(), new VariableRegistry());
+        this(source, conditions, List.of(), Optional.empty(), Granularity.DOCUMENT, Optional.empty(), List.of(), new VariableRegistry(), List.of(), Optional.empty());
     }
 
     /**
      * Creates a query with source, conditions, and granularity.
      */
     public Query(String source, List<Condition> conditions, Granularity granularity) {
-        this(source, conditions, List.of(), Optional.empty(), granularity, Optional.empty(), List.of(), new VariableRegistry());
+        this(source, conditions, List.of(), Optional.empty(), granularity, Optional.empty(), List.of(), new VariableRegistry(), List.of(), Optional.empty());
     }
 
     /**
-     * Creates a query with all parameters except variable registry.
+     * Creates a query with all parameters except variable registry, subqueries, and join condition.
      */
     public Query(
         String source,
@@ -88,7 +95,23 @@ public record Query(
         Optional<Integer> granularitySize,
         List<SelectColumn> selectColumns
     ) {
-        this(source, conditions, orderBy, limit, granularity, granularitySize, selectColumns, new VariableRegistry());
+        this(source, conditions, orderBy, limit, granularity, granularitySize, selectColumns, new VariableRegistry(), List.of(), Optional.empty());
+    }
+
+    /**
+     * Creates a query with all parameters except subqueries and join condition.
+     */
+    public Query(
+        String source,
+        List<Condition> conditions,
+        List<String> orderBy,
+        Optional<Integer> limit,
+        Granularity granularity,
+        Optional<Integer> granularitySize,
+        List<SelectColumn> selectColumns,
+        VariableRegistry variableRegistry
+    ) {
+        this(source, conditions, orderBy, limit, granularity, granularitySize, selectColumns, variableRegistry, List.of(), Optional.empty());
     }
 
     /**
@@ -151,6 +174,15 @@ public record Query(
         return variableRegistry.validate();
     }
 
+    /**
+     * Checks if this query has subqueries.
+     * 
+     * @return true if the query has one or more subqueries, false otherwise
+     */
+    public boolean hasSubqueries() {
+        return !subqueries.isEmpty();
+    }
+
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
@@ -170,6 +202,16 @@ public record Query(
                 if (i > 0) sb.append(" AND ");
                 sb.append(conditions.get(i));
             }
+        }
+        
+        // Add the subqueries and join conditions, if any
+        if (!subqueries.isEmpty()) {
+            for (SubquerySpec subquery : subqueries) {
+                sb.append(" JOIN ").append(subquery);
+            }
+            
+            // Add join condition if present
+            joinCondition.ifPresent(jc -> sb.append(" ON ").append(jc));
         }
         
         if (!orderBy.isEmpty()) {

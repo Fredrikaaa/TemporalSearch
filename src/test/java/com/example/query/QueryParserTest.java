@@ -9,6 +9,9 @@ import com.example.query.model.condition.Logical;
 import com.example.query.model.condition.Ner;
 import com.example.query.model.condition.Not;
 import com.example.query.model.condition.Temporal;
+import com.example.query.model.SubquerySpec;
+import com.example.query.model.JoinCondition;
+import com.example.query.model.TemporalPredicate;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -334,5 +337,37 @@ class QueryParserTest {
     @DisplayName("Parse invalid queries should throw exception")
     void parseInvalidQueriesShouldThrowException(String queryStr) {
         assertThrows(QueryParseException.class, () -> parser.parse(queryStr));
+    }
+
+    @Test
+    @DisplayName("Parse query with subquery and join")
+    void testSubqueryWithJoin() throws QueryParseException {
+        String query = "SELECT ?person FROM wikipedia " +
+                      "JOIN (SELECT ?org FROM companies WHERE NER(ORGANIZATION) AS ?org) AS companies " +
+                      "ON ?person INTERSECT ?org " +
+                      "WHERE NER(PERSON) AS ?person";
+        
+        // Should parse successfully
+        Query parsedQuery = parser.parse(query);
+        
+        // Verify the main query
+        assertEquals("wikipedia", parsedQuery.source());
+        assertEquals(1, parsedQuery.conditions().size());
+        
+        // Verify subqueries
+        assertTrue(parsedQuery.hasSubqueries());
+        assertEquals(1, parsedQuery.subqueries().size());
+        
+        // Verify the subquery details
+        SubquerySpec subquery = parsedQuery.subqueries().get(0);
+        assertEquals("companies", subquery.alias());
+        assertEquals("companies", subquery.subquery().source());
+        
+        // Verify join condition
+        assertTrue(parsedQuery.joinCondition().isPresent());
+        JoinCondition joinCondition = parsedQuery.joinCondition().get();
+        assertEquals("?person", joinCondition.leftColumn());
+        assertEquals("?org", joinCondition.rightColumn());
+        assertEquals(TemporalPredicate.INTERSECT, joinCondition.temporalPredicate());
     }
 } 
