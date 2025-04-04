@@ -62,10 +62,13 @@ public class CoreNLPConfig {
         props.setProperty("threads", String.valueOf(threads));
         
         // Check if SR parser model exists and use it if available
-        java.nio.file.Path modelPath = java.nio.file.Paths.get(SR_PARSER_MODEL);
-        if (java.nio.file.Files.exists(modelPath)) {
-            logger.info("Using SR parser model from local path: {}", modelPath.toAbsolutePath());
-            props.setProperty("parse.model", modelPath.toAbsolutePath().toString());
+        boolean usingParseAnnotator = props.getProperty("annotators").contains("parse");
+        if (usingParseAnnotator) {
+            java.nio.file.Path modelPath = java.nio.file.Paths.get(SR_PARSER_MODEL);
+            if (java.nio.file.Files.exists(modelPath)) {
+                logger.info("Using SR parser model from local path: {}", modelPath.toAbsolutePath());
+                props.setProperty("parse.model", modelPath.toAbsolutePath().toString());
+            }
         }
         
         // Parser specific settings
@@ -86,7 +89,7 @@ public class CoreNLPConfig {
         // Length constraints - balanced for speed
         props.setProperty("pos.maxlen", String.valueOf(MAX_SENTENCE_LENGTH));
 
-        // Enhanced tokenizer settings - optimized for speed
+        // Tokenizer settings
         props.setProperty("tokenize.options", String.join(",",
             //"normalizeParentheses=true",
             //"normalizeOtherBrackets=true",
