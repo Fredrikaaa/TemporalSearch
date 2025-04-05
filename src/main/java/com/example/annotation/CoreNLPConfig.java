@@ -22,6 +22,9 @@ public class CoreNLPConfig {
     // Model paths
     private static final String SR_PARSER_MODEL = "stanford-english-extra-corenlp-models-current/edu/stanford/nlp/models/srparser/englishSR.ser.gz";
     
+    // Whether to use parse annotator instead of depparse
+    private static final boolean USE_PARSE_ANNOTATOR = false;
+    
     private final Properties properties;
     
     /**
@@ -58,12 +61,14 @@ public class CoreNLPConfig {
         Properties props = new Properties();
         
         // Core annotators - only what we actually use in Annotations.java
-        props.setProperty("annotators", "tokenize,ssplit,pos,lemma,ner,depparse");
+        String annotators = USE_PARSE_ANNOTATOR ? 
+            "tokenize,ssplit,pos,lemma,ner,parse" : 
+            "tokenize,ssplit,pos,lemma,ner,depparse";
+        props.setProperty("annotators", annotators);
         props.setProperty("threads", String.valueOf(threads));
         
         // Check if SR parser model exists and use it if available
-        boolean usingParseAnnotator = props.getProperty("annotators").contains("parse");
-        if (usingParseAnnotator) {
+        if (USE_PARSE_ANNOTATOR) {
             java.nio.file.Path modelPath = java.nio.file.Paths.get(SR_PARSER_MODEL);
             if (java.nio.file.Files.exists(modelPath)) {
                 logger.info("Using SR parser model from local path: {}", modelPath.toAbsolutePath());
