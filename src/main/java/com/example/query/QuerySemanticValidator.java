@@ -119,13 +119,35 @@ public class QuerySemanticValidator {
             } else if (column instanceof SnippetColumn snippetColumn) {
                 validateSnippetNode(snippetColumn.getSnippetNode(), registry);
             } else if (column instanceof CountColumn countColumn) {
-                CountNode countNode = countColumn.getCountNode();
-                if (countNode.type() == CountNode.CountType.UNIQUE) {
-                    validateCountUniqueNode(countNode, registry);
+                // For COUNT(UNIQUE ?var), the variable must exist and be registered
+                String toString = countColumn.toString();
+                if (toString.startsWith("COUNT(UNIQUE")) {
+                    // Extract variable name from the toString representation
+                    int startIdx = toString.indexOf("?");
+                    int endIdx = toString.indexOf(")", startIdx);
+                    if (startIdx >= 0 && endIdx > startIdx) {
+                        String variable = toString.substring(startIdx, endIdx);
+                        
+                        // Check if variable is bound
+                        if (!registry.getAllVariableNames().contains(variable)) {
+                            throw new QueryParseException(String.format(
+                                "Unbound variable in COUNT: %s. Variables must be bound in WHERE clause.",
+                                variable
+                            ));
+                        }
+                        
+                        // Check if variable is produced
+                        if (!registry.isProduced(variable)) {
+                            throw new QueryParseException(String.format(
+                                "Variable %s in COUNT is consumed but not produced in any condition",
+                                variable
+                            ));
+                        }
+                    }
                 }
-                // Other COUNT types don't need validation
+            } else {
+                // Other column types (TITLE, TIMESTAMP) don't need special validation
             }
-            // Other column types (TITLE, TIMESTAMP) don't need special validation
         }
     }
     
@@ -147,33 +169,6 @@ public class QuerySemanticValidator {
         if (!registry.isProduced(variable)) {
             throw new QueryParseException(String.format(
                 "Variable %s in SNIPPET is consumed but not produced in any condition",
-                variable
-            ));
-        }
-    }
-    
-    /**
-     * Validates a COUNT(UNIQUE ?var) expression.
-     */
-    private void validateCountUniqueNode(CountNode countNode, VariableRegistry registry) throws QueryParseException {
-        if (!countNode.variable().isPresent()) {
-            throw new QueryParseException("COUNT(UNIQUE) must specify a variable");
-        }
-        
-        String variable = Variable.formatName(countNode.variable().get());
-        
-        // Check if variable is bound
-        if (!registry.getAllVariableNames().contains(variable)) {
-            throw new QueryParseException(String.format(
-                "Unbound variable in COUNT: %s. Variables must be bound in WHERE clause.",
-                variable
-            ));
-        }
-        
-        // Check if variable is produced
-        if (!registry.isProduced(variable)) {
-            throw new QueryParseException(String.format(
-                "Variable %s in COUNT is consumed but not produced in any condition",
                 variable
             ));
         }

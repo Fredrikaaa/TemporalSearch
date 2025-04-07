@@ -28,7 +28,7 @@ class QuerySemanticValidatorTest {
     @Test
     @DisplayName("Valid query with COUNT column should validate")
     void validQueryWithCountShouldValidate() {
-        List<SelectColumn> columns = List.of(new CountColumn(CountNode.countAll()));
+        List<SelectColumn> columns = List.of(CountColumn.countAll());
         Query query = createQuery(columns, List.of());
         
         assertDoesNotThrow(() -> validator.validate(query));
@@ -173,7 +173,7 @@ class QuerySemanticValidatorTest {
         List<Condition> conditions = List.of();
         
         // Create a valid select column
-        List<SelectColumn> columns = List.of(new CountColumn(CountNode.countAll()));
+        List<SelectColumn> columns = List.of(CountColumn.countAll());
         
         // Create a variable registry where the variable is registered as a consumer but not a producer
         VariableRegistry registry = new VariableRegistry();

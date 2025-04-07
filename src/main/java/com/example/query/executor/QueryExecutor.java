@@ -5,29 +5,43 @@ import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.condition.Condition;
 import com.example.query.model.condition.Logical;
 import com.example.query.model.condition.Logical.LogicalOperator;
+import com.example.query.model.JoinCondition;
 import com.example.query.model.Query;
+import com.example.query.model.SubquerySpec;
 import com.example.query.binding.BindingContext;
+import com.example.query.result.ResultGenerationException;
+import com.example.query.result.TableResultService;
+import com.example.query.sqlite.SqliteAccessor;
+import com.example.query.index.IndexManager;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import tech.tablesaw.api.Table;
+
 /**
  * Executes queries against the provided indexes.
  * Responsible for coordinating the execution of all conditions in a query
  * and combining their results according to the query's logical structure.
+ * 
+ * Supports the execution of subqueries and joins between result sets.
  */
 public class QueryExecutor {
     private static final Logger logger = LoggerFactory.getLogger(QueryExecutor.class);
     
     private final ConditionExecutorFactory executorFactory;
     private BindingContext bindingContext;
+    private TableResultService tableResultService;
+    private JoinExecutor joinExecutor;
+    private boolean nashInitialized = false;
     
     /**
      * Creates a new QueryExecutor with the provided executor factory.
@@ -35,8 +49,54 @@ public class QueryExecutor {
      * @param executorFactory Factory for creating condition executors
      */
     public QueryExecutor(ConditionExecutorFactory executorFactory) {
+        this(executorFactory, new JoinExecutor(), new TableResultService());
+    }
+
+    /**
+     * Constructor for testing purposes, allowing injection of mocks.
+     *
+     * @param executorFactory Factory for creating condition executors
+     * @param joinExecutor Mocked JoinExecutor
+     * @param tableResultService Mocked TableResultService
+     */
+    QueryExecutor(ConditionExecutorFactory executorFactory, JoinExecutor joinExecutor, TableResultService tableResultService) {
         this.executorFactory = executorFactory;
         this.bindingContext = BindingContext.empty();
+        this.joinExecutor = joinExecutor;
+        this.tableResultService = tableResultService;
+    }
+    
+    /**
+     * Initializes the Nash temporal index for a specific corpus.
+     * This should be called before executing queries with temporal conditions.
+     * 
+     * @param corpusName The corpus/source name to initialize Nash index for
+     * @param indexManager The index manager for accessing indexes
+     */
+    public void initializeNashIndex(String corpusName, com.example.query.index.IndexManager indexManager) {
+        if (nashInitialized) {
+            logger.debug("Nash index already initialized, skipping");
+            return;
+        }
+        
+        try {
+            // Get the TemporalExecutor from the factory
+            TemporalExecutor temporalExecutor = (TemporalExecutor) executorFactory.getExecutor(
+                    new com.example.query.model.condition.Temporal(
+                            com.example.query.model.TemporalPredicate.EQUAL, 
+                            java.time.LocalDateTime.now()));
+            
+            // Let the TemporalExecutor handle the Nash initialization with the index manager
+            boolean success = temporalExecutor.initializeNashIndexForCorpus(corpusName, indexManager);
+            if (success) {
+                nashInitialized = true;
+                logger.info("Nash index successfully initialized for corpus: {}", corpusName);
+            } else {
+                logger.warn("Failed to initialize Nash index for corpus: {}", corpusName);
+            }
+        } catch (Exception e) {
+            logger.error("Failed to initialize Nash index: {}", e.getMessage(), e);
+        }
     }
     
     /**
@@ -48,6 +108,26 @@ public class QueryExecutor {
      * @throws QueryExecutionException if execution fails
      */
     public Set<DocSentenceMatch> execute(Query query, Map<String, IndexAccess> indexes) 
+            throws QueryExecutionException {
+        // We don't initialize Nash here anymore - it should be done before execution
+        
+        // Reset binding context for this execution
+        this.bindingContext = BindingContext.empty();
+        
+        return executeWithContext(query, indexes, new SubqueryContext());
+    }
+    
+    /**
+     * Executes a query with an existing subquery context.
+     * This allows for recursive execution of subqueries.
+     *
+     * @param query The query to execute
+     * @param indexes Map of index name to IndexAccess
+     * @param subqueryContext Context containing results of previously executed subqueries
+     * @return Set of matches
+     * @throws QueryExecutionException if execution fails
+     */
+    public Set<DocSentenceMatch> executeWithContext(Query query, Map<String, IndexAccess> indexes, SubqueryContext subqueryContext) 
             throws QueryExecutionException {
         logger.debug("Executing query: {}", query);
         
@@ -63,30 +143,107 @@ public class QueryExecutor {
             throw new IllegalArgumentException("Granularity size must be between 0 and 10, got: " + granularitySize);
         }
         
-        // Get all conditions from the query
+        // Get the source name from the query - needed early for join handler
+        String source = query.source();
+        logger.debug("Using source: {}", source);
+
+        // Execute any subqueries first, as they are needed for joins
+        if (query.hasSubqueries()) {
+            logger.debug("Executing {} subqueries", query.subqueries().size());
+            executeSubqueries(query.subqueries(), indexes, subqueryContext);
+        }
+
+        // Check if this query involves a JOIN operation
+        if (query.joinCondition().isPresent()) {
+            logger.debug("Query has a JOIN condition. Delegating to JoinHandler.");
+            // Phase 3: Instantiate and call JoinHandler here
+            JoinHandler joinHandler = new JoinHandler(joinExecutor, tableResultService);
+            return joinHandler.handleJoin(query, indexes, subqueryContext, source); 
+        }
+
+        // --- Execution path for queries WITHOUT a JOIN clause ---
+        
+        // Get all conditions from the query (excluding the join condition itself)
         List<Condition> conditions = query.conditions();
         
         if (conditions.isEmpty()) {
-            logger.debug("Query has no conditions, returning empty result set");
+            // If there are no conditions AND no join, result is empty
+            logger.debug("Query has no conditions and no join, returning empty result set");
             return new HashSet<>();
         }
-        
-        // Get the source name from the query
-        String source = query.source();
-        logger.debug("Using source: {}", source);
         
         // Optimize execution order based on variable dependencies
         List<Condition> orderedConditions = optimizeExecutionOrder(conditions);
         
-        // If there's only one condition, execute it directly
+        Set<DocSentenceMatch> results;
         if (orderedConditions.size() == 1) {
-            Set<DocSentenceMatch> results = executeCondition(orderedConditions.get(0), indexes, granularity, granularitySize);
-            return ensureSourceSet(results, source);
+            results = executeCondition(orderedConditions.get(0), indexes, granularity, granularitySize);
+        } else {
+            // Execute conditions in optimized order
+            results = executeConditionsSequentially(orderedConditions, indexes, granularity, granularitySize);
         }
         
-        // Execute conditions in optimized order
-        Set<DocSentenceMatch> results = executeConditionsSequentially(orderedConditions, indexes, granularity, granularitySize);
-        return ensureSourceSet(results, source);
+        results = ensureSourceSet(results, source);
+
+        // Remove the applyJoin calls here, as joins are handled above
+        /*
+        if (query.joinCondition().isPresent() && !query.subqueries().isEmpty()) {
+             try {
+                 results = applyJoin(results, query, indexes, subqueryContext);
+             } catch (ResultGenerationException e) {
+                 throw new QueryExecutionException("Failed to apply join: " + e.getMessage(), e, 
+                         "join", QueryExecutionException.ErrorType.INTERNAL_ERROR);
+             }
+        }
+        */
+        
+        return results;
+    }
+    
+    /**
+     * Executes all subqueries and adds their results to the subquery context.
+     *
+     * @param subqueries List of subquery specifications
+     * @param indexes Map of index name to IndexAccess
+     * @param subqueryContext Context to store subquery results
+     * @throws QueryExecutionException if execution fails
+     */
+    private void executeSubqueries(List<SubquerySpec> subqueries, Map<String, IndexAccess> indexes, SubqueryContext subqueryContext) 
+            throws QueryExecutionException {
+        for (SubquerySpec subquery : subqueries) {
+            // Skip if already executed
+            if (subqueryContext.hasResults(subquery.alias())) {
+                logger.debug("Subquery with alias '{}' already executed, skipping", subquery.alias());
+                continue;
+            }
+            
+            logger.debug("Executing subquery: {}", subquery);
+            
+            // Execute the subquery recursively
+            Set<DocSentenceMatch> subqueryResults = executeWithContext(subquery.subquery(), indexes, subqueryContext);
+            
+            // Add native results to context
+            subqueryContext.addNativeResults(subquery, subqueryResults);
+            
+            try {
+                // Convert to table using TableResultService
+                Table subqueryTable = tableResultService.generateTable(
+                        subquery.subquery(), 
+                        subqueryResults, 
+                        BindingContext.empty(), // Each subquery has its own binding context
+                        indexes
+                );
+                
+                // Add table results to context
+                subqueryContext.addTableResults(subquery, subqueryTable);
+                
+                logger.debug("Subquery '{}' executed, generated table with {} rows", 
+                        subquery.alias(), subqueryTable.rowCount());
+            } catch (ResultGenerationException e) {
+                throw new QueryExecutionException("Failed to generate table for subquery: " + e.getMessage(), e, 
+                        "subquery", QueryExecutionException.ErrorType.INTERNAL_ERROR);
+            }
+        }
     }
     
     /**

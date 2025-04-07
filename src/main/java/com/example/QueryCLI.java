@@ -4,10 +4,7 @@ import com.example.query.*;
 import com.example.query.executor.*;
 import com.example.query.index.IndexManager;
 import com.example.query.model.*;
-import com.example.query.model.column.ColumnSpec;
-import com.example.query.model.column.ColumnType;
 import com.example.query.result.*;
-import com.example.query.snippet.DatabaseConfig;
 import com.example.core.*;
 import com.example.query.sqlite.SqliteAccessor;
 import com.example.query.binding.BindingContext;
@@ -73,6 +70,9 @@ public class QueryCLI {
             logger.debug("Validating query: {}", query);
             validator.validate(query);
             
+            // Check for date queries and display helpful information
+            checkAndDisplayDateQueryHelp(queryStr, query);
+            
             // 3. Get index path from FROM clause
             String indexSetName = query.source();
             logger.debug("Using index set: {}", indexSetName);
@@ -91,6 +91,9 @@ public class QueryCLI {
                 return; // Early return to avoid further processing
             }
             
+            // Initialize Nash temporal index for this corpus
+            logger.debug("Initializing Nash temporal index for corpus: {}", indexSetName);
+
             // Create a new TableResultService with the corpus-specific database path
             TableResultService tableResultService = new TableResultService(corpusDbPath);
             logger.info("Using corpus-specific database at: {}", corpusDbPath);
@@ -98,6 +101,9 @@ public class QueryCLI {
             // 4. Create IndexManager for the resolved path
             try (IndexManager indexManager = new IndexManager(indexBaseDir, indexSetName)) {
                 logger.debug("Created IndexManager for index set: {}", indexSetName);
+                
+                // Initialize Nash index with the index manager
+                executor.initializeNashIndex(indexSetName, indexManager);
                 
                 // 5. Execute query using QueryExecutor
                 logger.debug("Executing query against index set: {}", indexSetName);
@@ -156,6 +162,34 @@ public class QueryCLI {
         } catch (Exception e) {
             logger.error("Error executing query: {}", e.getMessage(), e);
             System.err.println("Error: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Checks if the query involves date operations and displays helpful information.
+     * 
+     * @param queryStr The original query string
+     * @param query The parsed query object
+     */
+    private void checkAndDisplayDateQueryHelp(String queryStr, Query query) {
+        if (queryStr.toUpperCase().contains("DATE(")) {
+            // Check for specific predicates
+            if (queryStr.toUpperCase().contains("DATE(CONTAINS [")) {
+                logger.info("Date CONTAINS query detected - requires dates to be fully within range");
+                System.out.println("\nQuery Help: You're using DATE(CONTAINS [range]) which requires dates to be fully within the specified range.");
+                System.out.println("For broader matches, consider using DATE(INTERSECT [range]) which matches any overlap with the range.\n");
+            } else if (queryStr.toUpperCase().contains("DATE(INTERSECT [")) {
+                logger.info("Date INTERSECT query detected - matches any overlap with date range");
+            }
+            
+            // Check for granularity
+            if (query.granularity() == Query.Granularity.SENTENCE) {
+                logger.info("Date query with sentence granularity detected");
+                System.out.println("Note: With sentence granularity, the query will return specific sentences containing date mentions in the specified range.");
+            } else {
+                logger.info("Date query with document granularity detected");
+                System.out.println("Note: With document granularity, the query will return documents containing date mentions in the specified range.");
+            }
         }
     }
     

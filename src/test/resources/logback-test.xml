@@ -82,6 +82,11 @@
         <appender-ref ref="CONSOLE"/>
     </logger>
 
+    <!-- Enable performance tests logging -->
+    <logger name="com.example.performance" level="INFO" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+
     <!-- Root logger - set to INFO to see general application logs -->
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

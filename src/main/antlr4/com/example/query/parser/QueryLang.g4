@@ -30,8 +30,7 @@ NER: 'NER';
 POS: 'POS';
 DEPENDS: 'DEPENDS';
 DATE: 'DATE';
-NEAR: 'NEAR';
-BETWEEN: 'BETWEEN';
+PROXIMITY: 'PROXIMITY';
 GRANULARITY: 'GRANULARITY';
 DOCUMENT: 'DOCUMENT';
 SENTENCE: 'SENTENCE';
@@ -184,7 +183,7 @@ dateOperator
     : CONTAINS
     | CONTAINED_BY
     | INTERSECT
-    | NEAR
+    | PROXIMITY
     ;
 
 dateValue
@@ -318,7 +317,7 @@ temporalOp
     : CONTAINS
     | CONTAINED_BY
     | INTERSECT
-    | NEAR
+    | PROXIMITY
     ;
 
 posExpression

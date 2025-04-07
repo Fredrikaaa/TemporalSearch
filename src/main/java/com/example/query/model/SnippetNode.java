@@ -11,7 +11,7 @@ public record SnippetNode(
     boolean showSentenceBoundaries
 ) {
     
-    public static final int DEFAULT_WINDOW_SIZE = 3;
+    public static final int DEFAULT_WINDOW_SIZE = 4;
     public static final String DEFAULT_HIGHLIGHT_STYLE = "**";  // Default bold highlighting
     public static final boolean DEFAULT_SHOW_SENTENCE_BOUNDARIES = false;
     

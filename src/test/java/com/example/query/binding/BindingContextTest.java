@@ -13,15 +13,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests for the DefaultBindingContext class.
+ * Tests for the BindingContext class.
  */
-public class DefaultBindingContextTest {
+public class BindingContextTest {
 
-    private DefaultBindingContext context;
+    private BindingContext context;
 
     @BeforeEach
     public void setUp() {
-        context = new DefaultBindingContext();
+        context = new BindingContext();
     }
 
     @Test
@@ -123,7 +123,7 @@ public class DefaultBindingContextTest {
         context.bindValue("person", "Alice");
         context.bindValue("shared", "original");
         
-        DefaultBindingContext other = new DefaultBindingContext();
+        BindingContext other = new BindingContext();
         other.bindValue("age", 30);
         other.bindValue("shared", "updated");
         

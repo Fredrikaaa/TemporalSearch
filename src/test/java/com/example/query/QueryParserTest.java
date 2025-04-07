@@ -111,7 +111,7 @@ class QueryParserTest {
         assertTrue(query.conditions().get(0) instanceof Temporal);
         Temporal condition = (Temporal) query.conditions().get(0);
         
-        assertEquals(Temporal.Type.BEFORE, condition.temporalType());
+        assertEquals(TemporalPredicate.BEFORE, condition.temporalType());
         assertEquals(
             LocalDateTime.of(2000, 1, 1, 0, 0),
             condition.startDate()
@@ -127,7 +127,7 @@ class QueryParserTest {
         Query query = parser.parse(queryStr);
 
         Temporal condition = (Temporal) query.conditions().get(0);
-        assertEquals(Temporal.Type.AFTER, condition.temporalType());
+        assertEquals(TemporalPredicate.AFTER, condition.temporalType());
         assertTrue(condition.variable().isPresent());
         assertEquals("?founding", condition.variable().get());
         assertEquals(LocalDateTime.of(1980, 1, 1, 0, 0), condition.startDate());

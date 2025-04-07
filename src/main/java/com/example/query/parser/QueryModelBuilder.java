@@ -142,8 +142,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     
     @Override
     public Object visitCountColumn(QueryLangParser.CountColumnContext ctx) {
-        CountNode countNode = (CountNode) visit(ctx.countExpression());
-        return new CountColumn(countNode);
+        return visit(ctx.countExpression());
     }
     
     @Override
@@ -161,18 +160,18 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     
     @Override
     public Object visitCountAllExpression(QueryLangParser.CountAllExpressionContext ctx) {
-        return CountNode.countAll();
+        return CountColumn.countAll();
     }
     
     @Override
     public Object visitCountUniqueExpression(QueryLangParser.CountUniqueExpressionContext ctx) {
         String variable = (String) visit(ctx.variable());
-        return CountNode.countUnique(variable);
+        return CountColumn.countUnique(variable);
     }
     
     @Override
     public Object visitCountDocumentsExpression(QueryLangParser.CountDocumentsExpressionContext ctx) {
-        return CountNode.countDocuments();
+        return CountColumn.countDocuments();
     }
 
     @Override
@@ -388,19 +387,29 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     @Override
     public Object visitDateOperatorExpression(QueryLangParser.DateOperatorExpressionContext ctx) {
         String operator = ctx.dateOperator().getText();
-        Temporal.Type type = mapDateOperator(operator);
+        TemporalPredicate type = mapOperatorToTemporal(operator);
         
-        Object dateValue = visitChildren(ctx.dateValue());
+        System.out.println("DEBUG: DateOperatorExpression with operator: " + operator);
+        System.out.println("DEBUG: DateValue context: " + ctx.dateValue().getText());
+        
+        // Directly visit the dateValue node instead of using visitChildren
+        Object dateValue = visit(ctx.dateValue());
+        System.out.println("DEBUG: Date value type: " + (dateValue != null ? dateValue.getClass().getName() : "null"));
+        System.out.println("DEBUG: Date value: " + dateValue);
+        
         LocalDateTime startDate;
         Optional<LocalDateTime> endDate = Optional.empty();
         
         if (dateValue instanceof Integer year) {
+            System.out.println("DEBUG: Handling as Integer year: " + year);
             startDate = LocalDateTime.of(year, 1, 1, 0, 0);
-        } else if (dateValue instanceof int[] dateRange) {
-            // Handle date range as array of ints [start, end]
-            startDate = LocalDateTime.of(dateRange[0], 1, 1, 0, 0);
-            endDate = Optional.of(LocalDateTime.of(dateRange[1], 12, 31, 23, 59, 59));
+        } else if (dateValue instanceof LocalDateTime[] dateRange) {
+            System.out.println("DEBUG: Handling as LocalDateTime[] with length: " + dateRange.length);
+            // Handle date range as array of LocalDateTime [start, end]
+            startDate = dateRange[0];
+            endDate = Optional.of(dateRange[1]);
         } else {
+            System.out.println("DEBUG: Handling as single date");
             // Assume it's a single date
             startDate = (LocalDateTime) dateValue;
         }
@@ -420,22 +429,31 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         }
         
         // Create the temporal condition with the correct constructor
+        System.out.println("DEBUG: Creating Temporal with startDate=" + startDate + ", endDate=" + endDate + ", type=" + type);
         return new Temporal(startDate, endDate, variableName != null ? Optional.of(variableName) : Optional.empty(), range, type);
     }
     
     @Override
     public Object visitDateRange(QueryLangParser.DateRangeContext ctx) {
+        System.out.println("DEBUG: visitDateRange with text: " + ctx.getText());
         int startYear = Integer.parseInt(ctx.start.getText());
         int endYear = Integer.parseInt(ctx.end.getText());
+        System.out.println("DEBUG: DateRange with startYear=" + startYear + ", endYear=" + endYear);
         LocalDateTime startDate = LocalDateTime.of(startYear, 1, 1, 0, 0);
         LocalDateTime endDate = LocalDateTime.of(endYear, 12, 31, 23, 59, 59);
-        return new LocalDateTime[] { startDate, endDate };
+        LocalDateTime[] result = new LocalDateTime[] { startDate, endDate };
+        System.out.println("DEBUG: Returning LocalDateTime[] with values: " + result[0] + ", " + result[1]);
+        return result;
     }
     
     @Override
     public Object visitSingleYear(QueryLangParser.SingleYearContext ctx) {
+        System.out.println("DEBUG: visitSingleYear with text: " + ctx.getText());
         int year = Integer.parseInt(ctx.single.getText());
-        return LocalDateTime.of(year, 1, 1, 0, 0);
+        System.out.println("DEBUG: SingleYear with year=" + year);
+        LocalDateTime result = LocalDateTime.of(year, 1, 1, 0, 0);
+        System.out.println("DEBUG: Returning LocalDateTime: " + result);
+        return result;
     }
 
     private Temporal.ComparisonType mapComparisonOp(String operator) {
@@ -449,13 +467,21 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         };
     }
     
-    private Temporal.Type mapDateOperator(String operator) {
+    /**
+     * Maps a date operator string from the query language to the unified TemporalPredicate enum.
+     * Used for both date expressions in the WHERE clause and join conditions.
+     *
+     * @param operator The operator string from the query
+     * @return The corresponding TemporalPredicate value
+     * @throws IllegalStateException if the operator is invalid
+     */
+    private TemporalPredicate mapOperatorToTemporal(String operator) {
         return switch (operator) {
-            case "CONTAINS" -> Temporal.Type.CONTAINS;
-            case "CONTAINED_BY" -> Temporal.Type.CONTAINED_BY;
-            case "INTERSECT" -> Temporal.Type.INTERSECT;
-            case "NEAR" -> Temporal.Type.NEAR;
-            default -> throw new IllegalStateException("Invalid date operator: " + operator);
+            case "CONTAINS" -> TemporalPredicate.CONTAINS;
+            case "CONTAINED_BY" -> TemporalPredicate.CONTAINED_BY;
+            case "INTERSECT" -> TemporalPredicate.INTERSECT;
+            case "PROXIMITY" -> TemporalPredicate.PROXIMITY;
+            default -> throw new IllegalStateException("Invalid temporal operator: " + operator);
         };
     }
 
@@ -677,7 +703,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         String rightColumn = (String) visit(ctx.rightColumn);
         
         // Get the temporal operator
-        TemporalPredicate temporalPredicate = mapTemporalOperator(ctx.temporalOp().getText());
+        TemporalPredicate temporalPredicate = mapOperatorToTemporal(ctx.temporalOp().getText());
         
         // Check if there's a window specification
         Optional<Integer> proximityWindow = Optional.empty();
@@ -696,11 +722,6 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     }
 
     @Override
-    public Object visitTemporalOp(QueryLangParser.TemporalOpContext ctx) {
-        return ctx.getText();
-    }
-
-    @Override
     public Object visitQualifiedIdentifier(QueryLangParser.QualifiedIdentifierContext ctx) {
         String tableName = ctx.identifier(0).getText();
         String columnName;
@@ -714,17 +735,6 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         }
         
         return tableName + "." + columnName;
-    }
-
-    // Helper method to map temporal operators to TemporalPredicate enum
-    private TemporalPredicate mapTemporalOperator(String operator) {
-        return switch (operator) {
-            case "CONTAINS" -> TemporalPredicate.CONTAINS;
-            case "CONTAINED_BY" -> TemporalPredicate.CONTAINED_BY;
-            case "INTERSECT" -> TemporalPredicate.INTERSECT;
-            case "NEAR" -> TemporalPredicate.PROXIMITY;
-            default -> throw new IllegalStateException("Invalid temporal operator: " + operator);
-        };
     }
 
     @Override

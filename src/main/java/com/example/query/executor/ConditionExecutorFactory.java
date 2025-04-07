@@ -18,6 +18,7 @@ public final class ConditionExecutorFactory {
     private final ContainsExecutor containsExecutor;
     private final PosExecutor posExecutor;
     private final DependencyExecutor dependencyExecutor;
+    private final TemporalExecutor temporalExecutor;
     
     /**
      * Creates a new ConditionExecutorFactory with singleton executor instances.
@@ -32,6 +33,7 @@ public final class ConditionExecutorFactory {
         this.containsExecutor = new ContainsExecutor();
         this.posExecutor = new PosExecutor();
         this.dependencyExecutor = new DependencyExecutor();
+        this.temporalExecutor = new TemporalExecutor();
         
         logger.debug("Initialized condition executor factory");
     }
@@ -57,8 +59,7 @@ public final class ConditionExecutorFactory {
             case Dependency c -> dependencyExecutor;
             case Logical c -> logicalExecutor;
             case Not c -> notExecutor;
-            case Temporal c -> throw new UnsupportedOperationException(
-                "Temporal condition execution not yet implemented");
+            case Temporal c -> temporalExecutor;
         };
     }
 } 

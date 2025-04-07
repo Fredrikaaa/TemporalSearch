@@ -19,7 +19,7 @@ public class CoreNLPConfig {
     // Maximum lengths for different components to prevent OOM and speed up processing
     private static final int MAX_SENTENCE_LENGTH = 120;
     
-    // Model paths
+    // Path to SR parser model. Only used if USE_PARSE_ANNOTATOR is true.
     private static final String SR_PARSER_MODEL = "stanford-english-extra-corenlp-models-current/edu/stanford/nlp/models/srparser/englishSR.ser.gz";
     
     // Whether to use parse annotator instead of depparse

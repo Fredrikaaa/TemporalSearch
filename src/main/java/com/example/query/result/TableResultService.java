@@ -1,12 +1,12 @@
 package com.example.query.result;
 
 import com.example.query.binding.BindingContext;
-import com.example.query.model.CountNode;
+import com.example.query.executor.SubqueryContext;
 import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.SelectColumn;
+import com.example.query.model.CountColumn;
 import com.example.core.IndexAccess;
-import com.example.query.snippet.DatabaseConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tech.tablesaw.api.*;
@@ -23,25 +23,27 @@ import java.util.*;
  * Service for converting query results to Tablesaw Tables.
  * Replaces the previous ResultGenerator with a simpler implementation
  * that leverages Tablesaw for data representation and formatting.
+ * 
+ * Now supports joining results from subqueries based on temporal relationships.
  */
 public class TableResultService {
     private static final Logger logger = LoggerFactory.getLogger(TableResultService.class);
-    private final String dbPath;
+    private final JoinedResultGenerator joinedResultGenerator;
 
     /**
      * Creates a new TableResultService with default configuration.
      */
     public TableResultService() {
-        this.dbPath = DatabaseConfig.DEFAULT_DB_PATH;
+        this.joinedResultGenerator = new JoinedResultGenerator(this);
     }
 
     /**
      * Creates a new TableResultService with custom database path.
      *
-     * @param dbPath The path to the database file
+     * @param dbPath The path to the database file (not used, kept for backwards compatibility)
      */
     public TableResultService(String dbPath) {
-        this.dbPath = dbPath;
+        this.joinedResultGenerator = new JoinedResultGenerator(this);
     }
 
     /**
@@ -60,6 +62,27 @@ public class TableResultService {
             BindingContext bindingContext,
             Map<String, IndexAccess> indexes
     ) throws ResultGenerationException {
+        return generateTable(query, matches, bindingContext, indexes, new SubqueryContext());
+    }
+    
+    /**
+     * Converts query results to a Tablesaw Table, including subquery handling.
+     *
+     * @param query The original query
+     * @param matches Set of matching document/sentence matches
+     * @param bindingContext The binding context from query execution
+     * @param indexes Map of indexes to retrieve additional document information
+     * @param subqueryContext Context containing subquery results
+     * @return A Tablesaw Table containing the query results
+     * @throws ResultGenerationException if an error occurs
+     */
+    public Table generateTable(
+            Query query,
+            Set<DocSentenceMatch> matches,
+            BindingContext bindingContext,
+            Map<String, IndexAccess> indexes,
+            SubqueryContext subqueryContext
+    ) throws ResultGenerationException {
         Query.Granularity granularity = query.granularity();
         logger.debug("Generating table for {} matching {} at {} granularity",
                 matches.size(),
@@ -67,6 +90,18 @@ public class TableResultService {
                 granularity);
 
         try {
+            // Check if this is a joined query
+            if (query.hasSubqueries() && query.joinCondition().isPresent()) {
+                logger.debug("Query has subqueries and join condition, generating joined table");
+                return joinedResultGenerator.generateJoinedTable(
+                        query, 
+                        matches, 
+                        bindingContext, 
+                        subqueryContext, 
+                        indexes
+                );
+            }
+            
             // Create columns directly from SelectColumn objects
             List<Column<?>> columns = new ArrayList<>();
             
@@ -133,6 +168,19 @@ public class TableResultService {
                 if (sentIdColumn != null) {
                     sentIdColumn.set(rowIndex, String.valueOf(match.sentenceId()));
                 }
+            }
+            
+            // Apply count aggregations if necessary
+            boolean hasCountColumn = false;
+            for (SelectColumn col : selectColumns) {
+                if (col instanceof CountColumn) {
+                    hasCountColumn = true;
+                    break;
+                }
+            }
+            
+            if (hasCountColumn) {
+                table = CountColumn.applyCountAggregations(table);
             }
             
             // Apply ordering if specified

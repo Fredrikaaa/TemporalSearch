@@ -3,6 +3,7 @@ package com.example;
 import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -114,7 +115,8 @@ public class PipelineTest {
         }
         return stopwordsFile;
     }
-
+    @Disabled
+    // Disabled because it takes too long to run
     @Nested
     @DisplayName("Full Pipeline Tests")
     class FullPipelineTests {

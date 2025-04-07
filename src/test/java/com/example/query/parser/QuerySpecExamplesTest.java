@@ -119,8 +119,8 @@ public class QuerySpecExamplesTest {
         // Intersect with date range
         assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(INTERSECT [1990, 2000]) AS ?doc");
         
-        // Near date with radius
-        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(NEAR 2000 RADIUS 5y) AS ?doc");
+        // Proximity date with radius (formerly NEAR)
+        assertSpecExampleValid("SELECT ?doc FROM corpus WHERE DATE(PROXIMITY 2000 RADIUS 5y) AS ?doc");
     }
 
     @Test

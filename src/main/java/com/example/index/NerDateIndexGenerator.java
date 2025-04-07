@@ -25,6 +25,31 @@ import com.example.core.PositionList;
  * Extracts dates from the normalized_ner column where ner type is "DATE",
  * normalizes them to YYYYMMDD format, and stores their positions.
  * Uses streaming processing and external sorting for efficient memory usage.
+ * 
+ * <h2>Date Extraction and Indexing Process</h2>
+ * <ol>
+ *   <li>The NLP pipeline identifies date mentions in the text using Named Entity Recognition (NER)</li>
+ *   <li>Date entities are normalized to YYYY-MM-DD format during NLP processing</li>
+ *   <li>This index generator extracts those normalized dates and converts them to YYYYMMDD format for storage</li>
+ *   <li>For each date mention, the document ID, sentence ID, and character position are recorded</li>
+ * </ol>
+ * 
+ * <h2>Relationship with DATE Operator in Queries</h2>
+ * <p>When querying with the DATE operator (e.g., DATE(CONTAINS [2023, 2024])), the system will:
+ * <ol>
+ *   <li>Use the Nash index to quickly filter documents containing date mentions in the specified range</li>
+ *   <li>When used with GRANULARITY SENTENCE, resolve the specific sentences that contain these date mentions</li>
+ * </ol>
+ * <p>Available predicates for DATE queries:
+ * <ul>
+ *   <li>CONTAINS: Returns documents where mentioned dates fall entirely within the query range</li>
+ *   <li>INTERSECT: Returns documents with any date mention that overlaps the query range (more lenient)</li>
+ *   <li>CONTAINED_BY: Returns documents where mentioned dates contain the entire query range</li>
+ *   <li>BEFORE, AFTER, EQUAL: Compare with specific date values</li>
+ * </ul>
+ * 
+ * <p>For optimal results with date range searches spanning multiple years, use the INTERSECT predicate
+ * rather than CONTAINS, as CONTAINS requires dates to be fully contained within the range.
  */
 public final class NerDateIndexGenerator extends IndexGenerator<AnnotationEntry> {
     private static final Logger logger = LoggerFactory.getLogger(NerDateIndexGenerator.class);
