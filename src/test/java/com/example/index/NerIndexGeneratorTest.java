@@ -11,6 +11,7 @@ import com.google.common.collect.ListMultimap;
 import com.example.core.Position;
 import com.example.core.PositionList;
 import com.example.core.IndexAccess;
+import com.example.core.IndexAccessInterface;
 
 public class NerIndexGeneratorTest extends BaseIndexTest {
     private static final String TEST_STOPWORDS_PATH = "test-stopwords-ner-general.txt";
@@ -103,24 +104,24 @@ public class NerIndexGeneratorTest extends BaseIndexTest {
         ListMultimap<String, PositionList> result = generator.processBatch(entries);
         
         // Verify person entity
-        String personKey = "PERSON" + IndexAccess.NGRAM_DELIMITER + "john smith";
+        String personKey = "PERSON" + IndexAccessInterface.DELIMITER + "john smith";
         assertTrue(result.containsKey(personKey), "Should contain PERSON entity");
         assertEquals(1, result.get(personKey).get(0).getPositions().size(), 
             "Should have one position for PERSON entity");
         
         // Verify organization entities
-        String orgKey1 = "ORGANIZATION" + IndexAccess.NGRAM_DELIMITER + "google";
+        String orgKey1 = "ORGANIZATION" + IndexAccessInterface.DELIMITER + "google";
         assertTrue(result.containsKey(orgKey1), "Should contain ORGANIZATION entity (Google)");
         assertEquals(1, result.get(orgKey1).get(0).getPositions().size(),
             "Should have one position for ORGANIZATION entity (Google)");
         
-        String orgKey2 = "ORGANIZATION" + IndexAccess.NGRAM_DELIMITER + "microsoft";
+        String orgKey2 = "ORGANIZATION" + IndexAccessInterface.DELIMITER + "microsoft";
         assertTrue(result.containsKey(orgKey2), "Should contain ORGANIZATION entity (Microsoft)");
         assertEquals(1, result.get(orgKey2).get(0).getPositions().size(),
             "Should have one position for ORGANIZATION entity (Microsoft)");
         
         // Verify location entity
-        String locKey = "LOCATION" + IndexAccess.NGRAM_DELIMITER + "mountain view";
+        String locKey = "LOCATION" + IndexAccessInterface.DELIMITER + "mountain view";
         assertTrue(result.containsKey(locKey), "Should contain LOCATION entity");
         assertEquals(1, result.get(locKey).get(0).getPositions().size(),
             "Should have one position for LOCATION entity");
@@ -166,7 +167,7 @@ public class NerIndexGeneratorTest extends BaseIndexTest {
         
         // Verify no DATE entity in results
         ListMultimap<String, PositionList> result = generator.processBatch(entries);
-        String dateKey = "DATE" + IndexAccess.NGRAM_DELIMITER + "january 15, 2024";
+        String dateKey = "DATE" + IndexAccessInterface.DELIMITER + "january 15, 2024";
         assertFalse(result.containsKey(dateKey), "Should not contain DATE entity");
     }
     
@@ -209,7 +210,7 @@ public class NerIndexGeneratorTest extends BaseIndexTest {
         var result = generator.processBatch(entries);
         
         // Verify case normalization - both APPLE and Apple should be mapped to the same key
-        String appleKey = "ORGANIZATION" + IndexAccess.NGRAM_DELIMITER + "apple";
+        String appleKey = "ORGANIZATION" + IndexAccessInterface.DELIMITER + "apple";
         assertTrue(result.containsKey(appleKey), "Should contain normalized ORGANIZATION entity (apple)");
         assertEquals(2, result.get(appleKey).get(0).getPositions().size(),
             "Should have two positions for normalized ORGANIZATION entity (apple)");
@@ -259,7 +260,7 @@ public class NerIndexGeneratorTest extends BaseIndexTest {
         var result = generator.processBatch(entries);
         
         // The multi-token entity should be combined into a single entry
-        String multiTokenKey = "ORGANIZATION" + IndexAccess.NGRAM_DELIMITER + "new zealand army corps";
+        String multiTokenKey = "ORGANIZATION" + IndexAccessInterface.DELIMITER + "new zealand army corps";
         assertTrue(result.containsKey(multiTokenKey), "Should contain the combined multi-token ORGANIZATION entity");
         
         // The combined entity should have one position
@@ -267,10 +268,10 @@ public class NerIndexGeneratorTest extends BaseIndexTest {
             "Should have one position for the combined entity");
             
         // Individual tokens should not exist as separate entities
-        String tokenKey1 = "ORGANIZATION" + IndexAccess.NGRAM_DELIMITER + "new";
-        String tokenKey2 = "ORGANIZATION" + IndexAccess.NGRAM_DELIMITER + "zealand";
-        String tokenKey3 = "ORGANIZATION" + IndexAccess.NGRAM_DELIMITER + "army";
-        String tokenKey4 = "ORGANIZATION" + IndexAccess.NGRAM_DELIMITER + "corps";
+        String tokenKey1 = "ORGANIZATION" + IndexAccessInterface.DELIMITER + "new";
+        String tokenKey2 = "ORGANIZATION" + IndexAccessInterface.DELIMITER + "zealand";
+        String tokenKey3 = "ORGANIZATION" + IndexAccessInterface.DELIMITER + "army";
+        String tokenKey4 = "ORGANIZATION" + IndexAccessInterface.DELIMITER + "corps";
         
         assertFalse(result.containsKey(tokenKey1), "Should not contain individual token 'new'");
         assertFalse(result.containsKey(tokenKey2), "Should not contain individual token 'zealand'");

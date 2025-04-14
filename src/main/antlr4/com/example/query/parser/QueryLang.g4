@@ -99,7 +99,7 @@ BLOCK_COMMENT: '/*' .*? '*/' -> skip;
 
 query
     : SELECT selectList
-      FROM identifier
+      FROM identifier (AS alias=identifier)?
       joinClause*
       whereClause?
       granularityClause?
@@ -114,6 +114,7 @@ selectList
 
 selectColumn
     : variable                                  # VariableColumn
+    | qualifiedIdentifier                       # QualifiedColumn
     | snippetExpression                         # SnippetColumn
     | titleExpression                           # TitleColumn
     | timestampExpression                       # TimestampColumn
@@ -212,7 +213,7 @@ orderSpec
     ;
 
 qualifiedIdentifier
-    : identifier '.' (identifier | variable)
+    : (identifier | variable) '.' (identifier | variable) // Allow alias.key, ?var.key, alias.?var, ?var.?var
     ;
 
 limitClause

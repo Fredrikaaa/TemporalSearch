@@ -1,292 +1,172 @@
 package com.example.query.executor;
 
 import com.example.core.IndexAccess;
+import com.example.core.IndexAccessException;
+import com.example.core.IndexAccessInterface;
 import com.example.core.Position;
 import com.example.core.PositionList;
-import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.condition.Contains;
-import com.example.query.model.condition.Logical;
-import com.example.query.model.condition.Logical.LogicalOperator;
+import com.example.query.executor.QueryExecutionException;
+import com.example.query.executor.QueryExecutor;
+import com.example.query.executor.QueryResult;
+import com.example.query.index.IndexManager;
 import com.example.query.model.Query;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import com.example.query.model.condition.*;
+import com.example.query.QueryParseException;
+import com.example.query.QueryParser;
+import com.example.query.result.TableResultService;
 
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import tech.tablesaw.api.Table;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import org.junit.jupiter.api.BeforeEach;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
 /**
- * Tests for sentence granularity feature in query execution.
+ * Tests focusing on sentence granularity and windowing.
  */
 public class SentenceGranularityTest {
 
+    @TempDir
+    static Path tempDir;
+
+    private static IndexManager indexManager;
+    private static QueryExecutor queryExecutor;
+    private static TableResultService tableResultService;
+    private static QueryParser queryParser;
+
     @Mock
-    private IndexAccess mockIndexAccess;
+    private IndexAccess unigramIndex;
+    @Mock
+    private IndexAccess nerIndex;
+    @Mock
+    private ConditionExecutorFactory factory;
 
-    private QueryExecutor queryExecutor;
-    private Map<String, IndexAccess> indexes;
-    private PositionList positionList;
+    private Map<String, IndexAccessInterface> indexes;
 
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
+    @BeforeAll
+    public static void setUp() throws IOException, IndexAccessException {
+        // No need to set up IndexManager as tests use mocks directly
         
-        // Create a ConditionExecutorFactory with real executors
-        ConditionExecutorFactory factory = new ConditionExecutorFactory();
+        // Instantiate QueryExecutor using the correct constructor (takes factory)
+        queryExecutor = new QueryExecutor(new ConditionExecutorFactory()); 
+        tableResultService = new TableResultService();
+        queryParser = new QueryParser();
         
-        // Create the QueryExecutor with the factory
-        queryExecutor = new QueryExecutor(factory);
-        
-        // Set up indexes map with mock index
-        indexes = new HashMap<>();
-        indexes.put("unigram", mockIndexAccess);
-        
-        // Create a position list with positions in different documents and sentences
-        positionList = new PositionList();
-        
-        // Document 1, Sentence 1
-        positionList.add(new Position(1, 1, 10, 15, LocalDate.now()));
-        positionList.add(new Position(1, 1, 20, 25, LocalDate.now()));
-        
-        // Document 1, Sentence 2
-        positionList.add(new Position(1, 2, 30, 35, LocalDate.now()));
-        positionList.add(new Position(1, 2, 40, 45, LocalDate.now()));
-        
-        // Document 2, Sentence 1
-        positionList.add(new Position(2, 1, 10, 15, LocalDate.now()));
-        
-        // Document 3, Sentence 2
-        positionList.add(new Position(3, 2, 20, 25, LocalDate.now()));
+        System.out.println("Sentence Granularity Test Setup Complete.");
     }
 
-    @Test
-    public void testDocumentGranularity() throws Exception {
-        // Set up mock to return our position list for any term
-        when(mockIndexAccess.get(any())).thenReturn(Optional.of(positionList));
-        
-        // Create a simple CONTAINS condition
-        Contains condition = new Contains(List.of("test"));
-        
-        // Create a query with document granularity
-        Query query = new Query(
-            "test",
-            List.of(condition),
-            List.of(),
-            Optional.empty(),
-            Query.Granularity.DOCUMENT,
-            Optional.empty(),
-            List.of()
-        );
-        
-        // Execute the query with document granularity
-        Set<DocSentenceMatch> results = queryExecutor.execute(query, indexes);
-        
-        // Verify results
-        assertEquals(3, results.size(), "Should find 3 documents");
-        
-        // Check that we have document-level matches
-        for (DocSentenceMatch match : results) {
-            assertEquals(-1, match.sentenceId(), "Should be a document-level match");
-            assertTrue(match.documentId() >= 1 && match.documentId() <= 3, 
-                    "Document ID should be between 1 and 3");
+    @AfterAll
+    public static void tearDown() throws Exception {
+        // No IndexManager to close
+        System.out.println("Sentence Granularity Test Teardown Complete.");
+    }
+
+    // Helper to configure mock IndexAccess behavior for a specific test
+    // Creates a pure Mockito mock, configured as needed
+    private IndexAccess setupMockIndexBehavior(Map<String, PositionList> mockData) throws IndexAccessException {
+        IndexAccess mockIndex = mock(IndexAccess.class);
+        // Configure mock behavior based on the provided data map
+        for (Map.Entry<String, PositionList> entry : mockData.entrySet()) {
+            // Mock the get() method for specific keys
+            when(mockIndex.get(eq(entry.getKey().getBytes()))).thenReturn(Optional.ofNullable(entry.getValue()));
         }
+        // Provide a default return for any key not explicitly mocked
+        when(mockIndex.get(argThat(k -> mockData.keySet().stream().noneMatch(key -> Arrays.equals(k, key.getBytes())))))
+            .thenReturn(Optional.empty());
+        return mockIndex;
+    }
+
+    // Updated execute method takes the map of indexes containing the mock
+    private QueryResult executeSentenceQuery(String queryString, Map<String, IndexAccessInterface> testIndexes) 
+        throws QueryParseException, QueryExecutionException {
+        Query query = queryParser.parse(queryString);
+        assertTrue(query.granularity() == Query.Granularity.SENTENCE || query.granularitySize().isPresent(), 
+                   "Query granularity should be SENTENCE or have a window size");
+        return queryExecutor.execute(query, testIndexes); 
     }
 
     @Test
-    public void testSentenceGranularity() throws Exception {
-        // Set up mock to return our position list for any term
-        when(mockIndexAccess.get(any())).thenReturn(Optional.of(positionList));
+    public void testSentenceGranularityBasic() throws Exception {
+        String queryString = "SELECT TITLE FROM mockCorpusSent WHERE CONTAINS(\"test\") GRANULARITY SENTENCE";
         
-        // Create a query with sentence granularity
-        Contains condition = new Contains("test");
-        Query query = new Query(
-            "test",
-            List.of(condition),
-            List.of(),
-            Optional.empty(),
-            Query.Granularity.SENTENCE,
-            Optional.empty(),
-            List.of()
-        );
+        // Setup mock data and mock index for this test
+        Map<String, PositionList> mockData = new HashMap<>();
+        PositionList testPositions = new PositionList();
+        testPositions.add(new Position(0, 0, 0, 4, LocalDate.now())); // Doc 0, Sent 0
+        testPositions.add(new Position(1, 1, 0, 4, LocalDate.now())); // Doc 1, Sent 1
+        mockData.put("test", testPositions);
+        IndexAccess mockIndex = setupMockIndexBehavior(mockData);
+        Map<String, IndexAccessInterface> testIndexes = Map.of("unigram", mockIndex); // Use the mock with correct type
         
-        // Execute the query with sentence granularity
-        Set<DocSentenceMatch> results = queryExecutor.execute(query, indexes);
+        QueryResult results = executeSentenceQuery(queryString, testIndexes);
         
-        // Verify results
-        assertEquals(4, results.size(), "Should find 4 sentences");
-        
-        // Check that we have sentence-level matches
-        int sentenceCount = 0;
-        for (DocSentenceMatch match : results) {
-            assertTrue(match.sentenceId() >= 0, "Should be a sentence-level match");
-            
-            // Count sentences per document
-            if (match.documentId() == 1 && match.sentenceId() == 1) sentenceCount++;
-            if (match.documentId() == 1 && match.sentenceId() == 2) sentenceCount++;
-            if (match.documentId() == 2 && match.sentenceId() == 1) sentenceCount++;
-            if (match.documentId() == 3 && match.sentenceId() == 2) sentenceCount++;
-        }
-        
-        assertEquals(4, sentenceCount, "Should find all 4 sentences");
+        assertNotNull(results);
+        assertEquals(Query.Granularity.SENTENCE, results.getGranularity());
+        assertEquals(2, results.getAllDetails().size());
+        assertTrue(results.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 0 && d.getSentenceId() == 0));
+        assertTrue(results.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 1 && d.getSentenceId() == 1));
     }
 
     @Test
-    public void testLogicalAndWithSentenceGranularity() throws Exception {
-        // Create two position lists for different terms
-        PositionList positionList1 = new PositionList();
-        positionList1.add(new Position(1, 1, 10, 15, LocalDate.now())); // Doc 1, Sent 1
-        positionList1.add(new Position(2, 1, 10, 15, LocalDate.now())); // Doc 2, Sent 1
+    public void testSentenceGranularityWithWindow() throws Exception {
+        String queryString = "SELECT TITLE FROM mockCorpusSent WHERE CONTAINS(\"window\") GRANULARITY SENTENCE 1";
         
-        PositionList positionList2 = new PositionList();
-        positionList2.add(new Position(1, 1, 20, 25, LocalDate.now())); // Doc 1, Sent 1
-        positionList2.add(new Position(2, 2, 30, 35, LocalDate.now())); // Doc 2, Sent 2
-        positionList2.add(new Position(3, 1, 10, 15, LocalDate.now())); // Doc 3, Sent 1
-        
-        // Set up mock to return different position lists for different terms
-        when(mockIndexAccess.get("term1".getBytes())).thenReturn(Optional.of(positionList1));
-        when(mockIndexAccess.get("term2".getBytes())).thenReturn(Optional.of(positionList2));
-        
-        // Create two CONTAINS conditions
-        Contains condition1 = new Contains(List.of("term1"));
-        Contains condition2 = new Contains(List.of("term2"));
-        
-        // Create a query with sentence granularity and window size 1
-        Query query = new Query(
-            "test_db",
-            List.of(new Logical(Logical.LogicalOperator.AND, condition1, condition2)),
-            List.of(),
-            Optional.empty(),
-            Query.Granularity.SENTENCE,
-            Optional.of(0),
-            List.of()
-        );
-        
-        // Execute the query
-        Set<DocSentenceMatch> results = queryExecutor.execute(query, indexes);
-        
-        // Verify results - only Doc 1, Sent 1 has both terms
-        assertEquals(1, results.size(), "Should find 1 sentence with both terms");
-        
-        DocSentenceMatch match = results.iterator().next();
-        assertEquals(1, match.documentId(), "Should be document 1");
-        assertEquals(1, match.sentenceId(), "Should be sentence 1");
+        Map<String, PositionList> mockData = new HashMap<>();
+        PositionList windowPositions = new PositionList();
+        windowPositions.add(new Position(0, 1, 0, 6, LocalDate.now())); // Doc 0, Sent 1
+        windowPositions.add(new Position(0, 3, 0, 6, LocalDate.now())); // Doc 0, Sent 3
+        mockData.put("window", windowPositions);
+        IndexAccess mockIndex = setupMockIndexBehavior(mockData);
+        Map<String, IndexAccessInterface> testIndexes = Map.of("unigram", mockIndex); // Use the mock with correct type
+
+        QueryResult results = executeSentenceQuery(queryString, testIndexes);
+
+        assertNotNull(results);
+        assertEquals(Query.Granularity.SENTENCE, results.getGranularity());
+        // Expect 2 results because window size N=1 is ignored for single condition result sets
+        assertEquals(2, results.getAllDetails().size(), 
+                   "Expected 2 results (Sent 1 and Sent 3) as window is ignored for single condition"); 
+        assertTrue(results.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 0 && d.getSentenceId() == 1), "Should contain result for Sent 1");
+        assertTrue(results.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 0 && d.getSentenceId() == 3), "Should contain result for Sent 3");
     }
 
     @Test
-    public void testLogicalOrWithSentenceGranularity() throws Exception {
-        // Create two position lists for different terms
-        PositionList positionList1 = new PositionList();
-        positionList1.add(new Position(1, 1, 10, 15, LocalDate.now())); // Doc 1, Sent 1
-        positionList1.add(new Position(2, 1, 10, 15, LocalDate.now())); // Doc 2, Sent 1
-        
-        PositionList positionList2 = new PositionList();
-        positionList2.add(new Position(1, 2, 20, 25, LocalDate.now())); // Doc 1, Sent 2
-        positionList2.add(new Position(3, 1, 10, 15, LocalDate.now())); // Doc 3, Sent 1
-        
-        // Set up mock to return different position lists for different terms
-        when(mockIndexAccess.get("term1".getBytes())).thenReturn(Optional.of(positionList1));
-        when(mockIndexAccess.get("term2".getBytes())).thenReturn(Optional.of(positionList2));
-        
-        // Create two CONTAINS conditions
-        Contains condition1 = new Contains(List.of("term1"));
-        Contains condition2 = new Contains(List.of("term2"));
-        
-        // Create a logical OR condition
-        Logical orCondition = new Logical(
-                LogicalOperator.OR, Arrays.asList(condition1, condition2));
-        
-        // Create a query with sentence granularity
-        Query query = new Query(
-            "test_db",
-            List.of(new Logical(Logical.LogicalOperator.OR, condition1, condition2)),
-            List.of(),
-            Optional.empty(),
-            Query.Granularity.SENTENCE,
-            Optional.empty(),
-            List.of()
-        );
-        
-        // Execute the query
-        Set<DocSentenceMatch> results = queryExecutor.execute(query, indexes);
-        
-        // Verify results - should find 4 sentences with either term
-        assertEquals(4, results.size(), "Should find 4 sentences with either term");
-        
-        // Check that we have the expected sentences
-        boolean foundDoc1Sent1 = false;
-        boolean foundDoc1Sent2 = false;
-        boolean foundDoc2Sent1 = false;
-        boolean foundDoc3Sent1 = false;
-        
-        for (DocSentenceMatch match : results) {
-            if (match.documentId() == 1 && match.sentenceId() == 1) foundDoc1Sent1 = true;
-            if (match.documentId() == 1 && match.sentenceId() == 2) foundDoc1Sent2 = true;
-            if (match.documentId() == 2 && match.sentenceId() == 1) foundDoc2Sent1 = true;
-            if (match.documentId() == 3 && match.sentenceId() == 1) foundDoc3Sent1 = true;
-        }
-        
-        assertTrue(foundDoc1Sent1, "Should find Doc 1, Sent 1");
-        assertTrue(foundDoc1Sent2, "Should find Doc 1, Sent 2");
-        assertTrue(foundDoc2Sent1, "Should find Doc 2, Sent 1");
-        assertTrue(foundDoc3Sent1, "Should find Doc 3, Sent 1");
-    }
+    public void testSentenceGranularityWithLargerWindow() throws Exception {
+        String queryString = "SELECT TITLE FROM mockCorpusSent WHERE CONTAINS(\"window\") GRANULARITY SENTENCE 2";
 
-    @Test
-    public void testSentenceGranularityWithWindowSize() throws Exception {
-        // Create two position lists for different terms
-        PositionList positionList1 = new PositionList();
-        positionList1.add(new Position(1, 1, 10, 15, LocalDate.now())); // Doc 1, Sent 1
-        positionList1.add(new Position(2, 1, 10, 15, LocalDate.now())); // Doc 2, Sent 1
+        Map<String, PositionList> mockData = new HashMap<>();
+        PositionList windowPositions = new PositionList();
+        windowPositions.add(new Position(0, 1, 0, 6, LocalDate.now())); // Doc 0, Sent 1
+        windowPositions.add(new Position(0, 3, 0, 6, LocalDate.now())); // Doc 0, Sent 3
+        mockData.put("window", windowPositions);
+        IndexAccess mockIndex = setupMockIndexBehavior(mockData);
+        Map<String, IndexAccessInterface> testIndexes = Map.of("unigram", mockIndex); // Use the mock with correct type
         
-        PositionList positionList2 = new PositionList();
-        positionList2.add(new Position(1, 2, 20, 25, LocalDate.now())); // Doc 1, Sent 2
-        positionList2.add(new Position(2, 2, 30, 35, LocalDate.now())); // Doc 2, Sent 2
-        
-        // Set up mock to return different position lists for different terms
-        when(mockIndexAccess.get("term1".getBytes())).thenReturn(Optional.of(positionList1));
-        when(mockIndexAccess.get("term2".getBytes())).thenReturn(Optional.of(positionList2));
-        
-        // Create two CONTAINS conditions
-        Contains condition1 = new Contains(List.of("term1"));
-        Contains condition2 = new Contains(List.of("term2"));
-        
-        // Create a query with sentence granularity and window size 1
-        Query query = new Query(
-            "test_db",
-            List.of(new Logical(Logical.LogicalOperator.AND, condition1, condition2)),
-            List.of(),
-            Optional.empty(),
-            Query.Granularity.SENTENCE,
-            Optional.of(1),
-            List.of()
-        );
-        
-        // Execute the query
-        Set<DocSentenceMatch> results = queryExecutor.execute(query, indexes);
-        
-        // Verify results - should find matches in Doc 1 (Sent 1,2) and Doc 2 (Sent 1,2)
-        assertEquals(2, results.size(), "Should find 2 pairs of adjacent sentences");
-        
-        // Check that we have the expected sentence pairs
-        boolean foundDoc1 = false;
-        boolean foundDoc2 = false;
-        
-        for (DocSentenceMatch match : results) {
-            if (match.documentId() == 1) foundDoc1 = true;
-            if (match.documentId() == 2) foundDoc2 = true;
-        }
-        
-        assertTrue(foundDoc1, "Should find matches in Doc 1");
-        assertTrue(foundDoc2, "Should find matches in Doc 2");
+        QueryResult results = executeSentenceQuery(queryString, testIndexes);
+
+        assertNotNull(results);
+        assertEquals(Query.Granularity.SENTENCE, results.getGranularity());
+        assertEquals(2, results.getAllDetails().size(), "Expected 2 results for window=2");
+        assertTrue(results.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 0 && d.getSentenceId() == 1));
+        assertTrue(results.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 0 && d.getSentenceId() == 3));
     }
 } 

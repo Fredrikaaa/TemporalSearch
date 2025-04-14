@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Validates the semantic correctness of a query using the new VariableRegistry system.
@@ -83,95 +84,132 @@ public class QuerySemanticValidator {
     
     /**
      * Validates the select columns, ensuring all column references are valid.
+     * Handles both unqualified variables (from the main query) and qualified variables
+     * (e.g., `alias.?var` from subqueries or the aliased main query).
      */
-    private void validateSelectColumns(Query query, VariableRegistry registry) throws QueryParseException {
+    private void validateSelectColumns(Query query, VariableRegistry mainRegistry) throws QueryParseException {
         if (query.selectColumns().isEmpty()) {
             throw new QueryParseException("Query must select at least one column");
         }
-        
-        Set<String> allVariables = registry.getAllVariableNames();
-        
+
+        // Create a map for quick lookup of subqueries by alias
+        Map<String, SubquerySpec> subqueryMap = query.subqueries().stream()
+                .collect(Collectors.toMap(SubquerySpec::alias, sq -> sq));
+
         for (SelectColumn column : query.selectColumns()) {
             if (column instanceof VariableColumn variableColumn) {
-                String variableName = variableColumn.getVariableName();
-                
-                // Ensure variable name is properly formatted with ? prefix
-                variableName = Variable.formatName(variableName);
-                
-                logger.debug("Validating SELECT variable: {} against registry variables: {}", 
-                             variableName, allVariables);
-                
-                if (!allVariables.contains(variableName)) {
-                    throw new QueryParseException(String.format(
-                        "Unbound variable in SELECT: %s. Variables must be bound in WHERE clause.",
-                        variableName
-                    ));
-                }
-                
-                // Check that the variable is produced
-                if (!registry.isProduced(variableName)) {
-                    throw new QueryParseException(String.format(
-                        "Variable %s in SELECT is consumed but not produced in any condition",
-                        variableName
-                    ));
-                }
-                
-            } else if (column instanceof SnippetColumn snippetColumn) {
-                validateSnippetNode(snippetColumn.getSnippetNode(), registry);
-            } else if (column instanceof CountColumn countColumn) {
-                // For COUNT(UNIQUE ?var), the variable must exist and be registered
-                String toString = countColumn.toString();
-                if (toString.startsWith("COUNT(UNIQUE")) {
-                    // Extract variable name from the toString representation
-                    int startIdx = toString.indexOf("?");
-                    int endIdx = toString.indexOf(")", startIdx);
-                    if (startIdx >= 0 && endIdx > startIdx) {
-                        String variable = toString.substring(startIdx, endIdx);
-                        
-                        // Check if variable is bound
-                        if (!registry.getAllVariableNames().contains(variable)) {
-                            throw new QueryParseException(String.format(
-                                "Unbound variable in COUNT: %s. Variables must be bound in WHERE clause.",
-                                variable
-                            ));
-                        }
-                        
-                        // Check if variable is produced
-                        if (!registry.isProduced(variable)) {
-                            throw new QueryParseException(String.format(
-                                "Variable %s in COUNT is consumed but not produced in any condition",
-                                variable
-                            ));
-                        }
+                String columnName = variableColumn.getColumnName(); // Might be "?var" or "alias.?var"
+
+                if (columnName.contains(".")) {
+                    // Qualified variable: alias.?var
+                    String[] parts = columnName.split("\\.", 2);
+                    if (parts.length != 2 || !parts[1].startsWith("?")) {
+                        throw new QueryParseException("Invalid qualified variable format in SELECT: " + columnName + ". Expected format: alias.?variable");
                     }
+                    String alias = parts[0];
+                    String variableName = parts[1]; // Includes '?' prefix
+
+                    logger.debug("Validating qualified SELECT variable: {} from alias {}", variableName, alias);
+
+                    // Check if the alias refers to the aliased main query
+                    if (query.mainAlias().isPresent() && query.mainAlias().get().equals(alias)) {
+                        validateVariableInRegistry(variableName, mainRegistry, "main query (aliased as " + alias + ")");
+                    } 
+                    // Check if the alias refers to a subquery
+                    else if (subqueryMap.containsKey(alias)) {
+                        SubquerySpec subquerySpec = subqueryMap.get(alias);
+                        VariableRegistry subqueryRegistry = subquerySpec.subquery().variableRegistry();
+                        validateVariableInRegistry(variableName, subqueryRegistry, "subquery '" + alias + "'");
+                    } else {
+                        throw new QueryParseException("Unknown alias '" + alias + "' in SELECT column: " + columnName);
+                    }
+
+                } else {
+                    // Unqualified variable: ?var - must belong to main query's scope
+                    String variableName = Variable.formatName(columnName); // Ensure '?' prefix
+                    logger.debug("Validating unqualified SELECT variable: {}", variableName);
+                    
+                    // Unqualified variables are validated against the main registry.
+                    // If a main alias exists, conceptually these variables come from the main query's context.
+                    validateVariableInRegistry(variableName, mainRegistry, "main query");
                 }
-            } else {
-                // Other column types (TITLE, TIMESTAMP) don't need special validation
+
+            } else if (column instanceof SnippetColumn snippetColumn) {
+                // Allow SNIPPET to reference qualified or unqualified variables
+                String fullVariableName = snippetColumn.getVariableName(); // Might be "?var" or "alias.?var"
+                
+                if (fullVariableName.contains(".")) {
+                     // Qualified variable: alias.?var
+                    String[] parts = fullVariableName.split("\\.", 2);
+                    if (parts.length != 2 || !parts[1].startsWith("?")) {
+                        throw new QueryParseException("Invalid qualified variable format in SNIPPET: " + fullVariableName + ". Expected format: alias.?variable");
+                    }
+                    String alias = parts[0];
+                    String variableName = parts[1]; // Includes '?' prefix
+
+                    logger.debug("Validating qualified SNIPPET variable: {} from alias {}", variableName, alias);
+
+                    // Check if the alias refers to the aliased main query
+                    if (query.mainAlias().isPresent() && query.mainAlias().get().equals(alias)) {
+                        validateVariableInRegistry(variableName, mainRegistry, "main query (aliased as " + alias + " for SNIPPET)");
+                    } 
+                    // Check if the alias refers to a subquery
+                    else if (subqueryMap.containsKey(alias)) {
+                        SubquerySpec subquerySpec = subqueryMap.get(alias);
+                        VariableRegistry subqueryRegistry = subquerySpec.subquery().variableRegistry();
+                        validateVariableInRegistry(variableName, subqueryRegistry, "subquery '" + alias + "' (for SNIPPET)");
+                    } else {
+                        throw new QueryParseException("Unknown alias '" + alias + "' in SNIPPET column: " + fullVariableName);
+                    }
+                    
+                } else {
+                    // Unqualified variable: ?var - must belong to main query's scope
+                    String variableName = Variable.formatName(fullVariableName); // Ensure '?' prefix
+                    logger.debug("Validating unqualified SNIPPET variable: {}", variableName);
+                    validateVariableInRegistry(variableName, mainRegistry, "main query (for SNIPPET)");
+                }
+            
+            } else if (column instanceof CountColumn countColumn) {
+                // COUNT(UNIQUE ?var) - variable must be unqualified and belong to the main query registry
+                // We need a way to get the variable name only if it's a COUNT(UNIQUE ?var)
+                String variableName = countColumn.getVariableNameForValidation(); 
+                if (variableName != null) { // Only validate if it's COUNT(UNIQUE ?var)
+                    logger.debug("Validating COUNT(UNIQUE) variable: {}", variableName);
+                    // Ensure '?' prefix before validation
+                    validateVariableInRegistry(Variable.formatName(variableName), mainRegistry, "main query (for COUNT)");
+                }
             }
+            // Other column types (TITLE, TIMESTAMP) don't need variable validation
         }
     }
     
     /**
-     * Validates a snippet node to ensure the variable is bound and window size is valid.
+     * Helper method to validate that a variable exists and is produced within a specific registry.
+     * 
+     * @param variableName The variable name (must start with '?')
+     * @param registry The VariableRegistry to check against
+     * @param contextDescription A description of the context (e.g., "main query", "subquery 'sq1'") for error messages
+     * @throws QueryParseException If the variable is not found or not produced
      */
-    private void validateSnippetNode(SnippetNode snippetNode, VariableRegistry registry) throws QueryParseException {
-        String variable = Variable.formatName(snippetNode.variable());
-        
-        // Check if variable is bound
-        if (!registry.getAllVariableNames().contains(variable)) {
+    private void validateVariableInRegistry(String variableName, VariableRegistry registry, String contextDescription) throws QueryParseException {
+        // Ensure variable name starts with '?' - defensive check, should be guaranteed by callers
+        if (!variableName.startsWith("?")) {
+             throw new IllegalArgumentException("Internal validation error: variableName must start with '?' but got: " + variableName);
+        }
+         
+        if (!registry.getAllVariableNames().contains(variableName)) {
             throw new QueryParseException(String.format(
-                "Unbound variable in SNIPPET: %s. Variables must be bound in WHERE clause.",
-                variable
+                "Unbound variable in SELECT: %s (referenced from %s). Variable not found in its scope.",
+                variableName, contextDescription
             ));
         }
-        
-        // Check if variable is produced and not just consumed
-        if (!registry.isProduced(variable)) {
+        if (!registry.isProduced(variableName)) {
             throw new QueryParseException(String.format(
-                "Variable %s in SNIPPET is consumed but not produced in any condition",
-                variable
+                "Variable %s in SELECT (referenced from %s) is consumed but not produced within its scope.",
+                variableName, contextDescription
             ));
         }
+        logger.debug("Variable {} successfully validated in registry for {}", variableName, contextDescription);
     }
     
     /**
@@ -180,8 +218,7 @@ public class QuerySemanticValidator {
     private void validateSnippetWindowSizes(Query query) throws QueryParseException {
         for (SelectColumn column : query.selectColumns()) {
             if (column instanceof SnippetColumn snippetColumn) {
-                SnippetNode snippetNode = snippetColumn.getSnippetNode();
-                int windowSize = snippetNode.windowSize();
+                int windowSize = snippetColumn.getWindowSize();
                 
                 if (windowSize > MAX_SNIPPET_WINDOW_SIZE) {
                     throw new QueryParseException(String.format(

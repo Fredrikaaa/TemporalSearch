@@ -89,7 +89,7 @@ public class IndexAccessTest {
         }
 
         // Write batch
-        WriteBatch batch = indexAccess.createBatch();
+        WriteBatch batch = indexAccess.createWriteBatch();
         try {
             for (Map.Entry<String, PositionList> entry : entries.entrySet()) {
                 batch.put(
@@ -97,7 +97,7 @@ public class IndexAccessTest {
                     entry.getValue().serialize()
                 );
             }
-            indexAccess.writeBatch(batch);
+            indexAccess.write(batch);
         } finally {
             batch.close();
         }
@@ -170,7 +170,7 @@ public class IndexAccessTest {
         assertThrows(IndexAccessException.class, () -> 
             indexAccess.get("test".getBytes()));
         assertThrows(IndexAccessException.class, () -> 
-            indexAccess.writeBatch(indexAccess.createBatch()));
+            indexAccess.write(indexAccess.createWriteBatch()));
         assertThrows(IndexAccessException.class, () -> 
             indexAccess.iterator());
     }

@@ -33,7 +33,8 @@ public record Query(
     List<SelectColumn> selectColumns,
     VariableRegistry variableRegistry,
     List<SubquerySpec> subqueries,
-    Optional<JoinCondition> joinCondition
+    Optional<JoinCondition> joinCondition,
+    Optional<String> mainAlias
 ) {
     public enum Granularity {
         DOCUMENT,
@@ -54,6 +55,7 @@ public record Query(
         Objects.requireNonNull(variableRegistry, "Variable registry cannot be null");
         Objects.requireNonNull(subqueries, "Subqueries cannot be null");
         Objects.requireNonNull(joinCondition, "Join condition cannot be null");
+        Objects.requireNonNull(mainAlias, "Main alias cannot be null");
 
         // Make defensive copies
         conditions = List.copyOf(conditions);
@@ -66,21 +68,21 @@ public record Query(
      * Creates a query with just a source.
      */
     public Query(String source) {
-        this(source, List.of(), List.of(), Optional.empty(), Granularity.DOCUMENT, Optional.empty(), List.of(), new VariableRegistry(), List.of(), Optional.empty());
+        this(source, List.of(), List.of(), Optional.empty(), Granularity.DOCUMENT, Optional.empty(), List.of(), new VariableRegistry(), List.of(), Optional.empty(), Optional.empty());
     }
 
     /**
      * Creates a query with source and conditions.
      */
     public Query(String source, List<Condition> conditions) {
-        this(source, conditions, List.of(), Optional.empty(), Granularity.DOCUMENT, Optional.empty(), List.of(), new VariableRegistry(), List.of(), Optional.empty());
+        this(source, conditions, List.of(), Optional.empty(), Granularity.DOCUMENT, Optional.empty(), List.of(), new VariableRegistry(), List.of(), Optional.empty(), Optional.empty());
     }
 
     /**
      * Creates a query with source, conditions, and granularity.
      */
     public Query(String source, List<Condition> conditions, Granularity granularity) {
-        this(source, conditions, List.of(), Optional.empty(), granularity, Optional.empty(), List.of(), new VariableRegistry(), List.of(), Optional.empty());
+        this(source, conditions, List.of(), Optional.empty(), granularity, Optional.empty(), List.of(), new VariableRegistry(), List.of(), Optional.empty(), Optional.empty());
     }
 
     /**
@@ -95,7 +97,7 @@ public record Query(
         Optional<Integer> granularitySize,
         List<SelectColumn> selectColumns
     ) {
-        this(source, conditions, orderBy, limit, granularity, granularitySize, selectColumns, new VariableRegistry(), List.of(), Optional.empty());
+        this(source, conditions, orderBy, limit, granularity, granularitySize, selectColumns, new VariableRegistry(), List.of(), Optional.empty(), Optional.empty());
     }
 
     /**
@@ -111,7 +113,7 @@ public record Query(
         List<SelectColumn> selectColumns,
         VariableRegistry variableRegistry
     ) {
-        this(source, conditions, orderBy, limit, granularity, granularitySize, selectColumns, variableRegistry, List.of(), Optional.empty());
+        this(source, conditions, orderBy, limit, granularity, granularitySize, selectColumns, variableRegistry, List.of(), Optional.empty(), Optional.empty());
     }
 
     /**
@@ -187,6 +189,7 @@ public record Query(
     public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append("FROM ").append(source);
+        mainAlias.ifPresent(alias -> sb.append(" AS ").append(alias));
         
         if (!selectColumns.isEmpty()) {
             sb.append(" SELECT ");

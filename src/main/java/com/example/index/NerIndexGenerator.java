@@ -8,6 +8,7 @@ import com.example.logging.ProgressTracker;
 import com.example.core.Position;
 import com.example.core.PositionList;
 import com.example.core.IndexAccess;
+import com.example.core.IndexAccessInterface;
 
 import java.io.IOException;
 import java.sql.Connection;
@@ -115,7 +116,7 @@ public final class NerIndexGenerator extends IndexGenerator<AnnotationEntry> {
             
             if (isContinuation) {
                 // Continue the current entity
-                currentEntityText.append(" ").append(token);
+                currentEntityText.append(" ").append(token); 
                 entityEndChar = endChar;
             } else {
                 // Finalize the previous entity if it exists
@@ -159,8 +160,9 @@ public final class NerIndexGenerator extends IndexGenerator<AnnotationEntry> {
     private void addEntityToIndex(Map<String, PositionList> positionLists, String entityType, 
                                  String entityText, int docId, int sentenceId, 
                                  int beginChar, int endChar, LocalDate timestamp) {
-        // Create composite key with format "entityType\0entityText"
-        String compositeKey = entityType + IndexAccess.NGRAM_DELIMITER + entityText;
+        // Create composite key with format "ENTITY_TYPE\0entityText"
+        // Ensure entityType is uppercase to match NerExecutor expectations
+        String compositeKey = entityType.toUpperCase() + IndexAccessInterface.DELIMITER + entityText;
         
         Position position = new Position(
             docId, 

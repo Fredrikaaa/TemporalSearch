@@ -12,6 +12,8 @@ import com.example.query.model.condition.Temporal;
 import com.example.query.model.SubquerySpec;
 import com.example.query.model.JoinCondition;
 import com.example.query.model.TemporalPredicate;
+import com.example.query.model.SelectColumn;
+import com.example.query.model.VariableColumn;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +25,7 @@ import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -103,7 +106,7 @@ class QueryParserTest {
     }
 
     @Test
-    @DisplayName("Parse query with date comparison")
+    @DisplayName("Parse query with date comparison <")
     void parseDateComparison() throws QueryParseException {
         String queryStr = "SELECT ?date FROM wikipedia WHERE DATE(< 2000) AS ?date";
         Query query = parser.parse(queryStr);
@@ -111,26 +114,28 @@ class QueryParserTest {
         assertTrue(query.conditions().get(0) instanceof Temporal);
         Temporal condition = (Temporal) query.conditions().get(0);
         
-        assertEquals(TemporalPredicate.BEFORE, condition.temporalType());
-        assertEquals(
-            LocalDateTime.of(2000, 1, 1, 0, 0),
-            condition.startDate()
-        );
+        // Verify the predicate is INTERSECT and the range is correct for < 2000
+        assertEquals(TemporalPredicate.INTERSECT, condition.temporalType());
+        assertEquals(LocalDateTime.MIN, condition.startDate());
+        assertEquals(Optional.of(LocalDateTime.of(1999, 12, 31, 23, 59, 59)), condition.endDate());
         assertTrue(condition.variable().isPresent());
         assertEquals("?date", condition.variable().get());
     }
 
     @Test
-    @DisplayName("Parse query with date NEAR range")
-    void parseDateNearRange() throws QueryParseException {
+    @DisplayName("Parse query with date comparison >")
+    void parseDateNearRange() throws QueryParseException { // Renaming might be good later
         String queryStr = "SELECT ?founding FROM wikipedia WHERE DATE(> 1980) AS ?founding";
         Query query = parser.parse(queryStr);
 
         Temporal condition = (Temporal) query.conditions().get(0);
-        assertEquals(TemporalPredicate.AFTER, condition.temporalType());
+        
+        // Verify the predicate is INTERSECT and the range is correct for > 1980
+        assertEquals(TemporalPredicate.INTERSECT, condition.temporalType());
+        assertEquals(LocalDateTime.of(1981, 1, 1, 0, 0), condition.startDate());
+        assertEquals(Optional.of(LocalDateTime.MAX), condition.endDate());
         assertTrue(condition.variable().isPresent());
         assertEquals("?founding", condition.variable().get());
-        assertEquals(LocalDateTime.of(1980, 1, 1, 0, 0), condition.startDate());
     }
 
     @Test
@@ -369,5 +374,30 @@ class QueryParserTest {
         assertEquals("?person", joinCondition.leftColumn());
         assertEquals("?org", joinCondition.rightColumn());
         assertEquals(TemporalPredicate.INTERSECT, joinCondition.temporalPredicate());
+    }
+
+    @Test
+    @DisplayName("Parse query selecting qualified identifier - now simple variable")
+    void parseSelectQualifiedIdentifier() throws QueryParseException {
+        String queryStr = "SELECT ?a FROM wikipedia WHERE NER(PERSON) AS ?a";
+        Query query = parser.parse(queryStr);
+
+        assertEquals("wikipedia", query.source());
+        assertEquals(1, query.selectColumns().size());
+        assertEquals(1, query.conditions().size());
+
+        // Verify Select List
+        SelectColumn selectedColumn = query.selectColumns().get(0);
+        assertTrue(selectedColumn instanceof VariableColumn, "Selected column should be a VariableColumn");
+        VariableColumn varCol = (VariableColumn) selectedColumn;
+        assertEquals("?a", varCol.getColumnName(), "Selected variable name should be simple");
+
+        // Verify Condition (sanity check)
+        Condition condition = query.conditions().get(0);
+        assertTrue(condition instanceof Ner, "Condition should be NER");
+        Ner nerCondition = (Ner) condition;
+        assertEquals("PERSON", nerCondition.entityType());
+        assertEquals("?a", nerCondition.variableName());
+        assertTrue(nerCondition.isVariable());
     }
 } 

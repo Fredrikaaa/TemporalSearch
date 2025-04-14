@@ -1,22 +1,25 @@
 package com.example.query.executor;
 
-import com.example.core.IndexAccess;
+import com.example.core.IndexAccessInterface;
 import com.example.core.Position;
 import com.example.core.PositionList;
-import com.example.query.model.DocSentenceMatch;
+import com.example.core.IndexAccessException;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Contains;
-import com.example.query.binding.BindingContext;
+import com.example.query.binding.MatchDetail;
+import com.example.query.binding.ValueType;
+import com.example.query.executor.QueryResult;
+import org.iq80.leveldb.DBIterator;
 
-import java.util.Objects;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,7 +27,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Executor for CONTAINS conditions.
  * Handles n-gram pattern matching and variable binding.
- * 
+ * Returns QueryResult containing MatchDetail objects.
+ *
  * @see com.example.query.model.condition.Contains
  */
 public final class ContainsExecutor implements ConditionExecutor<Contains> {
@@ -33,7 +37,7 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
     private static final String UNIGRAM_INDEX = "unigram";
     private static final String BIGRAM_INDEX = "bigram";
     private static final String TRIGRAM_INDEX = "trigram";
-    private static final char DELIMITER = IndexAccess.NGRAM_DELIMITER;
+    private static final char DELIMITER = IndexAccessInterface.DELIMITER;
 
     /**
      * Creates a new ContainsExecutor.
@@ -43,13 +47,14 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
     }
 
     @Override
-    public Set<DocSentenceMatch> execute(Contains condition, Map<String, IndexAccess> indexes,
-                               BindingContext bindingContext, Query.Granularity granularity,
-                               int granularitySize) 
+    public QueryResult execute(Contains condition, Map<String, IndexAccessInterface> indexes,
+                               Query.Granularity granularity,
+                               int granularitySize,
+                               String corpusName)
         throws QueryExecutionException {
         
-        logger.debug("Executing CONTAINS condition with {} terms at {} granularity with size {}", 
-                condition.terms().size(), granularity, granularitySize);
+        logger.debug("Executing CONTAINS condition with {} terms at {} granularity with size {} (corpus: {})", 
+                condition.terms().size(), granularity, granularitySize, corpusName);
         
         // Validate required indexes
         if (!indexes.containsKey(UNIGRAM_INDEX)) {
@@ -60,12 +65,13 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
             );
         }
         
-        Set<DocSentenceMatch> matches = new HashSet<>();
+        List<MatchDetail> allDetails = new ArrayList<>();
         
         List<String> terms = condition.terms();
         if (terms.isEmpty()) {
-            logger.warn("CONTAINS condition has no terms, returning empty result set");
-            return matches;
+            logger.warn("CONTAINS condition has no terms, returning empty result");
+            // Return empty QueryResult
+            return new QueryResult(granularity, granularitySize, Collections.emptyList());
         }
         
         // Check if there are too many terms
@@ -82,7 +88,7 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
         String variableName = condition.variableName();
         
         // Get the appropriate ngram index based on the size of the terms
-        IndexAccess index = null;
+        IndexAccessInterface index = null;
         if (terms.size() == 1) {
             index = indexes.get(UNIGRAM_INDEX);
         } else if (terms.size() == 2) {
@@ -92,10 +98,13 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
         }
         
         if (index == null) {
+            // Log which specific index was missing
+            String missingIndex = terms.size() == 1 ? UNIGRAM_INDEX : (terms.size() == 2 ? BIGRAM_INDEX : TRIGRAM_INDEX);
+            logger.error("Required {}-gram index ('{}') not found in provided indexes: {}", terms.size(), missingIndex, indexes.keySet());
             throw new QueryExecutionException(
-                "No index found for " + terms.size() + "-gram terms. Available indexes: " + indexes.keySet(),
+                "Required "+ missingIndex +" index not found for " + terms.size() + "-gram terms.",
                 "CONTAINS(" + String.join(", ", terms) + ")",
-                QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR
+                QueryExecutionException.ErrorType.MISSING_INDEX
             );
         }
         
@@ -103,19 +112,31 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
             // Construct search patterns based on the terms
             Set<String> patterns = constructSearchPatterns(terms);
             
-            // Execute search for each pattern and union the results
+            // Execute search for each pattern and collect MatchDetail results
             for (String pattern : patterns) {
-                Set<DocSentenceMatch> patternMatches = executePatternSearch(
-                    pattern, isVariable, variableName, index, bindingContext, granularity);
+                List<MatchDetail> patternDetails = executePatternSearch(
+                    pattern, isVariable, variableName, index, granularity, condition);
                 
-                if (!patternMatches.isEmpty()) {
-                    matches.addAll(patternMatches);
+                if (!patternDetails.isEmpty()) {
+                    allDetails.addAll(patternDetails);
                 }
             }
             
-            logger.debug("Found {} matches for terms: {}", matches.size(), terms);
-            return matches;
+            logger.debug("Found {} total details for terms: {}. Returning QueryResult.", 
+                    allDetails.size(), terms);
+            
+            // Create and return QueryResult directly from collected details
+            QueryResult finalResult = new QueryResult(granularity, granularitySize, allDetails);
+            
+            logger.debug("CONTAINS execution complete with {} MatchDetail objects in QueryResult.", 
+                         finalResult.getAllDetails().size());
+            return finalResult;
         } catch (Exception e) {
+            // Rethrow specific exceptions, wrap others
+            if (e instanceof QueryExecutionException qee) throw qee;
+            if (e instanceof IndexAccessException iae) {
+                 throw new QueryExecutionException("Index access error during CONTAINS", iae, condition.toString(), QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR);
+            }
             throw new QueryExecutionException(
                 "Error executing CONTAINS condition: " + e.getMessage(),
                 e,
@@ -201,160 +222,129 @@ public final class ContainsExecutor implements ConditionExecutor<Contains> {
     }
     
     /**
-     * Executes a search for a specific pattern.
+     * Executes a search for a specific pattern, returning MatchDetail objects.
      *
      * @param pattern The pattern to search for
-     * @param isVariable Whether this is a variable binding
-     * @param variableName The variable name (if isVariable is true)
+     * @param isVariable Whether this corresponds to a variable in the original condition
+     * @param variableName The original variable name (if isVariable is true)
      * @param index The index to search in
-     * @param bindingContext The binding context to update
-     * @param granularity The granularity of the search
-     * @return Set of matches at the specified granularity level
+     * @param granularity The query granularity (for logging)
+     * @param condition The condition object (used for ID)
+     * @return List of MatchDetail objects found for the pattern
      */
-    private Set<DocSentenceMatch> executePatternSearch(String pattern, boolean isVariable, String variableName,
-                                        IndexAccess index, BindingContext bindingContext, 
-                                        Query.Granularity granularity)
-        throws QueryExecutionException {
+    private List<MatchDetail> executePatternSearch(String pattern, boolean isVariable, String variableName,
+                                        IndexAccessInterface index, Query.Granularity granularity,
+                                        Contains condition)
+        throws QueryExecutionException, IndexAccessException {
         
-        // Skip empty patterns
+        List<MatchDetail> details = new ArrayList<>();
+        
         if (pattern == null || pattern.trim().isEmpty()) {
             logger.warn("Skipping empty pattern in CONTAINS condition");
-            return new HashSet<>();
+            return details;
         }
         
-        // Check if pattern contains wildcards
         if (pattern.contains("*")) {
-            // For now, we'll just log a warning and return empty results
-            // In a full implementation, we'd need to scan the index for matching patterns
-            logger.warn("Wildcard patterns are not fully implemented yet: {}", pattern);
-            return new HashSet<>();
-        }
-        
-        // Normalize pattern to lowercase
-        String normalizedPattern = pattern.toLowerCase();
-        logger.info("Searching for pattern '{}' in index type {}", normalizedPattern, index.getIndexType());
-        
-        try {
-            // Convert to bytes
-            byte[] patternBytes = normalizedPattern.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            logger.info("Pattern as bytes: {}", java.util.Arrays.toString(patternBytes));
-            
-            // Search the index
-            Optional<PositionList> positionsOpt = index.get(patternBytes);
-                
-            if (!positionsOpt.isPresent()) {
-                // Pattern not found in any documents
-                logger.info("Pattern '{}' not found in any documents", normalizedPattern);
-                return new HashSet<>();
-            }
-                
-            PositionList positionList = positionsOpt.get();
-            Set<DocSentenceMatch> matches = new HashSet<>();
-            
-            // Process positions based on granularity
-            if (granularity == Query.Granularity.DOCUMENT) {
-                Map<Integer, DocSentenceMatch> documentMatches = new HashMap<>();
-                
-                for (Position position : positionList.getPositions()) {
-                    int docId = position.getDocumentId();
-                    DocSentenceMatch match = documentMatches.computeIfAbsent(docId, 
-                        id -> new DocSentenceMatch(id));
-                    
-                    // Add the position to the match
-                    match.addPosition(isVariable ? variableName : "match", position);
-                    
-                    // Bind variable if this is a variable binding
-                    if (isVariable) {
-                        bindVariable(variableName, normalizedPattern, position, bindingContext);
-                    }
-                }
-                
-                matches.addAll(documentMatches.values());
+            // Basic wildcard handling (prefix only for now)
+            if (pattern.endsWith("*")) {
+                String prefix = pattern.substring(0, pattern.length() - 1).toLowerCase();
+                logger.debug("Searching for prefix pattern '{}' in index type {}", prefix, index.getIndexType());
+                return executePrefixSearch(prefix, isVariable, variableName, index, condition);
             } else {
-                Map<SentenceKey, DocSentenceMatch> sentenceMatches = new HashMap<>();
+                 logger.warn("Wildcard patterns ('{}') other than suffix ('*') are not implemented yet.", pattern);
+                return details;
+            }
+        }
+        
+        String normalizedPattern = pattern.toLowerCase();
+        logger.debug("Searching for exact pattern '{}' in index type {} at {} granularity",
+                    normalizedPattern, index.getIndexType(), granularity);
+        
+        byte[] patternBytes = normalizedPattern.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Optional<PositionList> positionsOpt = index.get(patternBytes);
+        
+        if (!positionsOpt.isPresent()) {
+            logger.debug("Pattern '{}' not found in any documents", normalizedPattern);
+            return details;
+        }
+        
+        PositionList positionList = positionsOpt.get();
+        String condId = String.valueOf(condition.hashCode());
+        
+        // Reconstruct the human-readable value (space-separated)
+        String valueString = reconstructValue(pattern, DELIMITER);
+
+        for (Position position : positionList.getPositions()) {
+            // Use 5-arg constructor for non-join results
+            MatchDetail detail = new MatchDetail(
+                valueString, // Always use the reconstructed value with spaces
+                ValueType.TERM,
+                position,
+                condId,
+                isVariable ? variableName : null // Bind variable if needed
+            );
+            details.add(detail);
+        }
+        
+        logger.trace("Found {} details for pattern '{}' with conditionId {}", 
+                     details.size(), normalizedPattern, condId);
+        return details;
+    }
+    
+    // Added method for prefix search to handle suffix wildcard
+    private List<MatchDetail> executePrefixSearch(String prefix, boolean isVariable, String variableName,
+                                        IndexAccessInterface index, Contains condition)
+        throws QueryExecutionException, IndexAccessException {
+            
+        List<MatchDetail> details = new ArrayList<>();
+        byte[] prefixBytes = prefix.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String condId = String.valueOf(condition.hashCode());
+        
+        try (DBIterator iterator = index.iterator()) {
+            iterator.seek(prefixBytes);
+            while (iterator.hasNext()) {
+                Map.Entry<byte[], byte[]> entry = iterator.next();
+                String key = new String(entry.getKey(), java.nio.charset.StandardCharsets.UTF_8);
                 
-                for (Position position : positionList.getPositions()) {
-                    int docId = position.getDocumentId();
-                    int sentId = position.getSentenceId();
-                    
-                    SentenceKey key = new SentenceKey(docId, sentId);
-                    DocSentenceMatch match = sentenceMatches.computeIfAbsent(key, 
-                        k -> new DocSentenceMatch(docId, sentId));
-                    
-                    // Add the position to the match
-                    match.addPosition(isVariable ? variableName : "match", position);
-                    
-                    // Bind variable if this is a variable binding
-                    if (isVariable) {
-                        bindVariable(variableName, normalizedPattern, position, bindingContext);
-                    }
+                if (!key.startsWith(prefix)) {
+                    break; // Moved past relevant keys
                 }
                 
-                matches.addAll(sentenceMatches.values());
-            }
-            
-            return matches;
-        } catch (Exception e) {
-            throw new QueryExecutionException(
-                "Error searching for pattern: " + e.getMessage(),
-                e,
-                "CONTAINS(" + pattern + ")",
-                QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR
-            );
-        }
-    }
-    
-    /**
-     * Binds a variable for a text span.
-     *
-     * @param variableName The variable name
-     * @param term The matched term
-     * @param position The position of the match
-     * @param bindingContext The binding context to update
-     */
-    private void bindVariable(String variableName, String term, Position position, 
-                             BindingContext bindingContext) {
-        if (variableName == null) {
-            return;
-        }
-        
-        // Make sure variable name has ? prefix
-        String formattedVarName = variableName.startsWith("?") ? variableName : "?" + variableName;
-        
-        // Create a text span value
-        TextSpan span = new TextSpan(term, position.getBeginPosition(), position.getEndPosition());
-        
-        // Add to binding context
-        bindingContext.bindValue(formattedVarName, span);
-    }
-    
-    /**
-     * Represents a text span with position information.
-     * This is used as the value type for variable bindings.
-     */
-    public record TextSpan(String text, int beginPosition, int endPosition) {
-        @Override
-        public String toString() {
-            return String.format("%s@%d:%d", text, beginPosition, endPosition);
-        }
-    }
-    
-    /**
-     * Helper record for sentence identification.
-     * This is a duplicate of the one in ConditionExecutor to maintain compatibility.
-     */
-    record SentenceKey(int documentId, int sentenceId) {
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            SentenceKey that = (SentenceKey) o;
-            return documentId == that.documentId && sentenceId == that.sentenceId;
-        }
+                PositionList positionList = PositionList.deserialize(entry.getValue());
+                
+                // Reconstruct the human-readable value (space-separated)
+                String valueString = reconstructValue(key, DELIMITER);
 
-        @Override
-        public int hashCode() {
-            return Objects.hash(documentId, sentenceId);
+                for (Position position : positionList.getPositions()) {
+                    // Use 5-arg constructor for non-join results
+                    MatchDetail detail = new MatchDetail(
+                        valueString, // Always use the reconstructed value with spaces
+                        ValueType.TERM,
+                        position,
+                        condId,
+                        isVariable ? variableName : null // Bind variable
+                    );
+                    details.add(detail);
+                }
+            }
+        } catch (IOException e) {
+             throw new QueryExecutionException("IO error during prefix search for CONTAINS", e, condition.toString(), QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR);
+        } catch (RuntimeException e) { // Catch deserialization errors
+             throw new QueryExecutionException("Deserialization error during prefix search for CONTAINS", e, condition.toString(), QueryExecutionException.ErrorType.INTERNAL_ERROR);
         }
+        logger.trace("Found {} details for prefix '{}' with conditionId {}", 
+                     details.size(), prefix, condId);
+        return details;
+    }
+
+    /**
+     * Reconstructs the space-separated value from the index key.
+     * Replaces NGRAM_DELIMITER with a space.
+     */
+    private String reconstructValue(String key, char delimiter) {
+        // Split by the delimiter and join with space
+        // Need to handle the delimiter carefully if it's a regex special char
+        String[] parts = key.split(String.valueOf(delimiter));
+        return String.join(" ", parts);
     }
 } 

@@ -1,14 +1,19 @@
 package com.example.query.model;
 
-import com.example.core.IndexAccess;
-import com.example.query.binding.BindingContext;
+import com.example.core.IndexAccessInterface;
+import com.example.query.binding.MatchDetail;
+import tech.tablesaw.api.ColumnType;
 import tech.tablesaw.api.IntColumn;
 import tech.tablesaw.api.StringColumn;
 import tech.tablesaw.api.Table;
 import tech.tablesaw.columns.Column;
+import tech.tablesaw.aggregate.AggregateFunctions;
 import tech.tablesaw.selection.Selection;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -17,6 +22,8 @@ import java.util.Set;
  * This column performs counting operations using Tablesaw's built-in aggregation features.
  */
 public class CountColumn implements SelectColumn {
+    private static final Logger logger = LoggerFactory.getLogger(CountColumn.class);
+
     public enum CountType {
         ALL,       // COUNT(*)
         UNIQUE,    // COUNT(UNIQUE ?var)
@@ -26,6 +33,7 @@ public class CountColumn implements SelectColumn {
     private final CountType type;
     private final String variable;
     private final String columnName;
+    private final ColumnType columnType = ColumnType.INTEGER;
     
     /**
      * Creates a COUNT(*) column.
@@ -37,10 +45,11 @@ public class CountColumn implements SelectColumn {
     /**
      * Creates a COUNT(UNIQUE ?var) column.
      *
-     * @param variable The variable to count unique values of
+     * @param variable The variable to count unique values of (should include ? prefix)
      */
     public static CountColumn countUnique(String variable) {
-        return new CountColumn(CountType.UNIQUE, variable, "count_" + variable);
+        String colName = "count_" + (variable.startsWith("?") ? variable.substring(1) : variable);
+        return new CountColumn(CountType.UNIQUE, variable, colName);
     }
     
     /**
@@ -52,15 +61,23 @@ public class CountColumn implements SelectColumn {
     
     /**
      * Creates a new count column.
-     * 
+     *
      * @param type The type of count operation
-     * @param variable The variable to count (for UNIQUE counts)
+     * @param variable The variable to count (for UNIQUE counts, with ? prefix)
      * @param columnName The name for the column in the result table
      */
     private CountColumn(CountType type, String variable, String columnName) {
         this.type = type;
         this.variable = variable;
         this.columnName = columnName;
+    }
+    
+    /**
+     * Returns the variable name (with '?') if this is a COUNT(UNIQUE ?var) column,
+     * otherwise returns null. Used for validation purposes.
+     */
+    public String getVariableNameForValidation() {
+        return (type == CountType.UNIQUE) ? variable : null;
     }
     
     @Override
@@ -70,109 +87,69 @@ public class CountColumn implements SelectColumn {
     
     @Override
     public Column<?> createColumn() {
-        return IntColumn.create(getColumnName());
+        return IntColumn.create(columnName);
     }
     
     @Override
-    public void populateColumn(Table table, int rowIndex, DocSentenceMatch match, 
-                              BindingContext bindingContext, Map<String, IndexAccess> indexes) {
-        IntColumn column = (IntColumn) table.column(getColumnName());
-        
-        switch (type) {
-            case ALL -> column.set(rowIndex, 1); // Will be summed later if grouping is needed
-            case DOCUMENTS -> {
-                // For document counts, we'll set 1 if this is the first occurrence of the document
-                String docId = String.valueOf(match.documentId());
-                boolean isFirstOccurrence = table.column("document_id").asStringColumn()
-                    .indexOf(docId) == rowIndex;
-                column.set(rowIndex, isFirstOccurrence ? 1 : 0);
-            }
-            case UNIQUE -> {
-                if (variable != null && bindingContext.hasValue(variable)) {
-                    // For unique counting, we'll do a post-processing step after all rows are populated
-                    // For now, just set a placeholder
-                    column.set(rowIndex, 1);
-                } else {
-                    column.set(rowIndex, 0);
-                }
-            }
-        }
+    public void populateColumn(Table table, int rowIndex, List<MatchDetail> detailsForUnit, 
+                               String source,
+                               Map<String, IndexAccessInterface> indexes) {
+        // COUNT columns are handled by a separate aggregation step after initial table population.
+        // This method doesn't need to do anything during the row-by-row population phase.
+        logger.trace("populateColumn called for CountColumn '{}', row {}. No direct population needed.", columnName, rowIndex);
     }
     
     /**
-     * Performs post-processing on the table to compute accurate counts.
-     * This is called after all rows have been populated.
+     * Applies count aggregations to a table.
+     * Assumes the table is already populated with individual match details.
+     * Groups by all columns *except* the COUNT column(s) and calculates counts.
      *
-     * @param table The result table
-     * @return The table with count columns properly aggregated
+     * @param inputTable The table populated with raw match details.
+     * @return A new table with aggregated counts.
      */
-    public static Table applyCountAggregations(Table table) {
-        // For simple counts, sum the count column
-        if (table.containsColumn("count")) {
-            int total = (int) table.intColumn("count").sum();
-            
-            // If we have only one row, update the count directly
-            if (table.rowCount() == 1) {
-                table.intColumn("count").set(0, total);
-            } 
-            // Otherwise create a summarized table with just the count
-            else if (table.rowCount() > 1) {
-                Table countTable = Table.create("CountResult");
-                countTable.addColumns(IntColumn.create("count", new int[]{total}));
-                return countTable;
-            }
+    public static Table applyCountAggregations(Table inputTable) {
+        List<String> countColumns = inputTable.columns().stream()
+            .filter(col -> col.type() == ColumnType.INTEGER && col.name().toUpperCase().startsWith("COUNT("))
+            .map(Column::name)
+            .toList();
+
+        if (countColumns.isEmpty()) {
+            logger.debug("No COUNT columns found, returning original table.");
+            return inputTable;
         }
-        
-        // For document counts, count distinct document IDs
-        if (table.containsColumn("document_count") && table.containsColumn("document_id")) {
-            // Get unique document IDs using a Set
-            StringColumn docIdColumn = table.stringColumn("document_id");
-            Set<String> uniqueDocIds = new HashSet<>();
-            for (String docId : docIdColumn) {
-                uniqueDocIds.add(docId);
-            }
-            int docCount = uniqueDocIds.size();
-            
-            // If we have only one row, update the count directly
-            if (table.rowCount() == 1) {
-                table.intColumn("document_count").set(0, docCount);
-            } 
-            // Otherwise create a summarized table with just the count
-            else if (table.rowCount() > 1) {
-                Table countTable = Table.create("CountResult");
-                countTable.addColumns(IntColumn.create("document_count", new int[]{docCount}));
-                return countTable;
-            }
+
+        List<String> groupColumns = inputTable.columns().stream()
+            .map(Column::name)
+            .filter(name -> countColumns.stream().noneMatch(countCol -> countCol.equalsIgnoreCase(name)))
+            .toList();
+
+        if (groupColumns.isEmpty()) {
+            logger.warn("Cannot perform COUNT aggregation without non-count columns to group by.");
+            // Or should we return a single row with the total count?
+            // Let's return original for now.
+            return inputTable;
         }
+
+        logger.debug("Applying COUNT aggregation, grouping by: {}, counting: {}", groupColumns, countColumns);
+
+        // Use Tablesaw built-in count aggregation function
+        Table aggregatedTable = inputTable.summarize(countColumns.get(0), AggregateFunctions.count).by(groupColumns.toArray(String[]::new));
         
-        // For unique variable counts
-        for (String colName : table.columnNames()) {
-            if (colName.startsWith("count_")) {
-                String varColumn = colName.substring(6); // Remove "count_" prefix
-                if (table.containsColumn(varColumn)) {
-                    // Count unique values manually to avoid type issues
-                    Set<Object> uniqueValues = new HashSet<>();
-                    Column<?> column = table.column(varColumn);
-                    for (int i = 0; i < column.size(); i++) {
-                        uniqueValues.add(column.get(i));
-                    }
-                    int uniqueCount = uniqueValues.size();
-                    
-                    // If we have only one row, update the count directly
-                    if (table.rowCount() == 1) {
-                        table.intColumn(colName).set(0, uniqueCount);
-                    } 
-                    // Otherwise create a summarized table with just the count
-                    else if (table.rowCount() > 1) {
-                        Table countTable = Table.create("CountResult");
-                        countTable.addColumns(IntColumn.create(colName, new int[]{uniqueCount}));
-                        return countTable;
-                    }
-                }
-            }
+        // Rename the default "Count [col]" column to the original COUNT column name
+        if (aggregatedTable.columnNames().contains("Count [" + countColumns.get(0) + "]")) {
+            aggregatedTable.column("Count [" + countColumns.get(0) + "]").setName(countColumns.get(0));
         }
-        
-        return table;
+
+        // Handle multiple COUNT columns if necessary (though usually just one)
+        // The basic summarize might only handle one aggregate column well.
+        // If multiple count columns were present, they might need separate aggregations
+        // or a different approach.
+        if (countColumns.size() > 1) {
+            logger.warn("Handling multiple COUNT columns ({}) with basic aggregation. Results might be unexpected.", countColumns);
+        }
+
+        logger.debug("Aggregation complete, resulting table has {} rows.", aggregatedTable.rowCount());
+        return aggregatedTable;
     }
     
     @Override

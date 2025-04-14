@@ -1,247 +1,174 @@
 package com.example.query.executor;
 
-import com.example.core.IndexAccess;
-import com.example.query.model.DocSentenceMatch;
+import com.example.core.IndexAccessInterface;
+import com.example.core.Position;
+import com.example.core.PositionList;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Condition;
 import com.example.query.model.condition.Not;
-import com.example.query.binding.BindingContext;
-
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-
+import com.example.query.binding.MatchDetail;
+import com.example.query.binding.ValueType;
+import com.example.query.executor.QueryResult;
+import org.iq80.leveldb.DBIterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.AbstractMap.SimpleEntry;
+
 /**
- * Executor for NOT conditions.
- * Handles negation by executing the inner condition and inverting the result.
+ * Executes a NOT condition.
+ * This executor is currently disabled pending refactoring for QueryResult.
  */
+// @Disabled // Re-enable this executor
 public final class NotExecutor implements ConditionExecutor<Not> {
     private static final Logger logger = LoggerFactory.getLogger(NotExecutor.class);
-    
-    private final ConditionExecutorFactory executorFactory;
-    
+    private static final String UNIGRAM_INDEX_NAME = "unigram"; // Target index for universe approximation
+
+    private final ConditionExecutorFactory factory;
+
     /**
-     * Creates a new NotConditionExecutor that uses the provided factory to create
-     * executors for the inner condition.
+     * Constructs a NotExecutor.
      *
-     * @param executorFactory The factory to use for creating condition executors
+     * @param factory The factory to get sub-executors.
      */
-    public NotExecutor(ConditionExecutorFactory executorFactory) {
-        this.executorFactory = executorFactory;
+    public NotExecutor(ConditionExecutorFactory factory) {
+        this.factory = factory;
+        logger.info("NotExecutor initialized.");
     }
-    
+
     @Override
-    public Set<DocSentenceMatch> execute(Not condition, Map<String, IndexAccess> indexes,
-                               BindingContext bindingContext, Query.Granularity granularity,
-                               int granularitySize)
-        throws QueryExecutionException {
-        
-        logger.debug("Executing NOT condition at {} granularity with size {}", 
-                granularity, granularitySize);
-        
-        // Execute inner condition
-        Condition innerCondition = condition.condition();
-        
-        // NOT operations cannot bind variables (they remove matches, not add bindings)
-        // Use a temporary binding context to avoid polluting the main context
-        BindingContext tempContext = BindingContext.empty();
-        
-        ConditionExecutor<Condition> executor = executorFactory.getExecutor(innerCondition);
-        Set<DocSentenceMatch> innerMatches = executor.execute(
-            innerCondition, indexes, tempContext, granularity, granularitySize);
-        
-        Condition negatedCondition = condition.condition();
-        logger.debug("Executing NOT operation on condition: {} with granularity: {} and size: {}", 
-                    negatedCondition, granularity, granularitySize);
-        
-        try {
-            // Get all document/sentence IDs from the collection
-            Set<DocSentenceMatch> allMatches = getAllMatches(indexes, granularity);
-            
-            // Apply negation using the appropriate strategy
-            Set<DocSentenceMatch> result = negateMatches(innerMatches, allMatches);
-            
-            logger.debug("NOT operation completed with {} matching results at {} granularity", 
-                        result.size(), granularity);
-            return result;
-        } catch (Exception e) {
-            if (e instanceof QueryExecutionException) {
-                throw (QueryExecutionException) e;
-            }
+    public QueryResult execute(Not condition, Map<String, IndexAccessInterface> indexes,
+                               Query.Granularity granularity,
+                               int granularitySize,
+                               String corpusName) throws QueryExecutionException {
+        logger.debug("Executing NOT condition: {}, Granularity: {}, Size: {}, Corpus: {}", 
+                     condition, granularity, granularitySize, corpusName);
+
+        Condition operand = condition.condition();
+        ConditionExecutor<Condition> subExecutor = factory.getExecutor(operand);
+
+        // Execute the sub-condition
+        QueryResult subResult = subExecutor.execute(operand, indexes, granularity, granularitySize, corpusName);
+
+        // Extract IDs based on granularity from the sub-result
+        Set<?> subResultIds = extractIds(subResult, granularity);
+        logger.debug("Sub-condition executed. Found {} match details, {} unique IDs.", subResult.getAllDetails().size(), subResultIds.size());
+
+        // Get all possible matches (as IDs) based on granularity
+        Set<?> allPossibleIds = getAllPossibleIds(indexes, granularity);
+        if (allPossibleIds.isEmpty()) {
+            logger.warn("Could not determine the set of all possible matches. Check if '{}' index exists and is populated.", UNIGRAM_INDEX_NAME);
             throw new QueryExecutionException(
-                "Error executing NOT condition: " + e.getMessage(),
-                e,
+                "Failed to retrieve the set of all possible documents/sentences for NOT operation.",
                 condition.toString(),
-                QueryExecutionException.ErrorType.INTERNAL_ERROR
+                QueryExecutionException.ErrorType.MISSING_INDEX
             );
         }
+        logger.debug("Total possible IDs for granularity {}: {}", granularity, allPossibleIds.size());
+
+        // Perform the NOT operation (set difference on IDs)
+        Set<?> resultIds = new HashSet<>(allPossibleIds); // Create a mutable copy
+        resultIds.removeAll(subResultIds);
+        logger.debug("Resulting IDs after NOT operation: {}", resultIds.size());
+
+        // Create the final QueryResult from the remaining IDs by creating placeholder MatchDetails
+        // We need to reconstruct minimal Position objects based on the ID type
+        return new QueryResult(granularity, granularitySize, resultIds.stream()
+                .map(id -> createPlaceholderMatchDetail(id, granularity))
+                .collect(Collectors.toList()));
     }
-    
-    /**
-     * Negates a set of matches against a universe set.
-     * Returns all matches from the universe that are not in the set to negate.
-     *
-     * @param toNegate The set of matches to negate
-     * @param allMatches The universe of all possible matches
-     * @return All matches from universe that are not in toNegate
-     */
-    Set<DocSentenceMatch> negateMatches(Set<DocSentenceMatch> toNegate, Set<DocSentenceMatch> allMatches) {
-        if (toNegate.isEmpty()) {
-            return allMatches;
+
+    /** Helper to extract IDs based on granularity */
+    private Set<?> extractIds(QueryResult queryResult, Query.Granularity granularity) {
+        if (granularity == Query.Granularity.DOCUMENT) {
+            return queryResult.getAllDetails().stream()
+                    .map(MatchDetail::getDocumentId)
+                    .collect(Collectors.toSet());
+        } else { // SENTENCE granularity
+            return queryResult.getAllDetails().stream()
+                    .map(d -> new SimpleEntry<>(d.getDocumentId(), d.getSentenceId()))
+                    .collect(Collectors.toSet());
         }
-
-        Set<DocSentenceMatch> result = new HashSet<>();
-
-        if (toNegate.iterator().next().isSentenceLevel()) {
-            // Sentence-level negation
-            Map<SentenceKey, DocSentenceMatch> toNegateMap = new HashMap<>();
-            
-            // Index matches to negate by sentence key
-            for (DocSentenceMatch match : toNegate) {
-                SentenceKey key = new SentenceKey(match.documentId(), match.sentenceId());
-                toNegateMap.put(key, match);
-            }
-            
-            // Add matches that don't appear in toNegate
-            for (DocSentenceMatch match : allMatches) {
-                SentenceKey key = new SentenceKey(match.documentId(), match.sentenceId());
-                if (!toNegateMap.containsKey(key)) {
-                    result.add(match);
-                }
-            }
-        } else {
-            // Document-level negation
-            Set<Integer> toNegateIds = new HashSet<>();
-            for (DocSentenceMatch match : toNegate) {
-                toNegateIds.add(match.documentId());
-            }
-            
-            // Add matches from documents not in toNegate
-            for (DocSentenceMatch match : allMatches) {
-                if (!toNegateIds.contains(match.documentId())) {
-                    result.add(match);
-                }
-            }
-        }
-
-        return result;
     }
-    
-    /**
-     * Gets all document/sentence matches in the collection.
-     * This is used to compute the complement of a set for NOT operations.
-     *
-     * @param indexes The indexes to use
-     * @param granularity Whether to return document or sentence level matches
-     * @return Set of all matches at the specified granularity level
-     * @throws QueryExecutionException If there's an error retrieving matches
-     */
-    private Set<DocSentenceMatch> getAllMatches(Map<String, IndexAccess> indexes, Query.Granularity granularity)
-        throws QueryExecutionException {
-        
-        logger.debug("Retrieving all matches at {} granularity for NOT operation", granularity);
-        
-        // Use the metadata index if available, or any other index
-        IndexAccess metadataIndex = indexes.get("metadata");
-        
-        if (metadataIndex == null) {
-            // If no metadata index, try to use any index
-            if (indexes.isEmpty()) {
-                throw new QueryExecutionException(
-                    "No indexes available to determine matches for NOT operation",
-                    "NOT condition",
-                    QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR
-                );
-            }
-            
-            // Use first available index
-            metadataIndex = indexes.values().iterator().next();
-            logger.debug("No metadata index available, using {} index instead", metadataIndex.getIndexType());
+
+    /** Helper to create placeholder MatchDetail from an ID */
+    private MatchDetail createPlaceholderMatchDetail(Object id, Query.Granularity granularity) {
+        Position pos;
+        if (granularity == Query.Granularity.DOCUMENT) {
+            Integer docId = (Integer) id;
+            pos = new Position(docId, -1, -1, -1, null);
+        } else { // SENTENCE granularity
+            @SuppressWarnings("unchecked")
+            SimpleEntry<Integer, Integer> pair = (SimpleEntry<Integer, Integer>) id;
+            pos = new Position(pair.getKey(), pair.getValue(), -1, -1, null);
         }
-        
-        try {
-            Set<DocSentenceMatch> allMatches = new HashSet<>();
-            
-            try (var iterator = metadataIndex.iterator()) {
-                iterator.seekToFirst();
-                
-                while (iterator.hasNext()) {
-                    byte[] keyBytes = iterator.peekNext().getKey();
-                    String key = new String(keyBytes, java.nio.charset.StandardCharsets.UTF_8);
-                    
-                    // Try to parse document ID from the key
-                    // This depends on how document IDs are stored in the index
-                    try {
-                        int docId = Integer.parseInt(key);
-                        
-                        if (granularity == Query.Granularity.DOCUMENT) {
-                            // For document granularity, just add the document
-                            allMatches.add(new DocSentenceMatch(docId));
-                        } else {
-                            // For sentence granularity, we need to add all sentences in the document
-                            // In a real implementation, we'd need to get the actual sentence count
-                            // for each document from the index
-                            int sentenceCount = getSentenceCount(metadataIndex, docId);
-                            for (int sentenceId = 0; sentenceId < sentenceCount; sentenceId++) {
-                                allMatches.add(new DocSentenceMatch(docId, sentenceId));
-                            }
-                        }
-                    } catch (NumberFormatException e) {
-                        // If the key isn't a document ID, skip it
-                    }
-                    
-                    iterator.next();
-                }
-            }
-            
-            logger.debug("Found {} total matches at {} granularity", allMatches.size(), granularity);
-            return allMatches;
-        } catch (Exception e) {
+        return new MatchDetail("NOT_MATCH", ValueType.TERM, pos, "not_result", null);
+    }
+
+    /**
+     * Retrieves all unique document IDs or sentence ID pairs by iterating the unigram index.
+     * This serves as an approximation of the "universe" of possible matches.
+     */
+    private Set<?> getAllPossibleIds(Map<String, IndexAccessInterface> indexes, Query.Granularity granularity)
+            throws QueryExecutionException {
+        IndexAccessInterface unigramIndex = indexes.get(UNIGRAM_INDEX_NAME);
+        if (unigramIndex == null) {
+            logger.error("Required index '{}' not found for approximating universe in NOT operation.", UNIGRAM_INDEX_NAME);
             throw new QueryExecutionException(
-                "Error retrieving all matches: " + e.getMessage(),
+                "Required index '" + UNIGRAM_INDEX_NAME + "' is missing for NOT operation.",
+                "N/A",
+                QueryExecutionException.ErrorType.MISSING_INDEX
+            );
+        }
+
+        Set<Object> allIds = new HashSet<>(); // Use Set<Object> to hold Integers or SimpleEntries
+        logger.debug("Iterating '{}' index to approximate universe for NOT (granularity: {})...", UNIGRAM_INDEX_NAME, granularity);
+        long count = 0;
+
+        try (DBIterator iterator = unigramIndex.iterator()) {
+            iterator.seekToFirst();
+            while (iterator.hasNext()) {
+                Map.Entry<byte[], byte[]> entry = iterator.next();
+                byte[] valueBytes = entry.getValue();
+                if (valueBytes == null || valueBytes.length == 0) {
+                    continue;
+                }
+
+                try {
+                    PositionList positionList = PositionList.deserialize(valueBytes);
+                    count++;
+
+                    for (Position actualPosition : positionList.getPositions()) {
+                        int docId = actualPosition.getDocumentId();
+                        if (granularity == Query.Granularity.DOCUMENT) {
+                            allIds.add(docId); // Add docId directly
+                        } else if (granularity == Query.Granularity.SENTENCE) {
+                            int sentenceId = actualPosition.getSentenceId();
+                            allIds.add(new SimpleEntry<>(docId, sentenceId)); // Add pair
+                        }
+                    }
+                } catch (RuntimeException e) {
+                    logger.warn("Failed to deserialize PositionList for key '{}' in '{}': {}",
+                                new String(entry.getKey()), UNIGRAM_INDEX_NAME, e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Failed to iterate through '{}' index: {}", UNIGRAM_INDEX_NAME, e.getMessage(), e);
+            throw new QueryExecutionException(
+                "Error accessing index '" + UNIGRAM_INDEX_NAME + "' for NOT operation.",
                 e,
-                "NOT condition",
+                "N/A",
                 QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR
             );
         }
-    }
-    
-    /**
-     * Gets the number of sentences in a document.
-     * This is a placeholder implementation - in a real system, this would
-     * retrieve the actual sentence count from the index.
-     *
-     * @param index The index to use
-     * @param documentId The document ID
-     * @return The number of sentences in the document
-     */
-    private int getSentenceCount(IndexAccess index, int documentId) {
-        // This is a placeholder implementation
-        // In a real system, this would retrieve the actual sentence count from the index
-        // For now, we'll assume a default of 10 sentences per document
-        return 10;
-    }
-    
-    /**
-     * Helper class for sentence identification
-     */
-    private record SentenceKey(int documentId, int sentenceId) {
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            SentenceKey that = (SentenceKey) o;
-            return documentId == that.documentId && sentenceId == that.sentenceId;
-        }
 
-        @Override
-        public int hashCode() {
-            return Objects.hash(documentId, sentenceId);
-        }
+        logger.debug("Finished iterating '{}'. Found {} unique IDs from {} PositionList entries for granularity {}",
+                     UNIGRAM_INDEX_NAME, allIds.size(), count, granularity);
+        return allIds;
     }
 } 

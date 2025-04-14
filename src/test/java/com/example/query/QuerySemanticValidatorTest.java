@@ -11,6 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -84,7 +85,7 @@ class QuerySemanticValidatorTest {
         
         // Use that variable in a SNIPPET column
         SnippetNode snippetNode = new SnippetNode("?person");
-        List<SelectColumn> columns = List.of(new SnippetColumn(snippetNode));
+        List<SelectColumn> columns = Collections.singletonList(new SnippetColumn(snippetNode.variable(), snippetNode.windowSize()));
         
         Query query = createQuery(columns, conditions, registry);
         
@@ -118,7 +119,7 @@ class QuerySemanticValidatorTest {
         
         // Try to use an unbound variable in SNIPPET
         SnippetNode snippetNode = new SnippetNode("?person");
-        List<SelectColumn> columns = List.of(new SnippetColumn(snippetNode));
+        List<SelectColumn> columns = Collections.singletonList(new SnippetColumn(snippetNode.variable(), snippetNode.windowSize()));
         
         Query query = createQuery(columns, conditions);
         
@@ -127,7 +128,8 @@ class QuerySemanticValidatorTest {
             () -> validator.validate(query)
         );
         
-        assertTrue(exception.getMessage().contains("Unbound variable in SNIPPET"));
+        assertTrue(exception.getMessage().contains("Variable not found in its scope"), 
+                   "Error message should indicate the variable was not found: " + exception.getMessage());
     }
     
     @Test
@@ -143,7 +145,7 @@ class QuerySemanticValidatorTest {
         
         // Create a snippet with window size 5 (the maximum allowed by the constructor)
         SnippetNode snippetNode = new SnippetNode("?person", 5);
-        List<SelectColumn> columns = List.of(new SnippetColumn(snippetNode));
+        List<SelectColumn> columns = Collections.singletonList(new SnippetColumn(snippetNode.variable(), snippetNode.windowSize()));
         
         Query query = createQuery(columns, conditions, registry);
         
@@ -216,7 +218,7 @@ class QuerySemanticValidatorTest {
             List.of(),     // orderBy
             Optional.empty(),  // limit
             Query.Granularity.DOCUMENT,  // granularity
-            Optional.empty(),  // granularitySize
+            Optional.empty(),  // granularitySize (Snippet size is handled in SnippetColumn)
             columns,       // selectColumns
             registry       // variable registry
         );

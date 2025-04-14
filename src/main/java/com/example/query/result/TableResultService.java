@@ -1,12 +1,13 @@
 package com.example.query.result;
 
-import com.example.query.binding.BindingContext;
+import com.example.query.executor.QueryResult;
 import com.example.query.executor.SubqueryContext;
-import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.SelectColumn;
 import com.example.query.model.CountColumn;
-import com.example.core.IndexAccess;
+import com.example.query.model.VariableColumn;
+import com.example.core.IndexAccessInterface;
+import com.example.query.binding.MatchDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tech.tablesaw.api.*;
@@ -18,6 +19,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.function.Function;
 
 /**
  * Service for converting query results to Tablesaw Tables.
@@ -28,13 +31,18 @@ import java.util.*;
  */
 public class TableResultService {
     private static final Logger logger = LoggerFactory.getLogger(TableResultService.class);
-    private final JoinedResultGenerator joinedResultGenerator;
+
+    private static final String DEFAULT_DOC_ID_COL = "document_id";
+    private static final String LEFT_DOC_ID_COL = "left_document_id";
+    private static final String RIGHT_DOC_ID_COL = "right_document_id";
+    private static final String DEFAULT_SENT_ID_COL = "sentence_id";
+    private static final String LEFT_SENT_ID_COL = "left_sentence_id";
+    private static final String RIGHT_SENT_ID_COL = "right_sentence_id";
 
     /**
      * Creates a new TableResultService with default configuration.
      */
     public TableResultService() {
-        this.joinedResultGenerator = new JoinedResultGenerator(this);
     }
 
     /**
@@ -43,94 +51,102 @@ public class TableResultService {
      * @param dbPath The path to the database file (not used, kept for backwards compatibility)
      */
     public TableResultService(String dbPath) {
-        this.joinedResultGenerator = new JoinedResultGenerator(this);
     }
 
     /**
      * Converts query results to a Tablesaw Table.
      *
      * @param query The original query
-     * @param matches Set of matching document/sentence matches
-     * @param bindingContext The binding context from query execution
-     * @param indexes Map of indexes to retrieve additional document information
+     * @param result The QueryResult object containing match details.
+     * @param indexes Map of indexes (using interface) to retrieve additional document information
      * @return A Tablesaw Table containing the query results
      * @throws ResultGenerationException if an error occurs
      */
     public Table generateTable(
             Query query,
-            Set<DocSentenceMatch> matches,
-            BindingContext bindingContext,
-            Map<String, IndexAccess> indexes
+            QueryResult result,
+            Map<String, IndexAccessInterface> indexes
     ) throws ResultGenerationException {
-        return generateTable(query, matches, bindingContext, indexes, new SubqueryContext());
+        return generateTable(query, result, indexes, new SubqueryContext());
     }
     
     /**
      * Converts query results to a Tablesaw Table, including subquery handling.
      *
      * @param query The original query
-     * @param matches Set of matching document/sentence matches
-     * @param bindingContext The binding context from query execution
-     * @param indexes Map of indexes to retrieve additional document information
+     * @param result The QueryResult object containing match details.
+     * @param indexes Map of indexes (using interface) to retrieve additional document information
      * @param subqueryContext Context containing subquery results
      * @return A Tablesaw Table containing the query results
      * @throws ResultGenerationException if an error occurs
      */
     public Table generateTable(
             Query query,
-            Set<DocSentenceMatch> matches,
-            BindingContext bindingContext,
-            Map<String, IndexAccess> indexes,
+            QueryResult result,
+            Map<String, IndexAccessInterface> indexes,
             SubqueryContext subqueryContext
     ) throws ResultGenerationException {
         Query.Granularity granularity = query.granularity();
-        logger.debug("Generating table for {} matching {} at {} granularity",
-                matches.size(),
-                granularity == Query.Granularity.DOCUMENT ? "documents" : "sentences",
-                granularity);
+        int initialDetailCount = (result != null && result.getAllDetails() != null) ? result.getAllDetails().size() : 0;
+        logger.info("Processing {} initial matching details at {} granularity",
+                initialDetailCount, granularity);
+
+        if (result == null || result.getAllDetails() == null || result.getAllDetails().isEmpty()) {
+             logger.warn("Input QueryResult is null or empty, returning empty table.");
+             return Table.create("EmptyQueryResults"); // Return an empty table
+        }
 
         try {
-            // Check if this is a joined query
-            if (query.hasSubqueries() && query.joinCondition().isPresent()) {
-                logger.debug("Query has subqueries and join condition, generating joined table");
-                return joinedResultGenerator.generateJoinedTable(
-                        query, 
-                        matches, 
-                        bindingContext, 
-                        subqueryContext, 
-                        indexes
-                );
-            }
-            
-            // Create columns directly from SelectColumn objects
+            // Proceed directly to generating table from the QueryResult
             List<Column<?>> columns = new ArrayList<>();
-            
-            // Add columns from SELECT clause
             List<SelectColumn> selectColumns = query.selectColumns();
-            if (selectColumns != null && !selectColumns.isEmpty()) {
-                for (SelectColumn selectColumn : selectColumns) {
-                    columns.add(selectColumn.createColumn());
-                }
-            } else {
-                // If no SELECT columns specified, we'll handle this later
-                // after we've seen the matches
+            boolean isJoinQuery = query.joinCondition().isPresent(); // Check if it's a JOIN query
+            
+             // Ensure default columns if SELECT * or no SELECT clause
+            if (selectColumns == null || selectColumns.isEmpty() || selectColumns.stream().anyMatch(sc -> "*".equals(sc.getColumnName()))) {
+                logger.debug("No specific columns selected or * found, using default columns.");
+                selectColumns = createDefaultSelectColumns(result); // Create default based on QueryResult content
+            }
+
+            // Create table structure based on select columns
+            for (SelectColumn selectColumn : selectColumns) {
+                columns.add(selectColumn.createColumn());
             }
             
-            // Always include document_id
-            StringColumn docIdColumn = StringColumn.create("document_id");
-            columns.add(docIdColumn);
-            
-            // Include sentence_id for sentence granularity
-            StringColumn sentIdColumn = null;
-            if (granularity == Query.Granularity.SENTENCE) {
-                sentIdColumn = StringColumn.create("sentence_id");
-                columns.add(sentIdColumn);
+            // Always include document_id and sentence_id based on join status and granularity
+            // Use IntColumn for IDs
+            if (isJoinQuery) {
+                if (columns.stream().noneMatch(c -> c.name().equalsIgnoreCase(LEFT_DOC_ID_COL))) {
+                    columns.add(0, IntColumn.create(LEFT_DOC_ID_COL)); // Add at the beginning
+                }
+                if (columns.stream().noneMatch(c -> c.name().equalsIgnoreCase(RIGHT_DOC_ID_COL))) {
+                    columns.add(1, IntColumn.create(RIGHT_DOC_ID_COL)); // Add after left ID
+                }
+                if (granularity == Query.Granularity.SENTENCE) {
+                    if (columns.stream().noneMatch(c -> c.name().equalsIgnoreCase(LEFT_SENT_ID_COL))) {
+                         columns.add(2, IntColumn.create(LEFT_SENT_ID_COL)); // Add after doc IDs
+                    }
+                    if (columns.stream().noneMatch(c -> c.name().equalsIgnoreCase(RIGHT_SENT_ID_COL))) {
+                         columns.add(3, IntColumn.create(RIGHT_SENT_ID_COL)); // Add after left sentence ID
+                    }
+                }
+            } else { // Not a JOIN query
+                 if (columns.stream().noneMatch(c -> c.name().equalsIgnoreCase(DEFAULT_DOC_ID_COL))) {
+                     columns.add(0, IntColumn.create(DEFAULT_DOC_ID_COL)); // Add at the beginning
+                 }
+                 if (granularity == Query.Granularity.SENTENCE && columns.stream().noneMatch(c -> c.name().equalsIgnoreCase(DEFAULT_SENT_ID_COL))) {
+                     columns.add(1, IntColumn.create(DEFAULT_SENT_ID_COL)); // Add after doc ID
+                 }
             }
             
             // Create the table
             Table table = Table.create("QueryResults");
+            Map<String, Column<?>> columnMap = new HashMap<>();
             for (Column<?> column : columns) {
-                table.addColumns(column);
+                if (!table.columnNames().contains(column.name())) { // Avoid adding duplicates if defaults overlap
+                     table.addColumns(column);
+                     columnMap.put(column.name(), column); // Store for easy access
+                }
             }
             
             // Validate order by columns
@@ -138,7 +154,7 @@ public class TableResultService {
                 String columnName = orderColumn.startsWith("-") ? orderColumn.substring(1) : orderColumn;
                 if (!table.columnNames().contains(columnName)) {
                     throw new ResultGenerationException(
-                        String.format("Cannot order by column '%s'", columnName),
+                        String.format("Cannot order by column '%s' - not found in table columns: %s", columnName, table.columnNames()),
                         "table_result_service",
                         ResultGenerationException.ErrorType.INTERNAL_ERROR
                     );
@@ -146,39 +162,115 @@ public class TableResultService {
             }
             
             // Populate the table with data
-            for (DocSentenceMatch match : matches) {
-                // Add a new row
-                int rowIndex = table.rowCount();
-                table.appendRow();
-                logger.debug("Added row {} for match: {}", rowIndex, match);
+            // 1. Group MatchDetails by the result unit (document or sentence ID)
+            Map<?, List<MatchDetail>> groupedDetails; // Use wildcard for key type
+            
+            if (isJoinQuery) {
+                // For JOIN queries, group by the unique combination of left and right IDs
+                if (granularity == Query.Granularity.SENTENCE) {
+                    // Key: List[leftDocId, leftSentId, rightDocId, rightSentId]
+                    Function<MatchDetail, List<Object>> groupingKeyExtractor = detail -> List.of(
+                        detail.getDocumentId(), 
+                        detail.getSentenceId(),
+                        detail.getRightDocumentId().orElse(-1), // Use -1 if missing
+                        detail.getRightSentenceId().orElse(-1)  // Use -1 if missing
+                    );
+                    groupedDetails = result.getAllDetails().stream()
+                                         .filter(Objects::nonNull)
+                                         .collect(Collectors.groupingBy(groupingKeyExtractor));
+                } else { // DOCUMENT granularity join
+                    // Key: Pair(leftDocId, rightDocId)
+                    Function<MatchDetail, Pair<Integer, Integer>> groupingKeyExtractor = detail -> new Pair<>(
+                        detail.getDocumentId(), 
+                        detail.getRightDocumentId().orElse(-1) // Use -1 if missing
+                    );
+                     groupedDetails = result.getAllDetails().stream()
+                                          .filter(Objects::nonNull)
+                                          .collect(Collectors.groupingBy(groupingKeyExtractor));
+                }
+            } else {
+                 // Original logic for non-JOIN queries
+                 Function<MatchDetail, Object> groupingKeyExtractor;
+                 if (granularity == Query.Granularity.SENTENCE) {
+                     // Group by composite key for sentence granularity
+                     groupingKeyExtractor = detail -> new Pair<>(detail.getDocumentId(), detail.getSentenceId()); // Use getters
+                 } else { // Default to DOCUMENT granularity
+                     groupingKeyExtractor = MatchDetail::getDocumentId; // Use getter method reference
+                 }
+                 groupedDetails = result.getAllDetails().stream()
+                                      .filter(Objects::nonNull) // Add null check for safety
+                                      .collect(Collectors.groupingBy(groupingKeyExtractor));
+            }
+            
+            int finalRowCount = groupedDetails.size(); // Rows after grouping
+            logger.info("Grouped into {} final result units (granularity: {})", 
+                     finalRowCount, granularity);
+            
+            // Get the source name once
+            String source = query.source();
+            
+            // 2. Iterate through each group (representing one row in the output)
+            for (List<MatchDetail> detailsForUnit : groupedDetails.values()) {
+                if (detailsForUnit.isEmpty()) continue; // Should not happen, but safe check
                 
-                // Set values for each column
+                int rowIndex = table.rowCount();
+                table.appendRow(); // Append empty row first
+                
+                // Get representative docId/sentenceId from the first detail in the group
+                MatchDetail representativeDetail = detailsForUnit.get(0);
+                // No need to extract docId/sentenceId here, done during population
+                
+                // 3. Populate columns for this row using the list of details
                 for (SelectColumn selectColumn : selectColumns) {
-                    logger.debug("Populating column: {} for match: {}", selectColumn.getColumnName(), match);
-                    selectColumn.populateColumn(table, rowIndex, match, bindingContext, indexes);
-                    // After populating, check what the value is
-                    Column<?> col = table.column(selectColumn.getColumnName());
-                    logger.debug("Column {} now has value: {}", selectColumn.getColumnName(), col.get(rowIndex));
+                    Column<?> tableCol = columnMap.get(selectColumn.getColumnName());
+                    if (tableCol != null) {
+                        // Pass the whole list of details for this unit
+                        selectColumn.populateColumn(table, rowIndex, detailsForUnit, source, indexes);
+                    } else {
+                        logger.warn("Column '{}' defined in SelectColumn but not found in table structure?", selectColumn.getColumnName());
+                    }
                 }
                 
-                // Set document_id
-                docIdColumn.set(rowIndex, String.valueOf(match.documentId()));
-                
-                // Set sentence_id if applicable
-                if (sentIdColumn != null) {
-                    sentIdColumn.set(rowIndex, String.valueOf(match.sentenceId()));
+                // Set document_id and sentence_id (if columns exist) based on join status
+                if (isJoinQuery) {
+                    // Populate join-specific ID columns
+                    Column<?> leftDocIdCol = columnMap.get(LEFT_DOC_ID_COL);
+                    if (leftDocIdCol instanceof IntColumn ic) { ic.set(rowIndex, representativeDetail.getDocumentId()); }
+                    
+                    Column<?> rightDocIdCol = columnMap.get(RIGHT_DOC_ID_COL);
+                    if (rightDocIdCol instanceof IntColumn ic) { 
+                        representativeDetail.getRightDocumentId().ifPresentOrElse(
+                            rightId -> ic.set(rowIndex, rightId),
+                            () -> ic.setMissing(rowIndex) // Use Tablesaw's missing value indicator
+                        );
+                    }
+                    
+                    if (granularity == Query.Granularity.SENTENCE) {
+                         Column<?> leftSentIdCol = columnMap.get(LEFT_SENT_ID_COL);
+                         if (leftSentIdCol instanceof IntColumn ic) { ic.set(rowIndex, representativeDetail.getSentenceId()); }
+                         
+                         Column<?> rightSentIdCol = columnMap.get(RIGHT_SENT_ID_COL);
+                         if (rightSentIdCol instanceof IntColumn ic) { 
+                             representativeDetail.getRightSentenceId().ifPresentOrElse(
+                                 rightId -> ic.set(rowIndex, rightId),
+                                 () -> ic.setMissing(rowIndex)
+                             );
+                         }
+                    }
+                } else { // Not a JOIN query
+                    // Populate default ID columns
+                    Column<?> docIdCol = columnMap.get(DEFAULT_DOC_ID_COL);
+                    if (docIdCol instanceof IntColumn ic) { ic.set(rowIndex, representativeDetail.getDocumentId()); }
+                    
+                    if (granularity == Query.Granularity.SENTENCE) {
+                         Column<?> sentIdCol = columnMap.get(DEFAULT_SENT_ID_COL);
+                         if (sentIdCol instanceof IntColumn ic) { ic.set(rowIndex, representativeDetail.getSentenceId()); }
+                    }
                 }
             }
             
             // Apply count aggregations if necessary
-            boolean hasCountColumn = false;
-            for (SelectColumn col : selectColumns) {
-                if (col instanceof CountColumn) {
-                    hasCountColumn = true;
-                    break;
-                }
-            }
-            
+            boolean hasCountColumn = selectColumns.stream().anyMatch(col -> col instanceof CountColumn);
             if (hasCountColumn) {
                 table = CountColumn.applyCountAggregations(table);
             }
@@ -189,20 +281,28 @@ public class TableResultService {
                 table = applyOrdering(table, query.orderBy());
             }
             
-            // Apply limit if specified
+            // Apply limit if specified - Apply AFTER grouping and ordering
             if (query.limit().isPresent()) {
                 int limit = query.limit().get();
-                logger.debug("Limiting results to {} rows", limit);
-                if (limit < table.rowCount()) {
+                // Check limit against final row count
+                if (limit > 0 && limit < table.rowCount()) { 
+                    // Use INFO level for limit application
+                    logger.info("Limiting final {} rows to {}", table.rowCount(), limit);
                     table = table.first(limit);
+                } else {
+                     // Use DEBUG level for non-application
+                     logger.debug("Limit {} is not less than or equal to 0, or not less than final row count {}, no limit applied.", limit, table.rowCount());
                 }
             }
             
-            logger.debug("Generated table with {} columns and {} rows", 
+            // Use INFO level for final table stats
+            logger.info("Generated final table with {} columns and {} rows", 
                     table.columnCount(), table.rowCount());
             
             return table;
         } catch (Exception e) {
+            // Log the specific detail causing the issue if possible (though harder now)
+            logger.error("Error during table generation: {}", e.getMessage(), e);
             throw new ResultGenerationException(
                     "Failed to generate table: " + e.getMessage(),
                     e,
@@ -265,9 +365,6 @@ public class TableResultService {
                 table.write().csv(options);
             }
             case "json", "html" -> {
-                // For simplicity, we'll just export as CSV for now
-                // In a real implementation, you would need to add the appropriate
-                // dependencies and implement proper JSON and HTML export
                 CsvWriteOptions options = CsvWriteOptions.builder(filename)
                         .header(true)
                         .build();
@@ -300,4 +397,28 @@ public class TableResultService {
         
         return sb.toString();
     }
+
+    // Helper class for Pair grouping key when granularity is SENTENCE
+    private static record Pair<K, V>(K key, V value) {}
+
+    /**
+     * Creates default SelectColumn list based on QueryResult content.
+     * Includes document_id, sentence_id (if applicable), and any variables found.
+     */
+     private List<SelectColumn> createDefaultSelectColumns(QueryResult result) {
+         List<SelectColumn> defaultColumns = new ArrayList<>();
+
+         Set<String> variableNames = result.getAllDetails().stream()
+                                       .filter(Objects::nonNull) // Add null check
+                                       .map(MatchDetail::variableName)
+                                       .filter(Objects::nonNull)
+                                       .collect(Collectors.toSet());
+
+         for (String varName : variableNames) {
+              // Corrected class name
+              defaultColumns.add(new VariableColumn(varName)); // Use base name (without ?) 
+         }
+         logger.debug("Created default select columns: {}", defaultColumns.stream().map(SelectColumn::getColumnName).toList());
+         return defaultColumns;
+     }
 } 

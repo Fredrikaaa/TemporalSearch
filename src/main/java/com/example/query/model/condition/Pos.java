@@ -8,30 +8,38 @@ import com.example.query.binding.VariableRegistry;
 import com.example.query.binding.VariableType;
 
 /**
- * Represents a Part of Speech (POS) condition in the query language.
- * This condition matches documents where a word has a specific POS tag.
+ * Represents a POS (Part-of-Speech) condition in the query language.
+ * This condition checks for terms with a specific POS tag, optionally binding the term.
  */
 public record Pos(
     String posTag,
-    String term,
+    String term,        // Term can be null when isVariable is true
     String variableName,
     boolean isVariable
 ) implements Condition {
     
     /**
-     * Creates a new POS condition with validation.
+     * Creates a condition with validation.
      */
     public Pos {
         Objects.requireNonNull(posTag, "posTag cannot be null");
-        Objects.requireNonNull(term, "term cannot be null");
         
         if (isVariable) {
+            // When binding a variable, term can be null (extract any term with the tag)
             Objects.requireNonNull(variableName, "variableName cannot be null when isVariable is true");
+        } else {
+            // When searching for a specific term/tag combination, term must be provided
+            Objects.requireNonNull(term, "term cannot be null when isVariable is false");
         }
+        
+        // No defensive copy needed for Strings
     }
 
     /**
-     * Creates a new POS condition without variable binding.
+     * Creates a condition with a term and POS tag (non-variable).
+     *
+     * @param posTag The part-of-speech tag
+     * @param term The search term
      */
     public Pos(String posTag, String term) {
         this(posTag, term, null, false);
@@ -70,7 +78,8 @@ public record Pos(
     
     @Override
     public VariableType getProducedVariableType() {
-        return VariableType.POS_TAG;
+        // Changed to reflect the "term/TAG" format - TEXT_SPAN is most appropriate
+        return VariableType.TEXT_SPAN; 
     }
     
     @Override
@@ -83,8 +92,9 @@ public record Pos(
     @Override
     public String toString() {
         if (isVariable) {
-            return String.format("POS(%s, %s) AS ?%s", posTag, term, variableName);
+            return String.format("POS(%s) AS %s", posTag, variableName);
+        } else {
+            return String.format("POS(%s, %s)", posTag, term);
         }
-        return String.format("POS(%s, %s)", posTag, term);
     }
 } 

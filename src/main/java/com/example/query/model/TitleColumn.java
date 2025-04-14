@@ -1,13 +1,14 @@
 package com.example.query.model;
 
-import com.example.core.IndexAccess;
-import com.example.query.binding.BindingContext;
+import com.example.core.IndexAccessInterface;
+import com.example.query.binding.MatchDetail;
 import com.example.query.sqlite.SqliteAccessor;
 import tech.tablesaw.api.StringColumn;
 import tech.tablesaw.api.Table;
 import tech.tablesaw.columns.Column;
 
 import java.util.Map;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,16 +36,22 @@ public class TitleColumn implements SelectColumn {
     }
     
     @Override
-    public void populateColumn(Table table, int rowIndex, DocSentenceMatch match, 
-                              BindingContext bindingContext, Map<String, IndexAccess> indexes) {
+    public void populateColumn(Table table, int rowIndex, List<MatchDetail> detailsForUnit, 
+                              String source,
+                              Map<String, IndexAccessInterface> indexes) {
         StringColumn column = (StringColumn) table.column(getColumnName());
         
-        // Get the source for this document
-        String source = match.getSource();
-        int documentId = match.documentId();
+        // Get documentId from the first detail in the list (all should share the same docId)
+        if (detailsForUnit == null || detailsForUnit.isEmpty()) {
+            logger.warn("Received empty detail list for row {} in TitleColumn.", rowIndex);
+            column.setMissing(rowIndex);
+            return;
+        }
+        int documentId = detailsForUnit.get(0).getDocumentId();
+
         logger.debug("Getting title for document {} from source {}", documentId, source);
         
-        // Get title using the SqliteAccessor singleton
+        // Get title using the SqliteAccessor singleton and the passed source
         String value = SqliteAccessor.getInstance().getMetadata(source, documentId, "title");
         
         column.set(rowIndex, value != null ? value : "");

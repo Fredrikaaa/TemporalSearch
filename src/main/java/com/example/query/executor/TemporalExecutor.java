@@ -1,15 +1,15 @@
 package com.example.query.executor;
 
-import com.example.core.IndexAccess;
+import com.example.core.IndexAccessInterface;
 import com.example.core.Position;
 import com.example.core.PositionList;
-import com.example.query.binding.BindingContext;
-import com.example.query.model.DocSentenceMatch;
+import com.example.query.binding.MatchDetail;
+import com.example.query.binding.ValueType;
 import com.example.query.model.Query;
 import com.example.query.model.TemporalPredicate;
-import com.example.query.model.condition.Condition;
 import com.example.query.model.condition.Temporal;
 import com.example.query.index.IndexManager;
+import com.example.query.executor.QueryResult;
 
 import org.apache.pig.impl.util.MultiMap;
 import org.slf4j.Logger;
@@ -29,25 +29,28 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.nio.file.Path;
+import java.util.stream.Collectors;
 
 /**
  * Executor for temporal conditions in queries.
- * 
- * This class has two main responsibilities:
- * 1. For simple temporal conditions, it filters results based on date ranges using Nash or direct index scan.
- * 2. For temporal conditions with variables, it binds the matching date values to the variable.
+ * Returns QueryResult containing MatchDetail objects.
  */
 public final class TemporalExecutor implements ConditionExecutor<Temporal> {
     private static final Logger logger = LoggerFactory.getLogger(TemporalExecutor.class);
     
     private static final String DATE_INDEX = "ner_date";
     
-    // Define a single date formatter for the yyyyMMdd format used in the index
-    private static final DateTimeFormatter INDEX_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
+    // Formatter for parsing keys from the ner_date index (YYYYMMDD)
+    private static final DateTimeFormatter INDEX_DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
+    // Formatter for creating interval strings for Nash.invert ([YYYY-MM-DD , YYYY-MM-DD])
+    private static final DateTimeFormatter NASH_INTERVAL_FORMATTER = DateTimeFormatter.ISO_DATE;
     
-    // Store Nash indices per corpus
+    // Store Nash indices per corpus: Map<CorpusName, Map<NashHashPrefix, Set<DocID>>>
     private final Map<String, Map<String, Set<Integer>>> nashIndices = new HashMap<>();
     
     /**
@@ -57,503 +60,336 @@ public final class TemporalExecutor implements ConditionExecutor<Temporal> {
     }
     
     /**
-     * Initializes the Nash index for a specific corpus using date data from the index.
-     * 
-     * @param corpusName The name of the corpus to initialize
-     * @param indexManager The index manager for accessing indexes
-     * @return true if initialization was successful, false otherwise
+     * Initializes the Nash index structure for a specific corpus by reading from the DATE_INDEX.
+     * It iterates through the DATE_INDEX, creates interval strings, generates Nash hashes,
+     * and stores a mapping from Nash hash prefixes to the document IDs associated with those intervals.
      */
     public boolean initializeNashIndexForCorpus(String corpusName, IndexManager indexManager) {
         if (nashIndices.containsKey(corpusName)) {
             logger.debug("Nash index already initialized for corpus: {}", corpusName);
             return true;
         }
-        
-        try {
-            // Get the date index from the index manager
-            Optional<IndexAccess> dateIndexOpt = indexManager.getIndex(DATE_INDEX);
-            if (dateIndexOpt.isEmpty()) {
-                logger.warn("Date index not found for corpus: {}", corpusName);
-                return false;
-            }
-            
-            // Extract date ranges from the date index
-            Map<Integer, String> docDateRanges = new HashMap<>();
-            Map<Integer, Set<LocalDate>> docDates = new HashMap<>();
-            
-            // Process all dates in the index
-            try (var iterator = dateIndexOpt.get().iterator()) {
-                iterator.seekToFirst();
-                
-                while (iterator.hasNext()) {
-                    byte[] keyBytes = iterator.peekNext().getKey();
-                    byte[] valueBytes = iterator.peekNext().getValue();
-                    
-                    // Parse date from key (yyyyMMdd format)
-                    String dateStr = new String(keyBytes, StandardCharsets.UTF_8);
-                    
-                    try {
-                        LocalDate date = LocalDate.parse(dateStr, INDEX_DATE_FORMAT);
-                        
-                        // Get document IDs for this date
-                        PositionList positions = PositionList.deserialize(valueBytes);
-                        for (Position position : positions.getPositions()) {
-                            docDates.computeIfAbsent(position.getDocumentId(), k -> new HashSet<>()).add(date);
-                        }
-                    } catch (Exception e) {
-                        logger.debug("Error processing date entry: {}", e.getMessage());
-                    }
-                    
-                    iterator.next();
+
+        logger.info("Initializing Nash index for corpus: {}", corpusName);
+
+        Optional<IndexAccessInterface> indexOpt = indexManager.getIndex(DATE_INDEX);
+        if (indexOpt.isEmpty()) {
+            logger.error("Cannot initialize Nash index: '{}' index not found via IndexManager for corpus '{}'.", DATE_INDEX, corpusName);
+            return false;
+        }
+        IndexAccessInterface dateIndex = indexOpt.get();
+
+        // Prepare data for Nash.invert
+        List<String> intervalStrings = new ArrayList<>();
+        // Temporary map to link list index back to document IDs
+        Map<Integer, Set<Integer>> listIndexToDocIds = new HashMap<>();
+        int intervalIndex = 0;
+
+        try (var iterator = dateIndex.iterator()) {
+            iterator.seekToFirst();
+            while (iterator.hasNext()) {
+                Entry<byte[], byte[]> entry = iterator.next(); // Use next() to get and advance
+                String dateStr = new String(entry.getKey(), StandardCharsets.UTF_8);
+                LocalDate docDate = parseDateKey(dateStr); // Reuse existing parsing logic
+
+                if (docDate != null) {
+                    // Format as "[YYYY-MM-DD , YYYY-MM-DD]" for Nash
+                    String interval = String.format("[%s , %s]",
+                            NASH_INTERVAL_FORMATTER.format(docDate),
+                            NASH_INTERVAL_FORMATTER.format(docDate));
+                    intervalStrings.add(interval);
+
+                    // Extract document IDs from the value (PositionList)
+                    PositionList positions = PositionList.deserialize(entry.getValue());
+                    Set<Integer> docIds = positions.getPositions().stream()
+                                                    .map(Position::getDocumentId)
+                                                    .collect(Collectors.toSet());
+
+                    listIndexToDocIds.put(intervalIndex, docIds);
+                    intervalIndex++;
+                } else {
+                    logger.warn("Skipping invalid date key during Nash initialization: {}", dateStr);
                 }
             }
-            
-            // Create date ranges for Nash
-            for (Map.Entry<Integer, Set<LocalDate>> entry : docDates.entrySet()) {
-                if (!entry.getValue().isEmpty()) {
-                    LocalDate minDate = entry.getValue().stream().min(LocalDate::compareTo).get();
-                    LocalDate maxDate = entry.getValue().stream().max(LocalDate::compareTo).get();
-                    docDateRanges.put(entry.getKey(), String.format("[%s , %s]", minDate, maxDate));
-                }
-            }
-            
-            if (docDateRanges.isEmpty()) {
-                logger.warn("No date ranges found for corpus: {}", corpusName);
-                return false;
-            }
-            
-            // Build the Nash index for this corpus
-            MultiMap<String, Integer> nashIdx = Nash.invert(new ArrayList<>(docDateRanges.values()));
-            
-            // Convert MultiMap to regular Map for storage in nashIndices
-            Map<String, Set<Integer>> corpusNashIndex = new HashMap<>();
-            for (String key : nashIdx.keySet()) {
-                corpusNashIndex.put(key, new HashSet<>(nashIdx.get(key)));
-            }
-            
-            // Store in corpus-specific map
-            nashIndices.put(corpusName, corpusNashIndex);
-            
-            logger.info("Nash index initialized with {} date ranges for corpus: {}", docDateRanges.size(), corpusName);
-            return true;
-            
         } catch (Exception e) {
-            logger.error("Failed to initialize Nash index: {}", e.getMessage(), e);
+            logger.error("Error reading from '{}' index during Nash initialization for corpus '{}': {}", DATE_INDEX, corpusName, e.getMessage(), e);
+            return false;
+        }
+
+        logger.debug("Prepared {} interval strings from '{}' index for Nash inversion.", intervalStrings.size(), DATE_INDEX);
+
+        if (intervalStrings.isEmpty()) {
+            logger.warn("No valid date intervals found in '{}' index for corpus '{}'. Nash index will be empty.", DATE_INDEX, corpusName);
+            // Initialize with an empty map to avoid checks failing later
+            nashIndices.put(corpusName, Collections.emptyMap());
+            return true; // Technically initialized, just empty.
+        }
+
+        try {
+            // Generate Nash structure: MultiMap<NashHashPrefix, IntervalListIndex>
+            MultiMap<String, Integer> invertedIndex = Nash.invert(intervalStrings);
+
+            // Convert to final structure: Map<NashHashPrefix, Set<DocID>>
+            Map<String, Set<Integer>> corpusNashIndex = new HashMap<>();
+            for (String nashPrefix : invertedIndex.keySet()) {
+                Set<Integer> docIdSet = new HashSet<>();
+                // For each prefix, get the list indices it maps to
+                for (Integer listIdx : invertedIndex.get(nashPrefix)) {
+                    // Use the temporary map to find the actual doc IDs for that list index
+                    Set<Integer> ids = listIndexToDocIds.get(listIdx);
+                    if (ids != null) {
+                        docIdSet.addAll(ids);
+                    } else {
+                         logger.warn("Inconsistency: Nash prefix '{}' mapped to list index {} which has no associated doc IDs.", nashPrefix, listIdx);
+                    }
+                }
+                 if (!docIdSet.isEmpty()) {
+                    corpusNashIndex.put(nashPrefix, docIdSet);
+                 }
+            }
+
+            // Store the final index for the corpus
+            nashIndices.put(corpusName, corpusNashIndex);
+
+            // Log the number of unique prefixes, not date ranges
+            logger.info("Nash index initialized with {} unique hash prefixes for corpus: {}", corpusNashIndex.size(), corpusName);
+            return true;
+
+        } catch (Exception e) { // Catch potential exceptions from Nash.invert
+            logger.error("Failed to generate Nash index structure for corpus '{}': {}", corpusName, e.getMessage(), e);
             return false;
         }
     }
     
     @Override
-    public Set<DocSentenceMatch> execute(
+    public QueryResult execute(
             Temporal condition,
-            Map<String, IndexAccess> indexes,
-            BindingContext bindingContext,
+            Map<String, IndexAccessInterface> indexes,
             Query.Granularity granularity,
-            int granularitySize) 
+            int granularitySize,
+            String corpusName)
             throws QueryExecutionException {
         
-        logger.debug("Executing temporal condition: {}", condition);
+        logger.debug("Executing temporal condition: {} for corpus: {}", condition, corpusName);
         
-        // Validate required indexes
         if (!indexes.containsKey(DATE_INDEX)) {
-            throw new QueryExecutionException(
-                String.format("Missing required index: %s", DATE_INDEX),
-                condition.toString(),
-                QueryExecutionException.ErrorType.MISSING_INDEX
-            );
+            throw new QueryExecutionException(String.format("Missing required index: %s", DATE_INDEX), condition.toString(), QueryExecutionException.ErrorType.MISSING_INDEX);
         }
         
-        // Get corpus name from binding context, default to "default"
-        String corpus = bindingContext.getValue("corpus", String.class).orElse("default");
-        
-        // Check if this is a condition with a variable binding vs simple filter
-        if (condition.variable().isPresent()) {
-            // This is a variable binding condition - execute the condition and bind the values
-            return executeTemporalWithVariableBinding(condition, corpus, indexes, bindingContext, granularity);
-        } else {
-            // Handle simple temporal condition without variable binding
-            if (nashIndices.containsKey(corpus)) {
-                return executeSimpleTemporalWithNash(condition, corpus, indexes, granularity);
+        List<MatchDetail> details;
+        boolean isVariable = condition.variable().isPresent();
+
+        try {
+            if (isVariable) {
+                // Variable binding always needs direct scan
+                logger.debug("Temporal condition has variable '{}', using variable extraction path.", condition.variable().get());
+                details = executeTemporalVariableExtraction(condition, indexes);
+            } else if (granularity == Query.Granularity.SENTENCE) {
+                // Sentence granularity requires precise positions, bypass Nash
+                logger.debug("Sentence granularity requested, using direct index scan path.");
+                details = executeSimpleTemporalWithIndex(condition, indexes); // Use direct scan
             } else {
-                return executeSimpleTemporalWithIndex(condition, corpus, indexes, granularity);
+                // Document granularity or default: prefer Nash if available
+                if (nashIndices.containsKey(corpusName)) {
+                    logger.debug("Document granularity: Using Nash index path.");
+                    details = executeSimpleTemporalWithNash(condition, corpusName); // Use Nash
+                } else {
+                    logger.warn("Nash index not available for corpus '{}', falling back to index scan for temporal condition.", corpusName);
+                    logger.debug("Document granularity: Nash index unavailable, using direct index scan path.");
+                    details = executeSimpleTemporalWithIndex(condition, indexes); // Fallback to direct scan
+                }
             }
+
+            logger.debug("Temporal condition produced {} MatchDetail objects. Returning QueryResult.", details.size());
+
+            // Create QueryResult directly
+            QueryResult finalResult = new QueryResult(granularity, granularitySize, details);
+
+            logger.debug("Temporal execution complete with {} MatchDetail objects.", finalResult.getAllDetails().size());
+            return finalResult;
+
+        } catch (Exception e) {
+            if (e instanceof QueryExecutionException qee) { throw qee; }
+            throw new QueryExecutionException("Error executing temporal condition: " + e.getMessage(), e, condition.toString(), QueryExecutionException.ErrorType.INTERNAL_ERROR);
         }
     }
     
     /**
-     * Executes a simple temporal condition using Nash index.
+     * Executes a simple temporal condition using Nash index, returning MatchDetail list.
      */
-    private Set<DocSentenceMatch> executeSimpleTemporalWithNash(
-            Temporal temporal,
-            String corpus,
-            Map<String, IndexAccess> indexes,
-            Query.Granularity granularity) 
+    private List<MatchDetail> executeSimpleTemporalWithNash(
+            Temporal condition,
+            String corpus)
             throws QueryExecutionException {
-        
-        Set<Integer> matchingDocIds = new HashSet<>();
         
         Map<String, Set<Integer>> nashIndex = nashIndices.get(corpus);
         if (nashIndex == null) {
-            logger.warn("Nash index not initialized for corpus: {}. Falling back to index scan.", corpus);
-            // Fallback to direct index scan if Nash isn't ready for this corpus
-            return executeSimpleTemporalWithIndex(temporal, corpus, indexes, granularity);
+            logger.error("Nash index unexpectedly null for corpus: {}. Returning empty list.", corpus);
+            return Collections.emptyList(); 
         }
         
-        // Convert the temporal condition to a Nash interval
-        String interval = temporal.toNashInterval();
-        
-        // If the interval contains only years, expand it to full ISO date format
-        interval = Temporal.expandYearOnlyInterval(interval);
-        logger.debug("Using Nash interval: {}", interval);
-        
-        // Get the Nash predicate directly from the temporal type
-        Nash.RangePredicate nashPredicate = temporal.temporalType().toNashPredicate();
-        
+        List<MatchDetail> details = new ArrayList<>();
+        String conditionId = String.valueOf(condition.hashCode());
+        String interval = Temporal.expandYearOnlyInterval(condition.toNashInterval());
+        Nash.RangePredicate nashPredicate = condition.temporalType().toNashPredicate();
+        logger.debug("Querying Nash index for corpus '{}' with interval: {}, predicate: {}", corpus, interval, nashPredicate);
+
         try {
-            // Generate hash prefixes for the interval with the appropriate predicate
             String[] hashPrefixes = Nash.generateTimeHash(interval, nashPredicate);
-            logger.debug("Generated {} hash prefixes for interval {} using predicate {}", 
-                    hashPrefixes.length, interval, nashPredicate);
-            
-            // Find matching document IDs from the Nash index
+            Set<Integer> matchingDocIds = new HashSet<>();
             for (String hashPrefix : hashPrefixes) {
-                Set<Integer> docIds = nashIndex.get(hashPrefix);
-                if (docIds != null) {
-                    matchingDocIds.addAll(docIds);
-                }
+                 Set<Integer> docIds = nashIndex.get(hashPrefix);
+                 if (docIds != null) {
+                     matchingDocIds.addAll(docIds);
+                 }
             }
             
-            logger.debug("Found {} matching document IDs using Nash index", matchingDocIds.size());
+            logger.debug("Nash query found {} matching document IDs", matchingDocIds.size());
             
-            // Convert document IDs to result entries
-            Set<DocSentenceMatch> results = new HashSet<>();
+            // Create placeholder MatchDetail for each doc ID
             for (Integer docId : matchingDocIds) {
-                // Nash operates at document level, so use -1 for sentence ID with sentence granularity
-                if (granularity == Query.Granularity.DOCUMENT) {
-                    results.add(new DocSentenceMatch(docId, corpus));
-                } else {
-                    // Even for sentence granularity, Nash only gives doc IDs.
-                    // Use -1 initially. Subsequent steps might refine sentence IDs if needed.
-                    results.add(new DocSentenceMatch(docId, -1, corpus)); 
-                }
+                 Position placeholderPos = new Position(docId, -1, -1, -1, null);
+                 // Use interval string as placeholder value? Yes, for consistency
+                 details.add(new MatchDetail(interval, ValueType.DATE, placeholderPos, conditionId, null));
             }
-            
-            return results;
+            return details;
         } catch (Exception e) {
-            logger.error("Error executing Nash temporal query: {}", e.getMessage(), e);
-            throw new QueryExecutionException(
-                "Error in Nash temporal query: " + e.getMessage(),
-                e,
-                temporal.toString(),
-                QueryExecutionException.ErrorType.INTERNAL_ERROR
-            );
+            throw new QueryExecutionException("Error querying Nash index: " + e.getMessage(), e, condition.toString(), QueryExecutionException.ErrorType.INTERNAL_ERROR);
         }
     }
     
     /**
-     * Executes a simple temporal condition using the date index directly.
-     * This is a direct index scanning approach used as an alternative to Nash when:
-     * - Nash index is not initialized
-     * - Sentence-level granularity with exact position information is required
+     * Executes a simple temporal condition using the date index directly, returning MatchDetail list.
      */
-    private Set<DocSentenceMatch> executeSimpleTemporalWithIndex(
-            Temporal temporal,
-            String corpus,
-            Map<String, IndexAccess> indexes,
-            Query.Granularity granularity) 
+    private List<MatchDetail> executeSimpleTemporalWithIndex(
+            Temporal condition,
+            Map<String, IndexAccessInterface> indexes)
             throws QueryExecutionException {
         
-        logger.debug("Executing simple temporal condition with direct index scan: [{} to {}]", 
-                temporal.startDate(), temporal.endDate());
-        
-        // Get the date index
-        IndexAccess dateIndex = indexes.get(DATE_INDEX);
-        Set<DocSentenceMatch> results = new HashSet<>();
-        
-        try {
-            // Get the date range to search for
-            LocalDateTime startDate = temporal.startDate();
-            LocalDateTime endDate = temporal.endDate().orElse(startDate);
-            
-            // Iterate through the date index
-            try (var iterator = dateIndex.iterator()) {
-                iterator.seekToFirst();
+        List<MatchDetail> details = new ArrayList<>();
+        String conditionId = String.valueOf(condition.hashCode());
+        IndexAccessInterface dateIndex = indexes.get(DATE_INDEX);
+        TemporalPredicate type = condition.temporalType();
+        LocalDateTime queryStart = condition.startDate();
+        LocalDateTime queryEnd = condition.endDate().orElse(queryStart);
+
+        logger.debug("Scanning DATE index directly for condition: {} ({} to {})", type, queryStart, queryEnd);
+
+        try (var iterator = dateIndex.iterator()) {
+            iterator.seekToFirst(); // Start scan from the beginning
+            while (iterator.hasNext()) {
+                 Entry<byte[], byte[]> currentEntry = iterator.peekNext();
+                 String dateStr = new String(currentEntry.getKey(), StandardCharsets.UTF_8);
+                 LocalDate docDate = parseDateKey(dateStr);
                 
-                while (iterator.hasNext()) {
-                    byte[] keyBytes = iterator.peekNext().getKey();
-                    byte[] valueBytes = iterator.peekNext().getValue();
-                    
-                    // Get date value from key
-                    String dateStr = new String(keyBytes, StandardCharsets.UTF_8);
-                    
-                    LocalDate documentDate = null;
-                    
-                    // Use the exact format we expect from NerDateIndexGenerator
-                    try {
-                        documentDate = LocalDate.parse(dateStr, INDEX_DATE_FORMAT);
-                    } catch (DateTimeParseException e) {
-                        iterator.next();
-                        continue; // Skip keys that are not in the expected date format
-                    }
-                    
-                    LocalDateTime documentDateTime = documentDate.atStartOfDay();
-                    
-                    // Check if this date satisfies the temporal condition
-                    boolean matches = evaluateTemporalCondition(temporal.temporalType(), 
-                                                                documentDateTime, startDate, endDate);
-                    
-                    if (matches) {
-                        // Add all document/sentence matches for this date
-                        PositionList positions = PositionList.deserialize(valueBytes);
-                        for (Position position : positions.getPositions()) {
-                            int docId = position.getDocumentId();
-                            int sentenceId = position.getSentenceId();
-                            
-                            if (granularity == Query.Granularity.DOCUMENT) {
-                                results.add(new DocSentenceMatch(docId, corpus));
-                            } else {
-                                results.add(new DocSentenceMatch(docId, sentenceId, corpus));
-                            }
-                        }
-                    }
-                    
-                    iterator.next();
-                }
+                 iterator.next(); // Consume entry
+                
+                 if (docDate != null) {
+                     // Evaluate the condition using helper method
+                     if (evaluateTemporalCondition(type, docDate.atStartOfDay(), queryStart, queryEnd)) {
+                         PositionList positions = PositionList.deserialize(currentEntry.getValue());
+                         for (Position position : positions.getPositions()) {
+                             // Create MatchDetail for each position matching the date criteria
+                             details.add(new MatchDetail(docDate, ValueType.DATE, position, conditionId, null));
+                         }
+                     }
+                 }
             }
-            
-            logger.info("Simple temporal condition (direct index scan) matched {} results ({}-level)", 
-                        results.size(), granularity);
-            return results;
         } catch (Exception e) {
-            throw new QueryExecutionException(
-                "Error executing temporal condition via index scan: " + e.getMessage(),
-                e,
-                temporal.toString(),
-                QueryExecutionException.ErrorType.INTERNAL_ERROR
-            );
+             throw new QueryExecutionException("Error scanning DATE index: " + e.getMessage(), e, condition.toString(), QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR);
+        }
+        logger.debug("DATE index scan found {} matching details", details.size());
+        return details;
+    }
+    
+    /**
+     * Executes temporal variable extraction using the date index, returning MatchDetail list.
+     */
+    private List<MatchDetail> executeTemporalVariableExtraction(
+            Temporal condition,
+            Map<String, IndexAccessInterface> indexes)
+            throws QueryExecutionException {
+        
+        List<MatchDetail> details = new ArrayList<>();
+        String conditionId = String.valueOf(condition.hashCode());
+        String variableName = condition.variable().orElse(null);
+        if (variableName == null) {
+             logger.warn("Variable name missing in temporal variable extraction mode. Condition: {}", condition);
+             return details;
+        }
+
+        IndexAccessInterface dateIndex = indexes.get(DATE_INDEX);
+        TemporalPredicate type = condition.temporalType();
+        LocalDateTime queryStart = condition.startDate();
+        LocalDateTime queryEnd = condition.endDate().orElse(queryStart);
+        
+        logger.debug("Scanning DATE index for variable '{}' extraction: {} ({} to {})", variableName, type, queryStart, queryEnd);
+
+        try (var iterator = dateIndex.iterator()) {
+             iterator.seekToFirst();
+             while (iterator.hasNext()) {
+                 Entry<byte[], byte[]> currentEntry = iterator.peekNext();
+                 String dateStr = new String(currentEntry.getKey(), StandardCharsets.UTF_8);
+                 LocalDate docDate = parseDateKey(dateStr);
+                
+                 iterator.next(); // Consume entry
+                
+                 if (docDate != null) {
+                     if (evaluateTemporalCondition(type, docDate.atStartOfDay(), queryStart, queryEnd)) {
+                         PositionList positions = PositionList.deserialize(currentEntry.getValue());
+                         for (Position position : positions.getPositions()) {
+                             details.add(new MatchDetail(docDate, ValueType.DATE, position, conditionId, variableName));
+                         }
+                     }
+                 }
+             }
+        } catch (Exception e) {
+             throw new QueryExecutionException("Error scanning DATE index for variable extraction: " + e.getMessage(), e, condition.toString(), QueryExecutionException.ErrorType.INDEX_ACCESS_ERROR);
+        }
+        logger.debug("DATE index variable extraction found {} details for '{}'", details.size(), variableName);
+        return details;
+    }
+    
+    /**
+     * Parses a date string from the index key.
+     * Expects format like 'YYYY-MM-DD'. Returns null if parsing fails.
+     */
+    private LocalDate parseDateKey(String dateStr) {
+        try {
+            // Trim potential whitespace before parsing
+            return LocalDate.parse(dateStr.trim(), INDEX_DATE_FORMATTER);
+        } catch (DateTimeParseException e) {
+            logger.trace("Failed to parse date key '{}': {}", dateStr, e.getMessage()); // Trace level might be better
+            return null;
         }
     }
     
     /**
      * Evaluates if a document date satisfies the temporal condition.
-     * 
-     * <p>This method provides a direct implementation of temporal predicates
-     * and is used as an alternative to Nash when precise date matching at the
-     * sentence level is needed. While Nash provides efficient indexing for
-     * document-level temporal queries, this method allows for more flexible
-     * matching with exact position information.</p>
-     * 
-     * <p>The implementation follows these semantics for each type:</p>
-     * <ul>
-     * <li>BEFORE: Document date is before query start date</li>
-     * <li>AFTER: Document date is after query start date</li>
-     * <li>BEFORE_EQUAL: Document date is before or equal to query start date</li>
-     * <li>AFTER_EQUAL: Document date is after or equal to query start date</li>
-     * <li>EQUAL: Document date is exactly equal to query start date</li>
-     * <li>CONTAINS: Document date is within the query date range</li>
-     * <li>CONTAINED_BY: Query date range is within the document date</li>
-     * <li>INTERSECT: Document date overlaps with query date range</li>
-     * <li>PROXIMITY: Document date is within a specified proximity of query date</li>
-     * </ul>
+     * @param type The TemporalPredicate (CONTAINS, INTERSECT, etc.)
+     * @param docDate The start date associated with the document/entry.
+     * @param queryStart The start of the query interval.
+     * @param queryEnd The end of the query interval.
+     * @return true if the condition is met, false otherwise.
      */
-    private boolean evaluateTemporalCondition(
-            TemporalPredicate type, 
-            LocalDateTime docDate,
-            LocalDateTime queryStart,
-            LocalDateTime queryEnd) {
-        
-        return switch (type) {
-            case BEFORE -> docDate.isBefore(queryStart);
-            case AFTER -> docDate.isAfter(queryStart);
-            case BEFORE_EQUAL -> docDate.isBefore(queryStart) || docDate.isEqual(queryStart);
-            case AFTER_EQUAL -> docDate.isAfter(queryStart) || docDate.isEqual(queryStart);
-            case EQUAL -> docDate.isEqual(queryStart);
-            case CONTAINS -> (docDate.isEqual(queryStart) || docDate.isAfter(queryStart)) && 
-                             (docDate.isEqual(queryEnd) || docDate.isBefore(queryEnd));
-            case CONTAINED_BY -> (queryStart.isEqual(docDate) || queryStart.isAfter(docDate)) && 
-                                 (queryEnd.isEqual(docDate) || queryEnd.isBefore(docDate));
-            case INTERSECT -> !(docDate.isBefore(queryStart) || docDate.isAfter(queryEnd));
-            case PROXIMITY -> {
-                // For PROXIMITY, check if within a certain distance (default 1 day)
-                long days = Math.abs(java.time.Duration.between(docDate, queryStart).toDays());
-                yield days <= 1;
-            }
-        };
-    }
-    
-    /**
-     * Represents a matched date with position information.
-     * This is similar to NerExecutor.MatchedEntityValue.
-     * TODO: Consider moving this to a shared location if used elsewhere.
-     */
-    public record MatchedDateValue(LocalDate date, int beginPosition, int endPosition, int documentId, int sentenceId) {
-        @Override
-        public String toString() {
-            return String.format("%s@%d:%d (Doc: %d, Sent: %d)", date, beginPosition, endPosition, documentId, sentenceId);
-        }
-    }
+     private boolean evaluateTemporalCondition(TemporalPredicate type, LocalDateTime docDateTime, LocalDateTime queryStart, LocalDateTime queryEnd) {
+         // Assuming ner_date only stores single dates, not ranges.
+         // So docStart = docEnd = docDateTime
+         LocalDateTime docStart = docDateTime;
+         LocalDateTime docEnd = docDateTime;
 
-    /**
-     * Executes a temporal condition with variable binding.
-     * This handles the case where date values should be extracted and bound to a variable.
-     */
-    private Set<DocSentenceMatch> executeTemporalWithVariableBinding(
-            Temporal condition,
-            String corpus,
-            Map<String, IndexAccess> indexes,
-            BindingContext bindingContext,
-            Query.Granularity granularity) 
-            throws QueryExecutionException {
-        
-        logger.debug("Executing temporal condition with variable binding: {}", condition.variable().get());
-        
-        // Get the variable name
-        String variableName = condition.variable().get();
-        
-        // Validate variable name format (simple name, no dots)
-        if (variableName.contains(".")) {
-             throw new QueryExecutionException(
-                String.format("Invalid variable name format for binding: '%s'. Should not contain '.'", variableName),
-                condition.toString(),
-                QueryExecutionException.ErrorType.INVALID_CONDITION
-            );
-        }
-        
-        // First, get matching documents/sentences using standard temporal filtering
-        // IMPORTANT: We MUST use the direct index scan method here to get sentence IDs if needed.
-        // Nash only provides document IDs.
-        Set<DocSentenceMatch> baseMatches = executeSimpleTemporalWithIndex(condition, corpus, indexes, granularity);
-        
-        // If no base matches, return early
-        if (baseMatches.isEmpty()) {
-            logger.debug("No base matches found for temporal variable binding.");
-            return baseMatches;
-        }
-        
-        logger.debug("Found {} base matches for variable binding.", baseMatches.size());
-
-        // Now bind the extracted date values to the variable for each match
-        IndexAccess dateIndex = indexes.get(DATE_INDEX);
-        LocalDateTime startDate = condition.startDate();
-        LocalDateTime endDate = condition.endDate().orElse(startDate);
-        
-        Set<DocSentenceMatch> finalMatches = new HashSet<>(); // Collect matches that successfully bind a value
-        
-        try {
-            // Use a map to store found dates per document/sentence to avoid redundant lookups
-            Map<Integer, Map<Integer, List<MatchedDateValue>>> foundDates = new HashMap<>(); 
-
-            // Iterate through all date index entries ONCE to find all relevant dates
-            try (var iterator = dateIndex.iterator()) {
-                iterator.seekToFirst();
-                
-                while (iterator.hasNext()) {
-                    byte[] keyBytes = iterator.peekNext().getKey();
-                    byte[] valueBytes = iterator.peekNext().getValue();
-                    
-                    String dateStr = new String(keyBytes, StandardCharsets.UTF_8);
-                    LocalDate documentDate;
-                    try {
-                        documentDate = LocalDate.parse(dateStr, INDEX_DATE_FORMAT);
-                    } catch (DateTimeParseException e) {
-                        iterator.next();
-                        continue; // Skip non-date keys
-                    }
-                    
-                    LocalDateTime documentDateTime = documentDate.atStartOfDay();
-                    
-                    // Check if this date satisfies the temporal condition
-                    if (evaluateTemporalCondition(condition.temporalType(), 
-                                                documentDateTime, startDate, endDate)) {
-                        
-                        // Get positions for this date
-                        PositionList positions = PositionList.deserialize(valueBytes);
-                        for (Position position : positions.getPositions()) {
-                            int docId = position.getDocumentId();
-                            int sentenceId = position.getSentenceId();
-                            
-                            // Store this found date, associated with its doc/sentence
-                            foundDates.computeIfAbsent(docId, k -> new HashMap<>())
-                                      .computeIfAbsent(sentenceId, k -> new ArrayList<>())
-                                      .add(new MatchedDateValue(
-                                            documentDate, 
-                                            position.getBeginPosition(), 
-                                            position.getEndPosition(),
-                                            docId, sentenceId));
-                        }
-                    }
-                    iterator.next();
-                }
-            }
-
-            // Now, iterate through the base matches and bind the found dates
-            for (DocSentenceMatch match : baseMatches) {
-                int docId = match.documentId();
-                int sentenceId = match.sentenceId(); // Will be -1 for document granularity
-
-                List<MatchedDateValue> datesToBind = new ArrayList<>();
-                Map<Integer, List<MatchedDateValue>> docFoundDates = foundDates.get(docId);
-
-                if (docFoundDates != null) {
-                    if (granularity == Query.Granularity.DOCUMENT) {
-                        // For document level, collect all dates found in any sentence of that doc
-                        docFoundDates.values().forEach(datesToBind::addAll);
-                    } else {
-                        // For sentence level, get dates only for that specific sentence
-                         List<MatchedDateValue> sentenceDates = docFoundDates.get(sentenceId);
-                         if (sentenceDates != null) {
-                            datesToBind.addAll(sentenceDates);
-                         }
-                    }
-                }
-                
-                // If we found dates for this match, bind them and add to final results
-                if (!datesToBind.isEmpty()) {
-                    // Bind all found date values associated with this match
-                    // Note: BindingContext might need adjustment if multiple values are bound to the same variable name.
-                    // Currently, it likely overwrites. Let's bind the list for now.
-                    // TODO: Clarify BindingContext behavior with multiple values.
-                    
-                    // Using the first found date for simplicity now.
-                    MatchedDateValue firstDate = datesToBind.get(0);
-                    
-                    // Convert MatchedDateValue to NerExecutor.MatchedEntityValue for binding
-                    // TODO: Create a common value type?
-                     NerExecutor.MatchedEntityValue bindValue = new NerExecutor.MatchedEntityValue(
-                        firstDate.date().format(INDEX_DATE_FORMAT), // Bind using the index format string
-                        firstDate.beginPosition(), 
-                        firstDate.endPosition(),
-                        firstDate.documentId(), 
-                        firstDate.sentenceId()
-                    );
-
-                    bindingContext.bindValue(variableName, bindValue); 
-                    match.setVariableValue(variableName, bindValue); 
-                    finalMatches.add(match); // Add the match with the bound value
-
-                    if (datesToBind.size() > 1) {
-                         logger.warn("Multiple ({}) date values found for variable '{}' at doc:{}, sent:{}. Binding only the first: {}", 
-                                    datesToBind.size(), variableName, docId, sentenceId, firstDate);
-                    } else {
-                        logger.debug("Bound DATE value '{}' at doc:{}, sent:{} to variable '{}'", 
-                                   firstDate, docId, sentenceId, variableName);
-                    }
-                } else {
-                     logger.debug("No specific date value found to bind for match: {}", match);
-                }
-            }
-
-        } catch (Exception e) {
-            logger.error("Error binding date values: {}", e.getMessage(), e);
-            throw new QueryExecutionException(
-                "Error binding date values: " + e.getMessage(),
-                e,
-                condition.toString(),
-                QueryExecutionException.ErrorType.INTERNAL_ERROR
-            );
-        }
-        
-        logger.debug("Temporal variable binding complete. Returning {} final matches.", finalMatches.size());
-        return finalMatches;
-    }
+         return switch (type) {
+             case CONTAINS -> // Query interval [queryStart, queryEnd] must contain doc interval [docStart, docEnd]
+                 !queryStart.isAfter(docStart) && !queryEnd.isBefore(docEnd);
+             case CONTAINED_BY -> // Doc interval [docStart, docEnd] must contain query interval [queryStart, queryEnd]
+                 !docStart.isAfter(queryStart) && !docEnd.isBefore(queryEnd);
+             case INTERSECT -> // Intervals overlap
+                 !queryStart.isAfter(docEnd) && !queryEnd.isBefore(docStart);
+             // Add other cases like BEFORE, AFTER, EQUALS if needed
+             default -> {
+                 logger.warn("Unsupported TemporalPredicate type: {}", type);
+                 yield false;
+             }
+         };
+     }
 } 

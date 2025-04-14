@@ -44,8 +44,15 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     @Override
     public Query visitQuery(QueryLangParser.QueryContext ctx) {
         String source = null;
-        if (ctx.identifier() != null) {
-            source = (String) visitIdentifier(ctx.identifier());
+        Optional<String> mainAlias = Optional.empty(); // Initialize mainAlias
+        
+        // Get the FROM source identifier
+        if (ctx.identifier() != null && !ctx.identifier().isEmpty()) {
+            source = ctx.identifier(0).getText();
+            // Check if an alias is provided for the main source
+            if (ctx.alias != null) {
+                mainAlias = Optional.of(ctx.alias.getText());
+            }
         }
         
         List<Condition> conditions = new ArrayList<>();
@@ -106,7 +113,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             throw new IllegalStateException("Variable binding errors: " + String.join(", ", validationErrors));
         }
 
-        return new Query(source, conditions, orderColumns, limit, granularity, granularitySize, selectColumns, variableRegistry, subqueries, joinCondition);
+        return new Query(source, conditions, orderColumns, limit, granularity, granularitySize, selectColumns, variableRegistry, subqueries, joinCondition, mainAlias);
     }
 
     @Override
@@ -119,6 +126,14 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     }
     
     @Override
+    public Object visitQualifiedColumn(QueryLangParser.QualifiedColumnContext ctx) {
+        // Visit the qualifiedIdentifier child to get the full name (e.g., "alias.?variable")
+        String qualifiedName = (String) visitQualifiedIdentifier(ctx.qualifiedIdentifier());
+        // Reuse VariableColumn to represent this selected column
+        return new VariableColumn(qualifiedName);
+    }
+
+    @Override
     public Object visitVariableColumn(QueryLangParser.VariableColumnContext ctx) {
         String variable = (String) visit(ctx.variable());
         return new VariableColumn(variable);
@@ -126,8 +141,12 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     
     @Override
     public Object visitSnippetColumn(QueryLangParser.SnippetColumnContext ctx) {
-        SnippetNode snippet = (SnippetNode) visit(ctx.snippetExpression());
-        return new SnippetColumn(snippet);
+        SnippetNode snippetNode = (SnippetNode) visit(ctx.snippetExpression());
+        // Extract windowSize and variableName from the node
+        int windowSize = snippetNode.windowSize(); 
+        String variableName = snippetNode.variable(); // Get variable name
+        // Use variableName and windowSize to create SnippetColumn
+        return new SnippetColumn(variableName, windowSize);
     }
     
     @Override
@@ -292,7 +311,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         String value = terms.get(0);
         
         if (ctx.var != null) {
-            variableName = (String) visitVariable(ctx.var);
+            variableName = (String) visit(ctx.var);
             isVariable = true;
             // Register variable in registry with TEXT_SPAN type
             variableRegistry.registerProducer(variableName, VariableType.TEXT_SPAN, "CONTAINS");
@@ -308,7 +327,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         boolean isVariable = false;
         
         if (ctx.var != null) {
-            variableName = (String) visitVariable(ctx.var);
+            variableName = (String) visit(ctx.var);
             isVariable = true;
             // Register variable in registry with appropriate type based on NER entity type
             VariableType varType = determineNerVariableType(type);
@@ -368,20 +387,46 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         String operator = ctx.comparisonOp().getText();
         int year = Integer.parseInt(ctx.year.getText());
         
-        Temporal.ComparisonType compType = mapComparisonOp(operator);
+        TemporalPredicate predicate = TemporalPredicate.INTERSECT; // Use INTERSECT for all comparisons
+        LocalDateTime queryStart;
+        Optional<LocalDateTime> queryEnd = Optional.empty();
+
+        // Define the interval based on the comparison operator
+        switch (operator.toUpperCase()) {
+            case ">": // Greater than year (e.g., > 2000 means 2001 onwards)
+                queryStart = LocalDateTime.of(year + 1, 1, 1, 0, 0);
+                queryEnd = Optional.of(LocalDateTime.MAX); // Use MAX for unbounded upper end
+                break;
+            case "<": // Less than year (e.g., < 2000 means up to end of 1999)
+                queryStart = LocalDateTime.MIN; 
+                queryEnd = Optional.of(LocalDateTime.of(year - 1, 12, 31, 23, 59, 59));
+                break;
+            case ">=": // Greater than or equal to year (e.g., >= 2000 means 2000 onwards)
+                queryStart = LocalDateTime.of(year, 1, 1, 0, 0);
+                queryEnd = Optional.of(LocalDateTime.MAX); // Use MAX for unbounded upper end
+                break;
+            case "<=": // Less than or equal to year (e.g., <= 2000 means up to end of 2000)
+                queryStart = LocalDateTime.MIN;
+                queryEnd = Optional.of(LocalDateTime.of(year, 12, 31, 23, 59, 59));
+                break;
+            case "=":
+            case "==": // Equal to year (e.g., == 2000 means the full year 2000)
+                queryStart = LocalDateTime.of(year, 1, 1, 0, 0);
+                queryEnd = Optional.of(LocalDateTime.of(year, 12, 31, 23, 59, 59));
+                break;
+            default:
+                throw new IllegalStateException("Invalid comparison operator: " + operator);
+        }
         
         String variableName = null;
         if (ctx.var != null) {
-            variableName = (String) visitVariable(ctx.var);
+            variableName = (String) visit(ctx.var);
             // Register variable in registry with TEMPORAL type
             variableRegistry.registerProducer(variableName, VariableType.TEMPORAL, "TEMPORAL");
         }
         
-        // Use the appropriate constructor based on whether we have a variable
-        if (variableName != null) {
-            return new Temporal(compType, year, variableName);
-        }
-        return new Temporal(compType, year);
+        // Create the Temporal condition using the INTERSECT predicate and the defined interval
+        return new Temporal(queryStart, queryEnd, Optional.ofNullable(variableName), Optional.empty(), predicate);
     }
     
     @Override
@@ -423,7 +468,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         
         String variableName = null;
         if (ctx.var != null) {
-            variableName = (String) visitVariable(ctx.var);
+            variableName = (String) visit(ctx.var);
             // Register variable in registry with TEMPORAL type
             variableRegistry.registerProducer(variableName, VariableType.TEMPORAL, "TEMPORAL");
         }
@@ -495,7 +540,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         boolean isVariable = false;
         
         if (ctx.var != null) {
-            variableName = (String) visitVariable(ctx.var);
+            variableName = (String) visit(ctx.var);
             isVariable = true;
             // Register variable in registry with DEPENDENCY type
             variableRegistry.registerProducer(variableName, VariableType.DEPENDENCY, "DEPENDENCY");
@@ -598,7 +643,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         boolean isVariable = false;
         
         if (ctx.var != null) {
-            variableName = (String) visitVariable(ctx.var);
+            variableName = (String) visit(ctx.var);
             isVariable = true;
             // Register variable in registry with POS_TAG type
             variableRegistry.registerProducer(variableName, VariableType.POS_TAG, "POS");
@@ -723,18 +768,55 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
 
     @Override
     public Object visitQualifiedIdentifier(QueryLangParser.QualifiedIdentifierContext ctx) {
-        String tableName = ctx.identifier(0).getText();
-        String columnName;
-        
-        // Check if the right part is an identifier or a variable
-        if (ctx.getChild(2) instanceof QueryLangParser.IdentifierContext) {
-            columnName = ((QueryLangParser.IdentifierContext) ctx.getChild(2)).getText();
+        // Grammar: (identifier | variable) '.' (identifier | variable)
+        String leftPart;
+        String rightPart;
+
+        // ANTLR generates lists for potentially multiple matches
+        List<QueryLangParser.IdentifierContext> ids = ctx.identifier();
+        List<QueryLangParser.VariableContext> vars = ctx.variable();
+
+        // The first child (index 0) is the left part
+        ParseTree firstChild = ctx.getChild(0);
+        if (firstChild instanceof QueryLangParser.VariableContext) {
+            // Should correspond to vars.get(0) if the list isn't empty
+            if (vars != null && !vars.isEmpty()) {
+                 leftPart = (String) visitVariable(vars.get(0));
+            } else {
+                 throw new IllegalStateException("Grammar mismatch: Expected VariableContext first but list is empty/null.");
+            }
+        } else if (firstChild instanceof QueryLangParser.IdentifierContext) {
+            // Should correspond to ids.get(0) if the list isn't empty
+            if (ids != null && !ids.isEmpty()) {
+                leftPart = ids.get(0).getText();
+            } else {
+                 throw new IllegalStateException("Grammar mismatch: Expected IdentifierContext first but list is empty/null.");
+            }
         } else {
-            // Must be a variable
-            columnName = (String) visit(ctx.getChild(2));
+             throw new IllegalStateException("QualifiedIdentifier couldn't determine left part before dot. Found: " + firstChild.getClass().getSimpleName());
         }
-        
-        return tableName + "." + columnName;
+
+        // The third child (index 2, after the '.' at index 1) is the right part
+        ParseTree thirdChild = ctx.getChild(2);
+         if (thirdChild instanceof QueryLangParser.VariableContext) {
+            // Use the last variable in the list, as it must be the one after the dot.
+             if (vars != null && vars.size() > 0) {
+                 rightPart = (String) visitVariable(vars.get(vars.size() - 1));
+             } else {
+                  throw new IllegalStateException("Grammar mismatch: Expected VariableContext third but list is empty/null.");
+             }
+        } else if (thirdChild instanceof QueryLangParser.IdentifierContext) {
+             // Use the last identifier in the list, as it must be the one after the dot.
+             if (ids != null && ids.size() > 0) {
+                 rightPart = ids.get(ids.size() - 1).getText();
+             } else {
+                 throw new IllegalStateException("Grammar mismatch: Expected IdentifierContext third but list is empty/null.");
+             }
+        } else {
+            throw new IllegalStateException("QualifiedIdentifier couldn't determine right part after dot. Found: " + thirdChild.getClass().getSimpleName());
+        }
+
+        return leftPart + "." + rightPart;
     }
 
     @Override

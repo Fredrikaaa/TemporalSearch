@@ -7,7 +7,6 @@ import com.example.query.model.*;
 import com.example.query.result.*;
 import com.example.core.*;
 import com.example.query.sqlite.SqliteAccessor;
-import com.example.query.binding.BindingContext;
 
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
@@ -108,25 +107,28 @@ public class QueryCLI {
                 // 5. Execute query using QueryExecutor
                 logger.debug("Executing query against index set: {}", indexSetName);
                 Query.Granularity granularity = query.granularity();
-                logger.info("Query granularity: {} with size: {}", 
-                    granularity, query.granularitySize().isPresent() ? query.granularitySize().get() : 0);
-                Set<DocSentenceMatch> matches = executor.execute(query, indexManager.getAllIndexes());
-                BindingContext bindingContext = executor.getBindingContext();
+                int windowSize = query.granularitySize().orElse(0); // Use 0 if not present
+                logger.info("Query granularity: {} with size: {}", granularity, windowSize);
                 
-                // Display the total number of matches based on granularity
-                if (granularity == Query.Granularity.DOCUMENT) {
-                    Set<Integer> documentIds = executor.getDocumentIds(matches);
-                    logger.info("Query executed, found {} matching documents", documentIds.size());
-                    System.out.println("Total matches: " + documentIds.size() + " documents");
-                } else {
-                    logger.info("Query executed, found {} matching sentences", matches.size());
-                    System.out.println("Total matches: " + matches.size() + " sentences");
-                }
+                // executor.execute now returns QueryResult
+                QueryResult result = executor.execute(query, indexManager.getAllIndexes());
                 
-                // 6. Generate results using TableResultService with corpus-specific database path
+                // --- Adapt Match Count Display --- 
+                // Use result.getAllDetails().size() as a proxy for count. 
+                // TODO: Improve count logic based on QueryResult granularity/structure if needed.
+                int matchCount = result.getAllDetails().size(); 
+                String matchUnit = (granularity == Query.Granularity.DOCUMENT) ? "documents (approx details)" : "sentences (approx details)";
+                logger.info("Query executed, found {} matching details (granularity: {})", matchCount, granularity);
+                System.out.println("Total matches: " + matchCount + " " + matchUnit);
+                // Removed specific document ID counting block
+
+                // 6. Generate results using TableResultService 
                 logger.debug("Generating result table");
                 Table resultTable = tableResultService.generateTable(
-                    query, matches, bindingContext, indexManager.getAllIndexes());
+                    query, 
+                    result, // Pass QueryResult 
+                    indexManager.getAllIndexes()
+                );
                 
                 // NOTE: We're now using Tablesaw's sorting capabilities directly
                 // The orderBy list in Query now contains Tablesaw-compatible sort strings

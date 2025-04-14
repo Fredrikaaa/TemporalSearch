@@ -29,9 +29,6 @@ public record Logical(
     public Logical {
         Objects.requireNonNull(operator, "operator cannot be null");
         Objects.requireNonNull(conditions, "conditions cannot be null");
-        if (conditions.isEmpty()) {
-            throw new IllegalArgumentException("conditions cannot be empty");
-        }
         // Make defensive copy of conditions
         conditions = List.copyOf(conditions);
     }

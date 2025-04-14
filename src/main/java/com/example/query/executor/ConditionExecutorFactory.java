@@ -13,20 +13,19 @@ public final class ConditionExecutorFactory {
     
     // Executors are now all singletons since they don't need variable names
     private final LogicalExecutor logicalExecutor;
-    private final NotExecutor notExecutor;
     private final NerExecutor nerExecutor;
     private final ContainsExecutor containsExecutor;
     private final PosExecutor posExecutor;
     private final DependencyExecutor dependencyExecutor;
     private final TemporalExecutor temporalExecutor;
+    private final NotExecutor notExecutor;
     
     /**
      * Creates a new ConditionExecutorFactory with singleton executor instances.
      */
     public ConditionExecutorFactory() {
-        // Logical and Not executors need this factory for recursive execution
+        // Logical executor needs this factory for recursive execution
         this.logicalExecutor = new LogicalExecutor(this);
-        this.notExecutor = new NotExecutor(this);
         
         // Other executors are now also singletons
         this.nerExecutor = new NerExecutor();
@@ -34,6 +33,7 @@ public final class ConditionExecutorFactory {
         this.posExecutor = new PosExecutor();
         this.dependencyExecutor = new DependencyExecutor();
         this.temporalExecutor = new TemporalExecutor();
+        this.notExecutor = new NotExecutor(this);
         
         logger.debug("Initialized condition executor factory");
     }
@@ -58,8 +58,9 @@ public final class ConditionExecutorFactory {
             case Pos c -> posExecutor;
             case Dependency c -> dependencyExecutor;
             case Logical c -> logicalExecutor;
-            case Not c -> notExecutor;
             case Temporal c -> temporalExecutor;
+            case Not c -> notExecutor;
+            default -> throw new IllegalArgumentException("Unsupported condition type: " + condition.getClass().getSimpleName());
         };
     }
 } 

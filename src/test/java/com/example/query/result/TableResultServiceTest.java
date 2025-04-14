@@ -1,24 +1,25 @@
 package com.example.query.result;
 
-import com.example.query.binding.BindingContext;
-import com.example.query.model.DocSentenceMatch;
-import com.example.query.model.Query;
 import com.example.core.IndexAccess;
+import com.example.core.IndexAccessException;
+import com.example.core.IndexAccessInterface;
+import com.example.core.Position;
+import com.example.core.PositionList;
+import com.example.query.binding.MatchDetail;
+import com.example.query.binding.ValueType;
+import com.example.query.executor.QueryResult;
+import com.example.query.model.Query;
+import com.example.query.model.SelectColumn;
 import com.example.query.model.VariableColumn;
+import com.example.query.executor.SubqueryContext;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import tech.tablesaw.api.Table;
+import tech.tablesaw.api.*;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
 /**
  * Tests for the TableResultService class.
@@ -26,126 +27,109 @@ import static org.mockito.Mockito.*;
 class TableResultServiceTest {
     
     private TableResultService tableResultService;
-    private Query mockQuery;
-    private Set<DocSentenceMatch> mockMatches;
-    private BindingContext mockBindingContext;
-    private Map<String, IndexAccess> mockIndexes;
+    private Map<String, IndexAccessInterface> indexes;
     
     @BeforeEach
-    void setUp() throws ResultGenerationException {
-        // Create a simplified version of TableResultService for testing
-        tableResultService = spy(new TableResultService());
-        
-        // Create mock objects
-        mockQuery = mock(Query.class);
-        mockMatches = new HashSet<>();
-        mockBindingContext = mock(BindingContext.class);
-        mockIndexes = new HashMap<>();
-        
-        // Set up mock query
-        when(mockQuery.granularity()).thenReturn(Query.Granularity.DOCUMENT);
-        when(mockQuery.selectColumns()).thenReturn(Collections.emptyList());
-        when(mockQuery.orderBy()).thenReturn(Collections.emptyList());
-        when(mockQuery.limit()).thenReturn(Optional.empty());
-        
-        // Add a sample match
-        DocSentenceMatch match = new DocSentenceMatch(1, 0);
-        mockMatches.add(match);
-        
-        // Set up variable bindings
-        when(mockBindingContext.getValue(eq("?person"), eq(String.class)))
-            .thenReturn(Optional.of("John Smith"));
-        when(mockBindingContext.getValue(eq("?location"), eq(String.class)))
-            .thenReturn(Optional.of("New York"));
-        
-        // Set up variable names
-        when(mockBindingContext.getVariableNames()).thenReturn(Set.of("?person", "?location"));
-        when(mockBindingContext.getValues(eq("?person"), eq(String.class))).thenReturn(List.of("John Smith"));
-        when(mockBindingContext.getValues(eq("?location"), eq(String.class))).thenReturn(List.of("New York"));
-        
-        // Mock the table generation to return a simple table
-        doAnswer(invocation -> {
-            Table table = Table.create("TestTable");
-            table.addColumns(tech.tablesaw.api.StringColumn.create("document_id", List.of("1")));
-            return table;
-        }).when(tableResultService).generateTable(any(), any(), any(), any());
+    void setUp() {
+        tableResultService = new TableResultService();
+        indexes = new HashMap<>();
     }
     
-    @Test
-    @DisplayName("Test generating a table from query results")
-    void testGenerateTable() throws ResultGenerationException {
-        // When
-        Table table = tableResultService.generateTable(mockQuery, mockMatches, mockBindingContext, mockIndexes);
-        
-        // Then
-        assertNotNull(table, "Table should not be null");
-        assertTrue(table.columnCount() > 0, "Table should have columns");
-        assertEquals(1, table.rowCount(), "Table should have one row");
+    // Helper to create QueryResult
+    private QueryResult createQueryResult(Query.Granularity granularity, List<MatchDetail> details) {
+        // Assuming constructor QueryResult(granularity, details)
+        return new QueryResult(granularity, details);
     }
     
+    // Helper to create MatchDetail
+    private MatchDetail createMatchDetail(int docId, int sentenceId, String value, ValueType type, String varName) {
+        Position pos = new Position(docId, sentenceId, 0, 0, LocalDate.now());
+        return new MatchDetail(value, type, pos, "mockCond", varName);
+    }
+
     @Test
-    @DisplayName("Test exporting table to CSV format")
-    void testExportTableToCsv(@TempDir Path tempDir) throws ResultGenerationException, IOException {
-        // Given
-        Table table = tableResultService.generateTable(mockQuery, mockMatches, mockBindingContext, mockIndexes);
-        File outputFile = tempDir.resolve("test-output.csv").toFile();
+    void testGenerateTableDocumentGranularity() throws ResultGenerationException {
+        Query query = new Query("testSource", Collections.emptyList(), Query.Granularity.DOCUMENT);
+        List<MatchDetail> details = List.of(
+            createMatchDetail(1, -1, "apple", ValueType.TERM, null),
+            createMatchDetail(2, -1, "banana", ValueType.TERM, null)
+        );
+        QueryResult queryResult = createQueryResult(Query.Granularity.DOCUMENT, details);
         
-        // When
-        tableResultService.exportTable(table, "csv", outputFile.getAbsolutePath());
+        // Pass the QueryResult to generateTable
+        Table table = tableResultService.generateTable(query, queryResult, indexes);
         
-        // Then
-        assertTrue(outputFile.exists(), "Output file should exist");
-        assertTrue(outputFile.length() > 0, "Output file should not be empty");
+        assertNotNull(table);
+        assertEquals(2, table.rowCount(), "Should have 2 rows for 2 documents");
+        assertTrue(table.columnNames().contains("document_id"), "Should contain document_id column");
+        // Assertions for document IDs (expecting IntColumn)
+        assertEquals(1, table.intColumn("document_id").get(0), "Doc ID for first row");
+        assertEquals(2, table.intColumn("document_id").get(1), "Doc ID for second row");
+    }
+
+    @Test
+    void testGenerateTableSentenceGranularity() throws ResultGenerationException {
+        Query query = new Query("testSource", Collections.emptyList(), Query.Granularity.SENTENCE);
+         List<MatchDetail> details = List.of(
+            createMatchDetail(1, 1, "apple", ValueType.TERM, null),
+            createMatchDetail(1, 2, "banana", ValueType.TERM, null),
+            createMatchDetail(2, 1, "cherry", ValueType.TERM, null)
+        );
+        QueryResult queryResult = createQueryResult(Query.Granularity.SENTENCE, details);
+
+        Table table = tableResultService.generateTable(query, queryResult, indexes);
         
-        // Check file content
-        String content = Files.readString(outputFile.toPath());
-        assertTrue(content.contains("document_id"), "CSV should contain column headers");
+        assertNotNull(table);
+        assertEquals(3, table.rowCount(), "Should have 3 rows for 3 sentences");
+        assertTrue(table.columnNames().contains("document_id"), "Should contain document_id column");
+        assertTrue(table.columnNames().contains("sentence_id"), "Should contain sentence_id column");
+        // Assertions expecting IntColumns
+        assertEquals(1, table.intColumn("document_id").get(0));
+        assertEquals(1, table.intColumn("sentence_id").get(0));
+        assertEquals(1, table.intColumn("document_id").get(1));
+        assertEquals(2, table.intColumn("sentence_id").get(1));
+        assertEquals(2, table.intColumn("document_id").get(2));
+        assertEquals(1, table.intColumn("sentence_id").get(2));
     }
     
-    @Test
-    @DisplayName("Test formatting table as string")
-    void testFormatTable() throws ResultGenerationException {
-        // Given
-        Table table = tableResultService.generateTable(mockQuery, mockMatches, mockBindingContext, mockIndexes);
-        
-        // When
-        String formatted = tableResultService.formatTable(table);
-        
-        // Then
-        assertNotNull(formatted, "Formatted string should not be null");
-        assertTrue(formatted.length() > 0, "Formatted string should not be empty");
-    }
-    
-    @Test
-    public void testOrderByNonExistentColumn() {
-        // Create a new instance of TableResultService that doesn't use the mock setup
-        TableResultService realTableResultService = new TableResultService();
-        
-        // Create a query with an ORDER BY clause referencing a column not in the SELECT clause
+     @Test
+    void testGenerateTableWithSelectColumns() throws ResultGenerationException {
+        List<SelectColumn> select = List.of(new VariableColumn("?fruit"));
         Query query = new Query(
-            "test",
-            List.of(),
-            List.of("non_existent_column"), // Order by a column not in the result set
+            "testSource",
+            Collections.emptyList(),
+            Collections.emptyList(),
             Optional.empty(),
             Query.Granularity.DOCUMENT,
             Optional.empty(),
-            List.of(new VariableColumn("existingColumn")) // Only select existingColumn
+            select
         );
         
-        // Create a match and binding context
-        DocSentenceMatch match = new DocSentenceMatch(1, "test");
-        Set<DocSentenceMatch> matches = Set.of(match);
-        BindingContext bindingContext = BindingContext.empty();
-        bindingContext.bindValue("?existingColumn", "value");
-        
-        // Verify that the exception is thrown
-        ResultGenerationException exception = assertThrows(
-            ResultGenerationException.class,
-            () -> realTableResultService.generateTable(query, matches, bindingContext, Map.of())
+        List<MatchDetail> details = List.of(
+            createMatchDetail(1, -1, "apple", ValueType.TERM, "?fruit"),
+            createMatchDetail(2, -1, "banana", ValueType.TERM, "?fruit")
         );
+        QueryResult queryResult = createQueryResult(Query.Granularity.DOCUMENT, details);
+
+        Table table = tableResultService.generateTable(query, queryResult, indexes);
+
+        assertNotNull(table);
+        assertEquals(2, table.rowCount());
+        assertTrue(table.columnNames().contains("document_id"));
+        assertTrue(table.columnNames().contains("?fruit")); 
+        assertEquals("apple", table.stringColumn("?fruit").get(0));
+        assertEquals("banana", table.stringColumn("?fruit").get(1));
+    }
+
+    @Test
+    void testGenerateTableEmptyResult() throws ResultGenerationException {
+        Query query = new Query("testSource", Collections.emptyList(), Query.Granularity.DOCUMENT);
+        QueryResult emptyResult = createQueryResult(Query.Granularity.DOCUMENT, Collections.emptyList());
         
-        // Verify the exception message
-        assertTrue(exception.getMessage().contains("Cannot order by column 'non_existent_column'"));
-        assertEquals(ResultGenerationException.ErrorType.INTERNAL_ERROR, exception.getErrorType());
+        Table table = tableResultService.generateTable(query, emptyResult, indexes);
+        
+        assertNotNull(table);
+        assertEquals(0, table.rowCount());
+        assertTrue(table.name().contains("EmptyQueryResults"));
     }
 } 

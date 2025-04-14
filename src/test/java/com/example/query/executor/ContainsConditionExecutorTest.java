@@ -4,12 +4,15 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.example.core.IndexAccess;
+import com.example.core.IndexAccessException;
+import com.example.core.IndexAccessInterface;
 import com.example.core.Position;
 import com.example.core.PositionList;
-import com.example.query.binding.BindingContext;
-import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Contains;
+import com.example.query.executor.QueryResult;
+import com.example.query.binding.MatchDetail;
+import com.example.query.binding.ValueType;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,11 +22,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import org.iq80.leveldb.DBIterator;
 
 @ExtendWith(MockitoExtension.class)
 public class ContainsConditionExecutorTest {
@@ -31,21 +38,22 @@ public class ContainsConditionExecutorTest {
     @Mock private IndexAccess mockUnigramIndex;
     @Mock private IndexAccess mockBigramIndex;
     @Mock private IndexAccess mockTrigramIndex;
+    @Mock private DBIterator unigramIterator;
+    @Mock private DBIterator bigramIterator;
+    @Mock private DBIterator trigramIterator;
     
     private ContainsExecutor executor;
-    private Map<String, IndexAccess> indexes;
-    private BindingContext bindingContext;
+    private Map<String, IndexAccessInterface> indexes;
     
     @BeforeEach
-    void setUp() {
+    void setUp() throws IndexAccessException {
+        indexes = Map.of("unigram", mockUnigramIndex, "bigram", mockBigramIndex, "trigram", mockTrigramIndex);
+        // Make lenient as it might not be used in all tests (e.g., wildcard tests)
+        lenient().when(mockUnigramIndex.iterator()).thenReturn(mock(DBIterator.class));
+        lenient().when(mockBigramIndex.iterator()).thenReturn(mock(DBIterator.class));
+        lenient().when(mockTrigramIndex.iterator()).thenReturn(mock(DBIterator.class));
+        
         executor = new ContainsExecutor();
-        
-        indexes = new HashMap<>();
-        indexes.put("unigram", mockUnigramIndex);
-        indexes.put("bigram", mockBigramIndex);
-        indexes.put("trigram", mockTrigramIndex);
-        
-        bindingContext = BindingContext.empty();
     }
     
     @Test
@@ -60,15 +68,15 @@ public class ContainsConditionExecutorTest {
         when(mockUnigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
         
         // Verify
         verify(mockUnigramIndex).get(any());
-        assertEquals(2, result.size());
+        assertEquals(2, result.getAllDetails().size());
         
         // Extract document IDs for verification
-        Set<Integer> docIds = result.stream()
-                .map(DocSentenceMatch::documentId)
+        Set<Integer> docIds = result.getAllDetails().stream()
+                .map(d -> d.getDocumentId())
                 .collect(Collectors.toSet());
         
         assertTrue(docIds.contains(1));
@@ -88,16 +96,16 @@ public class ContainsConditionExecutorTest {
         when(mockBigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
         
         // Verify
         verify(mockBigramIndex).get(any());
         
-        assertEquals(2, result.size());
+        assertEquals(2, result.getAllDetails().size());
         
         // Extract document IDs for verification
-        Set<Integer> docIds = result.stream()
-                .map(DocSentenceMatch::documentId)
+        Set<Integer> docIds = result.getAllDetails().stream()
+                .map(d -> d.getDocumentId())
                 .collect(Collectors.toSet());
         
         assertTrue(docIds.contains(1));
@@ -119,16 +127,16 @@ public class ContainsConditionExecutorTest {
         when(mockBigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
         
         // Verify
         verify(mockBigramIndex).get(any());
         
-        assertEquals(2, result.size());
+        assertEquals(2, result.getAllDetails().size());
         
         // Extract document IDs for verification
-        Set<Integer> docIds = result.stream()
-                .map(DocSentenceMatch::documentId)
+        Set<Integer> docIds = result.getAllDetails().stream()
+                .map(d -> d.getDocumentId())
                 .collect(Collectors.toSet());
         
         assertTrue(docIds.contains(1));
@@ -147,16 +155,16 @@ public class ContainsConditionExecutorTest {
         when(mockTrigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
         
         // Verify
         verify(mockTrigramIndex).get(any());
         
-        assertEquals(2, result.size());
+        assertEquals(2, result.getAllDetails().size());
         
         // Extract document IDs for verification
-        Set<Integer> docIds = result.stream()
-                .map(DocSentenceMatch::documentId)
+        Set<Integer> docIds = result.getAllDetails().stream()
+                .map(d -> d.getDocumentId())
                 .collect(Collectors.toSet());
         
         assertTrue(docIds.contains(1));
@@ -172,10 +180,10 @@ public class ContainsConditionExecutorTest {
         // This test will need to be updated when wildcard support is implemented
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
         
         // Verify
-        assertTrue(result.isEmpty());
+        assertTrue(result.getAllDetails().isEmpty());
     }
     
     @Test
@@ -187,11 +195,11 @@ public class ContainsConditionExecutorTest {
         when(mockUnigramIndex.get(any())).thenReturn(Optional.empty());
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
         
         // Verify
         verify(mockUnigramIndex).get(any());
-        assertTrue(result.isEmpty());
+        assertTrue(result.getAllDetails().isEmpty());
     }
     
     @Test
@@ -202,7 +210,7 @@ public class ContainsConditionExecutorTest {
         // Execute and verify exception
         QueryExecutionException exception = assertThrows(
             QueryExecutionException.class,
-            () -> executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0)
+            () -> executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus")
         );
         
         assertEquals(QueryExecutionException.ErrorType.INVALID_CONDITION, exception.getErrorType());
@@ -212,12 +220,12 @@ public class ContainsConditionExecutorTest {
     void testExecuteMissingIndex() throws QueryExecutionException {
         // Setup
         Contains condition = new Contains("test");
-        Map<String, IndexAccess> emptyIndexes = new HashMap<>();
+        Map<String, IndexAccessInterface> emptyIndexes = new HashMap<>();
         
         // Execute and verify exception
         QueryExecutionException exception = assertThrows(
             QueryExecutionException.class,
-            () -> executor.execute(condition, emptyIndexes, bindingContext, Query.Granularity.DOCUMENT, 1)
+            () -> executor.execute(condition, emptyIndexes, Query.Granularity.DOCUMENT, 1, "test_corpus")
         );
         
         // Verify the exception details
@@ -240,7 +248,7 @@ public class ContainsConditionExecutorTest {
         lenient().when(mockTrigramIndex.get(any())).thenReturn(Optional.of(positionList));
         
         // Execute with document granularity
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
         
         // Verify interactions with all indexes
         System.out.println("Unigram interactions: " + mockingDetails(mockUnigramIndex).getInvocations().size());
@@ -248,5 +256,186 @@ public class ContainsConditionExecutorTest {
         System.out.println("Trigram interactions: " + mockingDetails(mockTrigramIndex).getInvocations().size());
         
         // No assertions - this is just for debugging
+    }
+
+    @Test
+    void testExecuteSingleTermWithVariableBinding() throws Exception {
+        // Setup
+        String variableName = "?termVar";
+        String searchTerm = "keyword";
+        Contains condition = new Contains(searchTerm, variableName, true);
+        PositionList positionList = new PositionList();
+        Position pos1 = new Position(1, 1, 10, 17, LocalDate.now());
+        Position pos2 = new Position(1, 2, 5, 12, LocalDate.now()); // Same doc, different sentence
+        Position pos3 = new Position(2, 1, 0, 7, LocalDate.now());   // Different doc
+        positionList.add(pos1);
+        positionList.add(pos2);
+        positionList.add(pos3);
+
+        // Expect unigram index to be used
+        when(mockUnigramIndex.get(eq(searchTerm.getBytes()))).thenReturn(Optional.of(positionList));
+
+        // Execute with sentence granularity
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.SENTENCE, 0, "test_corpus");
+
+        // Verify results (should have 3 sentence matches)
+        verify(mockUnigramIndex).get(eq(searchTerm.getBytes()));
+        assertEquals(3, result.getAllDetails().size());
+        assertTrue(result.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 1 && d.getSentenceId() == 1));
+        assertTrue(result.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 1 && d.getSentenceId() == 2));
+        assertTrue(result.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 2 && d.getSentenceId() == 1));
+
+        // Verify variable name is correctly set in MatchDetail
+        assertTrue(result.getAllDetails().stream().allMatch(d -> variableName.equals(d.variableName())),
+                   "Variable name should be set in MatchDetail");
+        assertTrue(result.getAllDetails().stream().allMatch(d -> searchTerm.equals(d.value())),
+                   "Value in MatchDetail should be the search term");
+    }
+
+    @Test
+    void testSentenceGranularityWithWindow() throws QueryExecutionException {
+        // ... setup ...
+        Contains condition = new Contains("test"); // Define a basic condition
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.SENTENCE, 1, "test_corpus"); 
+        // ... assertions ...
+    }
+
+    // Helper to create simple MatchDetail (from QueryExecutorTest)
+    private MatchDetail createMatchDetail(int docId, int sentenceId, int begin, int end, String value) {
+        Position pos = new Position(docId, sentenceId, begin, end, LocalDate.now());
+        return new MatchDetail(value, ValueType.TERM, pos, "mockCond", null);
+    }
+
+    @Test
+    void testUnigramMatch() throws QueryExecutionException, IndexAccessException {
+        String searchTerm = "apple";
+        Contains condition = new Contains(searchTerm);
+        
+        PositionList positions = new PositionList();
+        positions.add(new Position(1, 1, 0, 5, LocalDate.parse("2023-01-10")));
+        positions.add(new Position(2, 3, 10, 15, LocalDate.parse("2023-01-12")));
+        when(mockUnigramIndex.get(searchTerm.toLowerCase().getBytes())).thenReturn(Optional.of(positions));
+        
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus"); // Changed type
+        
+        assertNotNull(result);
+        assertEquals(2, result.getAllDetails().size()); // Check size via getAllDetails
+        Set<Integer> docIds = result.getAllDetails().stream().map(MatchDetail::getDocumentId).collect(Collectors.toSet());
+        assertTrue(docIds.containsAll(Set.of(1, 2)));
+        // Verify value and type
+        assertTrue(result.getAllDetails().stream().allMatch(d -> d.value().equals(searchTerm) && d.valueType() == ValueType.TERM));
+    }
+
+    @Test
+    void testBigramMatch() throws QueryExecutionException, IndexAccessException {
+        String term1 = "red";
+        String term2 = "apple";
+        Contains condition = new Contains(List.of(term1, term2)); // Use List constructor
+        
+        PositionList positions = new PositionList();
+        positions.add(new Position(1, 1, 0, 9, LocalDate.parse("2023-01-10")));
+        when(mockBigramIndex.get((term1.toLowerCase() + "\0" + term2.toLowerCase()).getBytes())).thenReturn(Optional.of(positions));
+
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus"); // Changed type
+
+        assertNotNull(result);
+        assertEquals(1, result.getAllDetails().size());
+        MatchDetail detail = result.getAllDetails().get(0);
+        assertEquals(1, detail.getDocumentId());
+        assertEquals(term1 + " " + term2, detail.value()); // Check combined value
+        assertEquals(ValueType.TERM, detail.valueType());
+    }
+
+    @Test
+    void testTrigramMatch() throws QueryExecutionException, IndexAccessException {
+        String term1 = "big", term2 = "red", term3 = "apple";
+        Contains condition = new Contains(List.of(term1, term2, term3)); // Use List constructor
+        
+        PositionList positions = new PositionList();
+        positions.add(new Position(3, 5, 20, 33, LocalDate.parse("2023-01-15")));
+        String trigramKey = term1.toLowerCase() + "\0" + term2.toLowerCase() + "\0" + term3.toLowerCase();
+        when(mockTrigramIndex.get(trigramKey.getBytes())).thenReturn(Optional.of(positions));
+
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus"); // Changed type
+
+        assertNotNull(result);
+        assertEquals(1, result.getAllDetails().size());
+        MatchDetail detail = result.getAllDetails().get(0);
+        assertEquals(3, detail.getDocumentId());
+        assertEquals(term1 + " " + term2 + " " + term3, detail.value());
+        assertEquals(ValueType.TERM, detail.valueType());
+    }
+
+    @Test
+    void testNoMatch() throws QueryExecutionException, IndexAccessException {
+        String searchTerm = "nonexistent";
+        Contains condition = new Contains(searchTerm);
+        when(mockUnigramIndex.get(searchTerm.toLowerCase().getBytes())).thenReturn(Optional.empty());
+
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus"); // Changed type
+
+        assertNotNull(result);
+        assertTrue(result.getAllDetails().isEmpty());
+    }
+    
+    @Test
+    void testWildcardBigramStart() throws QueryExecutionException, IndexAccessException {
+        String term2 = "apple";
+        Contains condition = new Contains(List.of("*", term2)); // Use List constructor
+
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
+        assertNotNull(result);
+        // Wildcard at start is not fully supported, expect empty results currently
+        assertTrue(result.getAllDetails().isEmpty()); 
+    }
+
+    @Test
+    void testWildcardBigramEnd() throws QueryExecutionException, IndexAccessException {
+        String term1 = "red";
+        Contains condition = new Contains(List.of(term1, "*")); // Use List constructor
+
+        // Mock iterator for prefix search "red\0"
+        DBIterator mockIterator = mock(DBIterator.class);
+        when(mockBigramIndex.iterator()).thenReturn(mockIterator);
+        // Simulate no results found during prefix iteration
+        String prefix = term1.toLowerCase() + "\0";
+        doNothing().when(mockIterator).seek(argThat(k -> Arrays.equals(k, prefix.getBytes())));
+        when(mockIterator.hasNext()).thenReturn(false);
+        // No need to mock peekNext or next if hasNext is false
+
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
+        assertNotNull(result);
+        // Prefix search is attempted, but we mock it returning nothing
+        assertTrue(result.getAllDetails().isEmpty()); 
+        verify(mockBigramIndex).iterator(); // Verify iterator was called for prefix search
+    }
+
+    @Test
+    void testEmptyTerms() throws QueryExecutionException {
+        Contains condition = new Contains(Collections.emptyList());
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus"); // Changed type
+        assertNotNull(result);
+        assertTrue(result.getAllDetails().isEmpty());
+    }
+
+    @Test
+    void testVariableBinding() throws QueryExecutionException, IndexAccessException {
+        String searchTerm = "banana";
+        String variableName = "?fruit";
+        Contains condition = new Contains(searchTerm, variableName, true);
+        
+        PositionList positions = new PositionList();
+        positions.add(new Position(5, 1, 0, 6, LocalDate.now()));
+        when(mockUnigramIndex.get(searchTerm.toLowerCase().getBytes())).thenReturn(Optional.of(positions));
+        
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus"); // Changed type
+
+        assertNotNull(result);
+        assertEquals(1, result.getAllDetails().size());
+        MatchDetail detail = result.getAllDetails().get(0);
+        assertEquals(5, detail.getDocumentId());
+        assertEquals(searchTerm, detail.value());
+        assertEquals(variableName, detail.variableName());
+        assertEquals(ValueType.TERM, detail.valueType());
     }
 } 

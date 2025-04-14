@@ -14,13 +14,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Core class for accessing LevelDB-based indexes.
  * Provides unified access for both read and write operations.
  */
-public class IndexAccess implements AutoCloseable {
+public class IndexAccess implements IndexAccessInterface {
     private static final Logger logger = LoggerFactory.getLogger(IndexAccess.class);
 
-    // Delimiter constants for different index types
-    public static final char NGRAM_DELIMITER = '\0';  // Null byte delimiter used for n-grams (bigrams, trigrams)
-    public static final String FIELD_DELIMITER = ":"; // Field delimiter used for structured data (NER, POS, dependencies)
-    
+    // Delimiter constant inherited from IndexAccessInterface
+   
     private final DB db;
     private final String indexPath;
     private final String indexType;
@@ -68,6 +66,7 @@ public class IndexAccess implements AutoCloseable {
 
     /**
      * Stores a position list for a given key.
+     * This is a convenience method specific to this implementation.
      */
     public void put(byte[] key, PositionList positions) throws IndexAccessException {
         checkOpen();
@@ -91,8 +90,10 @@ public class IndexAccess implements AutoCloseable {
 
     /**
      * Writes a batch of operations atomically.
+     * Implements the interface method.
      */
-    public void writeBatch(WriteBatch batch) throws IndexAccessException {
+    @Override
+    public void write(WriteBatch batch) throws IndexAccessException {
         checkOpen();
         try {
             db.write(batch);
@@ -108,14 +109,17 @@ public class IndexAccess implements AutoCloseable {
 
     /**
      * Creates a new write batch.
+     * Implements the interface method.
      */
-    public WriteBatch createBatch() {
+    @Override
+    public WriteBatch createWriteBatch() {
         return db.createWriteBatch();
     }
 
     /**
      * Retrieves positions for a given key.
      */
+    @Override
     public Optional<PositionList> get(byte[] key) throws IndexAccessException {
         checkOpen();
         try {
@@ -138,14 +142,79 @@ public class IndexAccess implements AutoCloseable {
      * Creates a new iterator over the database.
      * The caller is responsible for closing the iterator.
      */
+    @Override
     public DBIterator iterator() throws IndexAccessException {
         checkOpen();
         return db.iterator();
     }
 
     /**
+     * Retrieves the raw byte[] value for a given key.
+     */
+    @Override
+    public Optional<byte[]> getRaw(byte[] key) throws IndexAccessException {
+        checkOpen();
+        try {
+            return Optional.ofNullable(db.get(key));
+        } catch (DBException e) {
+             throw new IndexAccessException(
+                "Failed to get raw entry: " + e.getMessage(),
+                indexType,
+                IndexAccessException.ErrorType.READ_ERROR,
+                e
+            );
+        }
+    }
+
+    /**
+     * Creates a new iterator over the database with specific read options.
+     */
+    @Override
+    public DBIterator iterator(ReadOptions options) throws IndexAccessException {
+        checkOpen();
+        return db.iterator(options);
+    }
+
+    /**
+     * Stores or updates a key-value pair.
+     */
+    @Override
+    public void put(byte[] key, byte[] value) throws IndexAccessException {
+        checkOpen();
+        try {
+            db.put(key, value);
+        } catch (DBException e) {
+            throw new IndexAccessException(
+                "Failed to put entry: " + e.getMessage(),
+                indexType,
+                IndexAccessException.ErrorType.WRITE_ERROR,
+                e
+            );
+        }
+    }
+
+    /**
+     * Deletes a key-value pair.
+     */
+    @Override
+    public void delete(byte[] key) throws IndexAccessException {
+        checkOpen();
+        try {
+            db.delete(key);
+        } catch (DBException e) {
+            throw new IndexAccessException(
+                "Failed to delete entry: " + e.getMessage(),
+                indexType,
+                IndexAccessException.ErrorType.WRITE_ERROR,
+                e
+            );
+        }
+    }
+
+    /**
      * Gets the type of this index.
      */
+    @Override
     public String getIndexType() {
         return indexType;
     }
@@ -153,6 +222,7 @@ public class IndexAccess implements AutoCloseable {
     /**
      * Checks if the index is still open.
      */
+    @Override
     public boolean isOpen() {
         return isOpen.get();
     }

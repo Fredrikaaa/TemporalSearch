@@ -24,10 +24,12 @@ public record Contains(
      */
     public Contains {
         Objects.requireNonNull(terms, "Terms cannot be null");
-        Objects.requireNonNull(value, "Value cannot be null");
-        if (terms.isEmpty()) {
-            throw new IllegalArgumentException("terms cannot be empty");
+        // Allow value to be null only if terms is empty
+        if (!terms.isEmpty()) {
+            Objects.requireNonNull(value, "Value cannot be null when terms is not empty");
         }
+        // Removed check for empty terms list
+        
         // Make defensive copy of terms
         terms = List.copyOf(terms);
         
@@ -51,7 +53,8 @@ public record Contains(
      * @param terms List of search terms
      */
     public Contains(List<String> terms) {
-        this(terms, null, false, terms.get(0));
+        // Pass null for value if terms is empty
+        this(terms, null, false, terms.isEmpty() ? null : terms.get(0));
     }
 
     /**

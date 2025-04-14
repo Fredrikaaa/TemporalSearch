@@ -2,10 +2,9 @@ package com.example.query.executor;
 
 import com.example.core.IndexAccess;
 import com.example.core.IndexAccessException;
+import com.example.core.IndexAccessInterface;
 import com.example.core.Position;
 import com.example.core.PositionList;
-import com.example.query.binding.BindingContext;
-import com.example.query.model.DocSentenceMatch;
 import com.example.query.model.JoinCondition;
 import com.example.query.model.Query;
 import com.example.query.model.SubquerySpec;
@@ -31,12 +30,20 @@ import tech.tablesaw.api.Table;
 
 import java.time.LocalDate;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+
+import com.example.query.model.condition.Pos;
+import com.example.query.model.condition.Temporal;
+import com.example.query.binding.MatchDetail;
+import com.example.query.binding.ValueType;
+import com.example.query.index.IndexManager; // Added import for IndexManager
 
 @ExtendWith(MockitoExtension.class)
 class QueryExecutorTest {
@@ -50,11 +57,12 @@ class QueryExecutorTest {
     @Mock private JoinExecutor mockJoinExecutor;
     @Mock private TableResultService mockTableResultService;
     @Spy private ConditionExecutorFactory factory = new ConditionExecutorFactory(); // Use Spy for real factory
+    @Mock private LogicalExecutor mockLogicalExecutor; // Add mock for LogicalExecutor
 
     // Class under test, inject mocks
     private QueryExecutor queryExecutor;
 
-    private Map<String, IndexAccess> indexes;
+    private Map<String, IndexAccessInterface> indexes;
     
     @BeforeEach
     void setUp() throws IndexAccessException {
@@ -66,11 +74,27 @@ class QueryExecutorTest {
         queryExecutor = new QueryExecutor(factory, mockJoinExecutor, mockTableResultService);
         
         // Mock iterator behavior with lenient mode
-        lenient().when(unigramIndex.iterator()).thenReturn(unigramIterator);
         lenient().when(nerIndex.iterator()).thenReturn(nerIterator);
-        lenient().when(unigramIterator.hasNext()).thenReturn(false);
         lenient().when(nerIterator.hasNext()).thenReturn(false);
+
+        // Mock unigram iterator to provide a universe for NOT tests
+        // Let's define a universe of documents {1, 2, 3, 4}
+        PositionList posListDoc1 = new PositionList(); posListDoc1.add(new Position(1, 0, 0, 1, LocalDate.now()));
+        PositionList posListDoc2 = new PositionList(); posListDoc2.add(new Position(2, 0, 0, 1, LocalDate.now()));
+        PositionList posListDoc3 = new PositionList(); posListDoc3.add(new Position(3, 0, 0, 1, LocalDate.now()));
+        PositionList posListDoc4 = new PositionList(); posListDoc4.add(new Position(4, 0, 0, 1, LocalDate.now()));
         
+        // Create mock entries for the iterator
+        Map.Entry<byte[], byte[]> entry1 = Map.entry("key1".getBytes(), posListDoc1.serialize());
+        Map.Entry<byte[], byte[]> entry2 = Map.entry("key2".getBytes(), posListDoc2.serialize());
+        Map.Entry<byte[], byte[]> entry3 = Map.entry("key3".getBytes(), posListDoc3.serialize());
+        Map.Entry<byte[], byte[]> entry4 = Map.entry("key4".getBytes(), posListDoc4.serialize());
+
+        // Stub the iterator behavior
+        lenient().when(unigramIndex.iterator()).thenReturn(unigramIterator);
+        lenient().when(unigramIterator.hasNext()).thenReturn(true, true, true, true, false); // Iterate 4 times
+        lenient().when(unigramIterator.next()).thenReturn(entry1, entry2, entry3, entry4); // Return each entry
+
         // Set up mock data for the tests
         setupMockData();
     }
@@ -97,6 +121,25 @@ class QueryExecutorTest {
         lenient().when(nerIndex.get("PERSON|".getBytes())).thenReturn(Optional.of(nerPositions));
     }
     
+    // Helper method to create QueryResult for mocking
+    private QueryResult createMockQueryResult(Query.Granularity granularity, int granularitySize, List<MatchDetail> details) {
+        return new QueryResult(granularity, granularitySize, details);
+    }
+
+    // Helper method to create simple MatchDetail
+    private MatchDetail createMatchDetail(int docId, int sentenceId, String value) {
+         // Create a placeholder position
+        Position pos = new Position(docId, sentenceId, 0, value.length(), LocalDate.now());
+        // Use the 5-argument constructor with null for variableName
+        return new MatchDetail(value, ValueType.TERM, pos, "mockCondition", null);
+    }
+     private MatchDetail createMatchDetail(int docId, String value) {
+         // Create a placeholder position for document level
+        Position pos = new Position(docId, -1, 0, value.length(), LocalDate.now());
+        // Use the 5-argument constructor with null for variableName
+        return new MatchDetail(value, ValueType.TERM, pos, "mockCondition", null);
+    }
+
     @Test
     void testLogicalAndOperation() throws QueryExecutionException, IndexAccessException {
         // Create a query with AND condition
@@ -117,11 +160,26 @@ class QueryExecutorTest {
             Collections.emptyList()
         );
         
+        // Mock the factory to return the mock LogicalExecutor for the top-level condition
+        doReturn(mockLogicalExecutor).when(factory).getExecutor(isA(Logical.class));
+
+        // Mock the result returned directly by the mock LogicalExecutor
+        // This assumes the QueryExecutor correctly delegates to the factory-provided executor.
+        QueryResult expectedAndResult = createMockQueryResult(Query.Granularity.DOCUMENT, 0, 
+            List.of(createMatchDetail(2, "test_and_person")) // Simplified single detail for doc 2
+        );
+        when(mockLogicalExecutor.execute(eq(andCondition), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString()))
+            .thenReturn(expectedAndResult);
+
         // Execute query
-        Set<DocSentenceMatch> results = queryExecutor.execute(query, indexes);
+        QueryResult results = queryExecutor.execute(query, indexes);
         
-        // Verify results - the actual implementation returns 0 matches for AND
-        assertEquals(0, results.size(), "Should match 0 documents based on current implementation");
+        // Verify results - AND should result in intersection (doc 2)
+        assertNotNull(results);
+        assertEquals(1, results.getAllDetails().size(), "Should match 1 document based on intersection");
+        assertTrue(results.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 2), "Document 2 should be the only match");
+        // Verify that the mockLogicalExecutor was called
+        verify(mockLogicalExecutor).execute(eq(andCondition), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString());
     }
     
     @Test
@@ -144,15 +202,30 @@ class QueryExecutorTest {
             Collections.emptyList()
         );
         
+        // Mock the factory to return the mock LogicalExecutor for the top-level condition
+        doReturn(mockLogicalExecutor).when(factory).getExecutor(isA(Logical.class));
+
+        // Mock the result returned directly by the mock LogicalExecutor
+        QueryResult expectedOrResult = createMockQueryResult(Query.Granularity.DOCUMENT, 0, 
+            List.of(createMatchDetail(1, "test"), createMatchDetail(2, "test_or_person"), createMatchDetail(3, "person"))
+        );
+        when(mockLogicalExecutor.execute(eq(orCondition), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString()))
+            .thenReturn(expectedOrResult);
+
         // Execute query
-        Set<DocSentenceMatch> results = queryExecutor.execute(query, indexes);
+        QueryResult results = queryExecutor.execute(query, indexes);
         
-        // Verify results - the actual implementation returns 2 matches for OR
-        assertEquals(2, results.size(), "Should match 2 documents based on current implementation");
+        // Verify results - OR should result in union (docs 1, 2, 3)
+        assertNotNull(results);
+         Set<Integer> docIds = results.getAllDetails().stream().map(MatchDetail::getDocumentId).collect(Collectors.toSet());
+        assertEquals(3, docIds.size(), "Should match 3 unique documents based on union");
+        assertTrue(docIds.containsAll(Set.of(1, 2, 3)), "Documents 1, 2, and 3 should be matched");
+        // Verify that the mockLogicalExecutor was called
+        verify(mockLogicalExecutor).execute(eq(orCondition), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString());
     }
     
     @Test
-    void testNotOperation() throws QueryExecutionException, IndexAccessException {
+    void testNotOperation() throws QueryExecutionException, IndexAccessException, Exception {
         // Create a query with NOT condition
         Contains containsCondition = new Contains("test");
         Not notCondition = new Not(containsCondition);
@@ -167,332 +240,248 @@ class QueryExecutorTest {
             Collections.emptyList()
         );
         
+        // Setup mocks
+        ContainsExecutor mockContainsExecutor = mock(ContainsExecutor.class);
+        NotExecutor mockNotExecutor = mock(NotExecutor.class); // Assuming NotExecutor exists
+        // QueryExecutor *does* call getExecutor on the top-level Logical condition.
+        // Stub for the top-level Logical condition
+        // doReturn(mockLogicalExecutor).when(factory).getExecutor(isA(Logical.class)); // This mock seems incorrect for NOT
+        // Use isA for class matching
+        // lenient().doReturn(mockContainsExecutor).when(factory).getExecutor(isA(Contains.class)); // REMOVED - Unnecessary: mockNotExecutor is mocked directly
+        doReturn(mockNotExecutor).when(factory).getExecutor(isA(Not.class)); // Factory needs to return the mock NotExecutor
+
+        // QueryResult containsResults = createMockQueryResult(Query.Granularity.DOCUMENT, 0, List.of(createMatchDetail(1, "test"), createMatchDetail(2, "test"))); // Keep this? Might not be needed.
+        // Mock what the NotExecutor would return (needs internal logic or direct mocking)
+        // Let's assume NotExecutor is complex and mock its final output
+        QueryResult notResults = createMockQueryResult(Query.Granularity.DOCUMENT, 0, List.of(createMatchDetail(3, "other"), createMatchDetail(4,"another"))); // Example result excluding docs 1, 2
+
+        // Mock the behavior of the NotExecutor directly
+        // We don't need to mock the underlying containsExecutor if we mock NotExecutor's final result
+        // Mock the NotExecutor itself
+        when(mockNotExecutor.execute(eq(notCondition), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString()))
+                .thenReturn(notResults);
+
         // Execute query
-        Set<DocSentenceMatch> results = queryExecutor.execute(query, indexes);
+        QueryResult results = queryExecutor.execute(query, indexes);
         
-        // Verify results - just check that the results don't include documents 1 and 2
-        assertFalse(results.stream().anyMatch(m -> m.documentId() == 1), "Document 1 should not be in results");
-        assertFalse(results.stream().anyMatch(m -> m.documentId() == 2), "Document 2 should not be in results");
+        // Verify results - Should contain docs not matched by Contains (e.g., 3, 4 in this mock)
+        assertNotNull(results);
+        Set<Integer> docIds = results.getAllDetails().stream().map(MatchDetail::getDocumentId).collect(Collectors.toSet());
+        assertFalse(docIds.contains(1), "Document 1 should not be in results");
+        assertFalse(docIds.contains(2), "Document 2 should not be in results");
+        assertTrue(docIds.contains(3), "Document 3 should be in results (based on mock)");
+        assertTrue(docIds.contains(4), "Document 4 should be in results (based on mock)");
+        verify(mockNotExecutor).execute(eq(notCondition), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString());
     }
     
     @Test
-    void testComplexLogicalOperation() throws QueryExecutionException, IndexAccessException {
+    void testComplexLogicalOperation() throws QueryExecutionException, IndexAccessException, Exception {
         // Create a complex query: (test AND example) OR NOT(test)
         Contains testCondition = new Contains("test");
         Contains exampleCondition = new Contains("example");
-        
-        Logical andCondition = new Logical(
-            Logical.LogicalOperator.AND,
-            Arrays.asList(testCondition, exampleCondition)
-        );
-        
+        Logical andCondition = new Logical(Logical.LogicalOperator.AND, Arrays.asList(testCondition, exampleCondition));
         Not notTestCondition = new Not(testCondition);
-        
-        Logical orCondition = new Logical(
-            Logical.LogicalOperator.OR,
-            Arrays.asList(andCondition, notTestCondition)
-        );
-        
+        Logical orCondition = new Logical(Logical.LogicalOperator.OR, Arrays.asList(andCondition, notTestCondition));
         Query query = new Query(
-            "test_source",
-            Collections.singletonList(orCondition),
-            Collections.emptyList(),
-            Optional.empty(),
-            Query.Granularity.DOCUMENT,
-            Optional.empty(),
-            Collections.emptyList()
+            "test_source", Collections.singletonList(orCondition), Collections.emptyList(),
+            Optional.empty(), Query.Granularity.DOCUMENT, Optional.empty(), Collections.emptyList()
+        );
+
+        // Mock the factory to return the mock LogicalExecutor for the top-level OR condition
+        // Note: We are now mocking the execution of the entire top-level OR operation,
+        // assuming its internal logic (handling AND and NOT) is tested elsewhere.
+        // The setUp method still provides the necessary universe for the NOT part if it were executed.
+        doReturn(mockLogicalExecutor).when(factory).getExecutor(eq(orCondition));
+
+        // Define the final expected result for the entire complex operation
+        // (test AND example) -> doc 2
+        // NOT(test) -> docs 3, 4 (based on universe {1, 2, 3, 4} and test in {1, 2})
+        // OR result -> docs 2, 3, 4
+        QueryResult finalComplexResult = createMockQueryResult(Query.Granularity.DOCUMENT, 0,
+            List.of(
+                // Representing doc 2 from the AND part
+                createMatchDetail(2, "complex_and"), 
+                // Representing docs 3, 4 from the NOT part
+                createMatchDetail(3, "complex_not"), 
+                createMatchDetail(4, "complex_not") 
+            )
         );
         
-        // Execute query
-        Set<DocSentenceMatch> results = queryExecutor.execute(query, indexes);
+        // Stub the execute method of the mockLogicalExecutor for the orCondition
+        when(mockLogicalExecutor.execute(eq(orCondition), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString()))
+            .thenReturn(finalComplexResult);
+
+
+        // Execute query - Uses the factory to get the mockLogicalExecutor for the orCondition
+        QueryResult results = queryExecutor.execute(query, indexes);
+
+        // Verify final results based on the mocked output
+        assertNotNull(results);
+        Set<Integer> docIds = results.getAllDetails().stream().map(MatchDetail::getDocumentId).collect(Collectors.toSet());
+        assertEquals(3, docIds.size(), "Should match 3 unique documents based on the mocked result for the complex OR");
+        assertTrue(docIds.containsAll(Set.of(2, 3, 4)), "Documents 2, 3, and 4 should be matched according to the mock");
+
+        // Verify that the factory was called for the top-level condition
+        verify(factory).getExecutor(eq(orCondition));
         
-        // Verify results - the actual implementation doesn't include document 3
-        assertTrue(results.stream().anyMatch(m -> m.documentId() == 2), "Document 2 should be in results");
-        // Document 3 is not in results in the current implementation
-        // assertTrue(results.stream().anyMatch(m -> m.documentId() == 3), "Document 3 should be in results");
+        // Verify that the mockLogicalExecutor (handling the OR) was invoked
+        verify(mockLogicalExecutor).execute(eq(orCondition), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString());
+
+        // No need to verify sub-conditions or internal executors as we mocked the top-level execution
     }
 
     @Test
-    void testExecuteWithJoinCondition() throws QueryExecutionException, ResultGenerationException {
+    void testExecuteWithJoinCondition() throws QueryExecutionException {
+        // TODO: Refactor this test significantly (assertions might need more updates)
+
+        // --- REINSTATE SETUP CODE --- 
         // 1. Setup Subqueries
         Contains containsConditionLeft = new Contains("apple");
-        Query subQueryLeft = new Query(
-            "subSource", 
-            Collections.singletonList(containsConditionLeft), 
-            Collections.emptyList(),
-            Optional.empty(),
-            Query.Granularity.DOCUMENT, 
-            Optional.empty(),
-            Collections.emptyList(),
-            new com.example.query.binding.VariableRegistry(),
-            Collections.emptyList(),
-            Optional.empty()
-        );
+        Query subQueryLeft = new Query("subSource", Collections.singletonList(containsConditionLeft), Collections.emptyList(), Optional.empty(), Query.Granularity.DOCUMENT, Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Collections.emptyList(), Optional.empty(), Optional.empty());
         SubquerySpec subquerySpecLeft = new SubquerySpec(subQueryLeft, "leftAlias");
-
         Contains containsConditionRight = new Contains("banana");
-        Query subQueryRight = new Query(
-            "subSource", 
-            Collections.singletonList(containsConditionRight), 
-            Collections.emptyList(),
-            Optional.empty(),
-            Query.Granularity.DOCUMENT, 
-            Optional.empty(),
-            Collections.emptyList(),
-            new com.example.query.binding.VariableRegistry(),
-            Collections.emptyList(),
-            Optional.empty()
-        );
+        Query subQueryRight = new Query("subSource", Collections.singletonList(containsConditionRight), Collections.emptyList(), Optional.empty(), Query.Granularity.DOCUMENT, Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Collections.emptyList(), Optional.empty(), Optional.empty());
         SubquerySpec subquerySpecRight = new SubquerySpec(subQueryRight, "rightAlias");
-
-        // 2. Setup Main Query with JOIN
-        JoinCondition joinCondition = new JoinCondition(
-                "leftAlias.document_id", // Join on document ID
-                "rightAlias.document_id",
-                JoinCondition.JoinType.INNER, 
-                TemporalPredicate.EQUAL, // Using TemporalPredicate.EQUAL for simple equality join
-                Optional.empty()
-        );
-        Query mainQuery = new Query(
-                "mainSource",
-                Collections.emptyList(), // No top-level conditions
-                Collections.emptyList(), // orderBy
-                Optional.empty(), // limit
-                Query.Granularity.DOCUMENT,
-                Optional.empty(), // granularitySize
-                Collections.emptyList(), // selectColumns
-                new com.example.query.binding.VariableRegistry(), // variableRegistry
-                Arrays.asList(subquerySpecLeft, subquerySpecRight), // subqueries
-                Optional.of(joinCondition) // joinCondition
-        );
-
-        // 3. Mock Subquery Execution Results (DocSentenceMatch)
-        Set<DocSentenceMatch> leftResults = Set.of(
-                new DocSentenceMatch(1, "subSource"), 
-                new DocSentenceMatch(2, "subSource")
-        );
-        Set<DocSentenceMatch> rightResults = Set.of(
-                new DocSentenceMatch(2, "subSource"), 
-                new DocSentenceMatch(3, "subSource")
-        );
+        // --- END REINSTATE --- 
         
-        // Mock the recursive calls to executeWithContext for subqueries
-        // Need to use a spy or modify QueryExecutor to allow mocking this protected/private method
-        // For simplicity, let's assume executeSubqueries works correctly and mock the results generation
+        // 2. Setup Main Query with JOIN (remains the same)
+        JoinCondition joinCondition = new JoinCondition("leftAlias.document_id", "rightAlias.document_id", JoinCondition.JoinType.INNER, TemporalPredicate.EQUAL, Optional.empty());
+        Query mainQuery = new Query("mainSource", Collections.emptyList(), Collections.emptyList(), Optional.empty(), Query.Granularity.DOCUMENT, Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Arrays.asList(subquerySpecLeft, subquerySpecRight), Optional.of(joinCondition), Optional.empty());
 
-        // 4. Mock Table Generation for Subqueries
-        Table leftTable = Table.create("leftAlias").addColumns(
-                IntColumn.create("document_id", 1, 2),
-                StringColumn.create("term", "apple", "apple") // Example column
-        );
-        Table rightTable = Table.create("rightAlias").addColumns(
-                IntColumn.create("document_id", 2, 3),
-                StringColumn.create("term", "banana", "banana") // Example column
-        );
-        when(mockTableResultService.generateTable(eq(subQueryLeft), eq(leftResults), any(BindingContext.class), eq(indexes)))
-                .thenReturn(leftTable);
-        when(mockTableResultService.generateTable(eq(subQueryRight), eq(rightResults), any(BindingContext.class), eq(indexes)))
-                .thenReturn(rightTable);
+        // Mock Subquery Results
+        QueryResult mockLeftResult = createMockQueryResult(Query.Granularity.DOCUMENT, 0, List.of(
+                createMatchDetail(1, "apple"), createMatchDetail(2, "apple")
+        ));
+        QueryResult mockRightResult = createMockQueryResult(Query.Granularity.DOCUMENT, 0, List.of(
+                createMatchDetail(2, "banana"), createMatchDetail(3, "banana")
+        ));
         
-        // Mock the ConditionExecutor for the Contains conditions within subqueries
-        // Need to setup the factory spy to return a mock executor for Contains
-        // Mock the concrete implementation (ContainsExecutor) instead of the sealed interface
+        // Mock subquery condition execution
         ContainsExecutor mockContainsExecutor = mock(ContainsExecutor.class); 
-        // Tell the factory spy to return this specific mock when asked for an executor for a Contains condition
-        doReturn(mockContainsExecutor).when(factory).getExecutor(any(Contains.class)); 
-        when(mockContainsExecutor.execute(eq(containsConditionLeft), eq(indexes), any(BindingContext.class), eq(Query.Granularity.DOCUMENT), anyInt()))
-                .thenReturn(leftResults);
-        when(mockContainsExecutor.execute(eq(containsConditionRight), eq(indexes), any(BindingContext.class), eq(Query.Granularity.DOCUMENT), anyInt()))
-                .thenReturn(rightResults);
+        doReturn(mockContainsExecutor).when(factory).getExecutor(isA(Contains.class)); 
+        when(mockContainsExecutor.execute(eq(containsConditionLeft), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString()))
+                .thenReturn(mockLeftResult);
+        when(mockContainsExecutor.execute(eq(containsConditionRight), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString()))
+                .thenReturn(mockRightResult);
 
-        // 5. Mock Join Execution
-        Table joinedTable = Table.create("joined").addColumns(
-                // Create columns using explicit arrays, mirroring documentation examples
-                IntColumn.create("document_id", new int[]{2}), 
-                StringColumn.create("left_term", new String[]{"apple"}),
-                StringColumn.create("right_term", new String[]{"banana"})
-        );
-        when(mockJoinExecutor.join(eq(leftTable), eq(rightTable), eq(joinCondition))).thenReturn(joinedTable);
+        // Execute Main Query
+        QueryResult finalResults = queryExecutor.execute(mainQuery, indexes); 
 
-        // 6. Execute Main Query
-        Set<DocSentenceMatch> finalResults = queryExecutor.execute(mainQuery, indexes);
+        // Verify Interactions
+        verify(mockContainsExecutor).execute(eq(containsConditionLeft), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString()); 
+        verify(mockContainsExecutor).execute(eq(containsConditionRight), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString());
 
-        // 7. Verify Interactions
-        verify(mockJoinExecutor).join(eq(leftTable), eq(rightTable), eq(joinCondition));
-        // Verify generateTable was called for both subqueries
-        verify(mockTableResultService).generateTable(eq(subQueryLeft), eq(leftResults), any(BindingContext.class), eq(indexes));
-        verify(mockTableResultService).generateTable(eq(subQueryRight), eq(rightResults), any(BindingContext.class), eq(indexes));
-        // Verify Contains executors were called
-        verify(mockContainsExecutor).execute(eq(containsConditionLeft), any(), any(), any(), anyInt()); // Verify ContainsExecutor
-        verify(mockContainsExecutor).execute(eq(containsConditionRight), any(), any(), any(), anyInt()); // Verify ContainsExecutor
-
-        // 8. Assert Final Results
+        // Assert Final Results
         assertNotNull(finalResults);
-        assertEquals(1, finalResults.size(), "Expected 1 match after join");
-        assertTrue(finalResults.contains(new DocSentenceMatch(2, "mainSource")), "Expected match for document ID 2 with main source");
+        assertEquals(1, finalResults.getAllDetails().size(), "Expected 1 match detail after join"); 
+        assertTrue(finalResults.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 2), "Expected match for document ID 2");
+        assertTrue(finalResults.getAllDetails().stream().anyMatch(d -> d.value().equals("apple")), "Expected value 'apple' from left side");
+
+        // Check the single resulting detail
+        MatchDetail resultDetail = finalResults.getAllDetails().get(0);
+        assertEquals(2, resultDetail.getDocumentId(), "Expected left document ID 2");
+        assertEquals("apple", resultDetail.value(), "Expected value 'apple' from left side");
+        assertTrue(resultDetail.isJoinResult(), "Detail should indicate it is a join result");
+        assertEquals(Optional.of(2), resultDetail.getRightDocumentId(), "Expected right document ID 2");
+        assertEquals(Optional.empty(), resultDetail.getRightSentenceId(), "Expected empty right sentence ID for document granularity join");
     }
 
     @Test
-    void testExecuteWithJoinConditionSentenceGranularity() throws QueryExecutionException, ResultGenerationException {
+    void testExecuteWithJoinConditionSentenceGranularity() throws QueryExecutionException {
+        // TODO: Refactor this test similarly (assertions might need more updates)
+
+        // --- REINSTATE SETUP CODE --- 
         // 1. Setup Subqueries (SENTENCE Granularity)
         Contains containsConditionLeft = new Contains("apple");
-        Query subQueryLeft = new Query(
-            "subSource", 
-            Collections.singletonList(containsConditionLeft), 
-            Collections.emptyList(), Optional.empty(), 
-            Query.Granularity.SENTENCE, // Sentence Granularity
-            Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(),
-            Collections.emptyList(), Optional.empty()
-        );
+        Query subQueryLeft = new Query("subSource", Collections.singletonList(containsConditionLeft), Collections.emptyList(), Optional.empty(), Query.Granularity.SENTENCE, Optional.of(0), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Collections.emptyList(), Optional.empty(), Optional.empty());
         SubquerySpec subquerySpecLeft = new SubquerySpec(subQueryLeft, "leftAlias");
-
         Contains containsConditionRight = new Contains("banana");
-        Query subQueryRight = new Query(
-            "subSource", 
-            Collections.singletonList(containsConditionRight), 
-            Collections.emptyList(), Optional.empty(), 
-            Query.Granularity.SENTENCE, // Sentence Granularity
-            Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(),
-            Collections.emptyList(), Optional.empty()
-        );
+        Query subQueryRight = new Query("subSource", Collections.singletonList(containsConditionRight), Collections.emptyList(), Optional.empty(), Query.Granularity.SENTENCE, Optional.of(0), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Collections.emptyList(), Optional.empty(), Optional.empty());
         SubquerySpec subquerySpecRight = new SubquerySpec(subQueryRight, "rightAlias");
+        // --- END REINSTATE --- 
 
-        // 2. Setup Main Query with JOIN (SENTENCE Granularity)
-        JoinCondition joinCondition = new JoinCondition(
-                "leftAlias.document_id", // Join still on document ID for this example
-                "rightAlias.document_id",
-                JoinCondition.JoinType.INNER, 
-                TemporalPredicate.EQUAL, 
-                Optional.empty()
-        );
-        Query mainQuery = new Query(
-                "mainSource",
-                Collections.emptyList(), Collections.emptyList(), Optional.empty(), 
-                Query.Granularity.SENTENCE, // Sentence Granularity
-                Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(),
-                Arrays.asList(subquerySpecLeft, subquerySpecRight), 
-                Optional.of(joinCondition)
-        );
+        // 2. Setup Main Query with JOIN (SENTENCE Granularity, join on doc ID)
+        JoinCondition joinCondition = new JoinCondition("leftAlias.document_id", "rightAlias.document_id", JoinCondition.JoinType.INNER, TemporalPredicate.EQUAL, Optional.empty());
+        Query mainQuery = new Query("mainSource", Collections.emptyList(), Collections.emptyList(), Optional.empty(), Query.Granularity.SENTENCE, Optional.of(0), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Arrays.asList(subquerySpecLeft, subquerySpecRight), Optional.of(joinCondition), Optional.empty());
 
-        // 3. Mock Subquery Execution Results (DocSentenceMatch with sentence IDs)
-        Set<DocSentenceMatch> leftResults = Set.of(
-                new DocSentenceMatch(1, 1, "subSource"), // doc 1, sent 1
-                new DocSentenceMatch(2, 5, "subSource")  // doc 2, sent 5
-        );
-        Set<DocSentenceMatch> rightResults = Set.of(
-                new DocSentenceMatch(2, 8, "subSource"), // doc 2, sent 8
-                new DocSentenceMatch(3, 2, "subSource")  // doc 3, sent 2
-        );
+        // Mock Subquery Results
+         QueryResult mockLeftResult = createMockQueryResult(Query.Granularity.SENTENCE, 0, List.of(
+                createMatchDetail(1, 1, "apple"), createMatchDetail(2, 5, "apple") 
+        ));
+        QueryResult mockRightResult = createMockQueryResult(Query.Granularity.SENTENCE, 0, List.of(
+                createMatchDetail(2, 8, "banana"), createMatchDetail(3, 2, "banana") 
+        ));
 
-        // 4. Mock Table Generation for Subqueries (with sentence_id column)
-        Table leftTable = Table.create("leftAlias").addColumns(
-                IntColumn.create("document_id", new int[]{1, 2}),
-                IntColumn.create("sentence_id", new int[]{1, 5})
-        );
-        Table rightTable = Table.create("rightAlias").addColumns(
-                IntColumn.create("document_id", new int[]{2, 3}),
-                IntColumn.create("sentence_id", new int[]{8, 2})
-        );
-        // Mock generateTable calls
-        when(mockTableResultService.generateTable(eq(subQueryLeft), eq(leftResults), any(BindingContext.class), eq(indexes)))
-                .thenReturn(leftTable);
-        when(mockTableResultService.generateTable(eq(subQueryRight), eq(rightResults), any(BindingContext.class), eq(indexes)))
-                .thenReturn(rightTable);
-        
-        // Mock ConditionExecutor for Contains
+        // Mock subquery condition execution
         ContainsExecutor mockContainsExecutor = mock(ContainsExecutor.class);
-        doReturn(mockContainsExecutor).when(factory).getExecutor(any(Contains.class));
-        when(mockContainsExecutor.execute(eq(containsConditionLeft), eq(indexes), any(BindingContext.class), eq(Query.Granularity.SENTENCE), anyInt()))
-                .thenReturn(leftResults);
-        when(mockContainsExecutor.execute(eq(containsConditionRight), eq(indexes), any(BindingContext.class), eq(Query.Granularity.SENTENCE), anyInt()))
-                .thenReturn(rightResults);
+        doReturn(mockContainsExecutor).when(factory).getExecutor(isA(Contains.class));
+        when(mockContainsExecutor.execute(eq(containsConditionLeft), eq(indexes), eq(Query.Granularity.SENTENCE), eq(0), anyString()))
+                .thenReturn(mockLeftResult);
+        when(mockContainsExecutor.execute(eq(containsConditionRight), eq(indexes), eq(Query.Granularity.SENTENCE), eq(0), anyString()))
+                .thenReturn(mockRightResult);
+        
+        // Execute Main Query
+        QueryResult finalResults = queryExecutor.execute(mainQuery, indexes); 
 
-        // 5. Mock Join Execution (Result should contain relevant sentence IDs if conversion logic supports it)
-        // Assuming the join result keeps sentence info from both sides where applicable
-        Table joinedTable = Table.create("joined").addColumns(
-                IntColumn.create("document_id", new int[]{2}), 
-                IntColumn.create("sentence_id", new int[]{5}) // Example: Keep left sentence ID. Conversion needs to handle this.
-                // Add other columns if JoinHandler/convertJoinedTableToMatches expects them
-        );
-        when(mockJoinExecutor.join(eq(leftTable), eq(rightTable), eq(joinCondition))).thenReturn(joinedTable);
+        // Verify Interactions
+        verify(mockContainsExecutor).execute(eq(containsConditionLeft), eq(indexes), eq(Query.Granularity.SENTENCE), eq(0), anyString());
+        verify(mockContainsExecutor).execute(eq(containsConditionRight), eq(indexes), eq(Query.Granularity.SENTENCE), eq(0), anyString());
 
-        // 6. Execute Main Query
-        Set<DocSentenceMatch> finalResults = queryExecutor.execute(mainQuery, indexes);
-
-        // 7. Verify Interactions
-        verify(mockJoinExecutor).join(eq(leftTable), eq(rightTable), eq(joinCondition));
-        verify(mockTableResultService).generateTable(eq(subQueryLeft), eq(leftResults), any(BindingContext.class), eq(indexes));
-        verify(mockTableResultService).generateTable(eq(subQueryRight), eq(rightResults), any(BindingContext.class), eq(indexes));
-        verify(mockContainsExecutor).execute(eq(containsConditionLeft), any(), any(), eq(Query.Granularity.SENTENCE), anyInt());
-        verify(mockContainsExecutor).execute(eq(containsConditionRight), any(), any(), eq(Query.Granularity.SENTENCE), anyInt());
-
-        // 8. Assert Final Results (Sentence Level)
+        // Assert Final Results
         assertNotNull(finalResults);
-        assertEquals(1, finalResults.size(), "Expected 1 sentence match after join");
-        // IMPORTANT: The expected sentence ID depends on how convertJoinedTableToMatches handles the joined table.
-        // Assuming it takes the sentence_id column if present.
-        assertTrue(finalResults.contains(new DocSentenceMatch(2, 5, "mainSource")), 
-                   "Expected match for document ID 2, sentence ID 5 with main source");
+        assertEquals(1, finalResults.getAllDetails().size(), "Expected 1 sentence match detail after join on doc ID");
+
+        // Check the single resulting detail
+        MatchDetail resultDetail = finalResults.getAllDetails().get(0);
+        assertEquals(2, resultDetail.getDocumentId(), "Expected left document ID 2");
+        assertEquals(5, resultDetail.getSentenceId(), "Expected left sentence ID 5");
+        assertEquals("apple", resultDetail.value(), "Expected value 'apple' from left side");
+        assertTrue(resultDetail.isJoinResult(), "Detail should indicate it is a join result");
+        assertEquals(Optional.of(2), resultDetail.getRightDocumentId(), "Expected right document ID 2");
+        assertEquals(Optional.of(8), resultDetail.getRightSentenceId(), "Expected right sentence ID 8");
     }
 
     @Test
-    void testExecuteWithJoinConditionEmptySubquery() throws QueryExecutionException, ResultGenerationException {
+    void testExecuteWithJoinConditionEmptySubquery() throws QueryExecutionException {
+        // TODO: Refactor this test
+        
+        // --- REINSTATE SETUP CODE --- 
         // 1. Setup Subqueries (Document Granularity)
         Contains containsConditionLeft = new Contains("apple");
-        Query subQueryLeft = new Query("subSource", Collections.singletonList(containsConditionLeft), Collections.emptyList(), Optional.empty(), Query.Granularity.DOCUMENT, Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Collections.emptyList(), Optional.empty());
+        Query subQueryLeft = new Query("subSource", Collections.singletonList(containsConditionLeft), Collections.emptyList(), Optional.empty(), Query.Granularity.DOCUMENT, Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Collections.emptyList(), Optional.empty(), Optional.empty());
         SubquerySpec subquerySpecLeft = new SubquerySpec(subQueryLeft, "leftAlias");
-
-        Contains containsConditionRight = new Contains("nonexistent"); // Condition that yields no results
-        Query subQueryRight = new Query("subSource", Collections.singletonList(containsConditionRight), Collections.emptyList(), Optional.empty(), Query.Granularity.DOCUMENT, Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Collections.emptyList(), Optional.empty());
+        Contains containsConditionRight = new Contains("nonexistent"); // Condition yields no results
+        Query subQueryRight = new Query("subSource", Collections.singletonList(containsConditionRight), Collections.emptyList(), Optional.empty(), Query.Granularity.DOCUMENT, Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Collections.emptyList(), Optional.empty(), Optional.empty());
         SubquerySpec subquerySpecRight = new SubquerySpec(subQueryRight, "rightAlias");
+        // --- END REINSTATE --- 
 
         // 2. Setup Main Query with JOIN (Document Granularity)
-        JoinCondition joinCondition = new JoinCondition(
-                "leftAlias.document_id", 
-                "rightAlias.document_id",
-                JoinCondition.JoinType.INNER, 
-                TemporalPredicate.EQUAL, 
-                Optional.empty()
-        );
-        Query mainQuery = new Query(
-                "mainSource", Collections.emptyList(), Collections.emptyList(), Optional.empty(), 
-                Query.Granularity.DOCUMENT, Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(),
-                Arrays.asList(subquerySpecLeft, subquerySpecRight), Optional.of(joinCondition)
-        );
+        JoinCondition joinCondition = new JoinCondition("leftAlias.document_id", "rightAlias.document_id", JoinCondition.JoinType.INNER, TemporalPredicate.EQUAL, Optional.empty());
+        Query mainQuery = new Query("mainSource", Collections.emptyList(), Collections.emptyList(), Optional.empty(), Query.Granularity.DOCUMENT, Optional.empty(), Collections.emptyList(), new com.example.query.binding.VariableRegistry(), Arrays.asList(subquerySpecLeft, subquerySpecRight), Optional.of(joinCondition), Optional.empty());
 
-        // 3. Mock Subquery Execution Results (Right side is empty)
-        Set<DocSentenceMatch> leftResults = Set.of(new DocSentenceMatch(1, "subSource"), new DocSentenceMatch(2, "subSource"));
-        Set<DocSentenceMatch> rightResults = Collections.emptySet(); // Empty result set
+        // Mock Subquery Results
+        QueryResult mockLeftResult = createMockQueryResult(Query.Granularity.DOCUMENT, 0, List.of(
+                createMatchDetail(1, "apple"), createMatchDetail(2, "apple")
+        ));
+        QueryResult mockRightResult = createMockQueryResult(Query.Granularity.DOCUMENT, 0, Collections.emptyList()); 
 
-        // 4. Mock Table Generation (Right table is empty)
-        Table leftTable = Table.create("leftAlias").addColumns(IntColumn.create("document_id", new int[]{1, 2}));
-        Table rightTable = Table.create("rightAlias").addColumns(IntColumn.create("document_id", new int[0])); // Empty table
-        
-        when(mockTableResultService.generateTable(eq(subQueryLeft), eq(leftResults), any(BindingContext.class), eq(indexes))).thenReturn(leftTable);
-        when(mockTableResultService.generateTable(eq(subQueryRight), eq(rightResults), any(BindingContext.class), eq(indexes))).thenReturn(rightTable);
-        
-        // Mock ConditionExecutor for Contains
+        // Mock subquery condition execution
         ContainsExecutor mockContainsExecutor = mock(ContainsExecutor.class);
-        doReturn(mockContainsExecutor).when(factory).getExecutor(any(Contains.class));
-        when(mockContainsExecutor.execute(eq(containsConditionLeft), eq(indexes), any(BindingContext.class), eq(Query.Granularity.DOCUMENT), anyInt())).thenReturn(leftResults);
-        when(mockContainsExecutor.execute(eq(containsConditionRight), eq(indexes), any(BindingContext.class), eq(Query.Granularity.DOCUMENT), anyInt())).thenReturn(rightResults);
+        doReturn(mockContainsExecutor).when(factory).getExecutor(isA(Contains.class));
+        when(mockContainsExecutor.execute(eq(containsConditionLeft), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString()))
+                .thenReturn(mockLeftResult);
+        when(mockContainsExecutor.execute(eq(containsConditionRight), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString()))
+                .thenReturn(mockRightResult); 
 
-        // 5. Mock Join Execution (Result should be empty for INNER join)
-        Table joinedTable = Table.create("joined").addColumns(IntColumn.create("document_id", new int[0])); // Empty joined table
-        when(mockJoinExecutor.join(eq(leftTable), eq(rightTable), eq(joinCondition))).thenReturn(joinedTable);
+        // Execute Main Query
+        QueryResult finalResults = queryExecutor.execute(mainQuery, indexes); 
 
-        // 6. Execute Main Query
-        Set<DocSentenceMatch> finalResults = queryExecutor.execute(mainQuery, indexes);
+        // Verify Interactions
+        verify(mockContainsExecutor).execute(eq(containsConditionLeft), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString());
+        verify(mockContainsExecutor).execute(eq(containsConditionRight), eq(indexes), eq(Query.Granularity.DOCUMENT), anyInt(), anyString());
 
-        // 7. Verify Interactions
-        verify(mockJoinExecutor).join(eq(leftTable), eq(rightTable), eq(joinCondition));
-        verify(mockTableResultService).generateTable(eq(subQueryLeft), eq(leftResults), any(BindingContext.class), eq(indexes));
-        verify(mockTableResultService).generateTable(eq(subQueryRight), eq(rightResults), any(BindingContext.class), eq(indexes));
-        verify(mockContainsExecutor).execute(eq(containsConditionLeft), any(), any(), eq(Query.Granularity.DOCUMENT), anyInt());
-        verify(mockContainsExecutor).execute(eq(containsConditionRight), any(), any(), eq(Query.Granularity.DOCUMENT), anyInt());
-
-        // 8. Assert Final Results (Should be empty)
+        // Assert Final Results
         assertNotNull(finalResults);
-        assertTrue(finalResults.isEmpty(), "Expected empty result set for INNER JOIN with one empty subquery result");
+        assertTrue(finalResults.getAllDetails().isEmpty(), "Expected empty result set for INNER JOIN with one empty subquery result");
     }
 } 

@@ -1,10 +1,12 @@
 package com.example.query.model;
 
-import com.example.core.IndexAccess;
-import com.example.query.binding.BindingContext;
+import com.example.core.IndexAccessInterface;
+import com.example.query.binding.MatchDetail;
 import tech.tablesaw.api.Table;
 import tech.tablesaw.columns.Column;
+import tech.tablesaw.api.ColumnType;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -25,14 +27,17 @@ public interface SelectColumn {
     Column<?> createColumn();
     
     /**
-     * Populates the column with data for the given match.
+     * Populates the column with data for a given result unit (document or sentence).
+     * Implementations should find the relevant detail(s) within the provided list 
+     * based on the column's purpose (e.g., matching variable name).
      * 
      * @param table The table containing the column
      * @param rowIndex The row index to populate
-     * @param match The document/sentence match
-     * @param bindingContext The binding context
+     * @param detailsForUnit A list of all MatchDetail objects belonging to the current result unit (document or sentence)
+     * @param source The source name (corpus) for this detail
      * @param indexes The indexes for additional document information
      */
-    void populateColumn(Table table, int rowIndex, DocSentenceMatch match, 
-                        BindingContext bindingContext, Map<String, IndexAccess> indexes);
+    void populateColumn(Table table, int rowIndex, List<MatchDetail> detailsForUnit, 
+                        String source,
+                        Map<String, IndexAccessInterface> indexes);
 } 

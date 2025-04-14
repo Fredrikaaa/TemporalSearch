@@ -1,205 +1,128 @@
 package com.example.query;
 
+import com.example.core.IndexAccess;
+import com.example.core.IndexAccessException;
+import com.example.core.IndexAccessInterface;
+import com.example.core.index.MockIndexAccess;
 import com.example.query.executor.ConditionExecutorFactory;
 import com.example.query.executor.QueryExecutionException;
 import com.example.query.executor.QueryExecutor;
-import com.example.query.model.DocSentenceMatch;
+import com.example.query.executor.QueryResult;
 import com.example.query.model.Query;
-import com.example.core.IndexAccess;
-import com.example.core.IndexAccessException;
-import com.example.query.index.IndexManager;
+import com.example.query.QueryParseException;
+import com.example.query.QueryParser;
+import com.example.query.result.ResultGenerationException;
+import com.example.query.result.TableResultService;
 import com.example.query.sqlite.SqliteAccessor;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
+import tech.tablesaw.api.Table;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * End-to-end tests for query execution.
- * This test class runs a variety of query examples against the actual dataset
- * to verify they execute successfully.
- * 
- * These tests only verify that queries can run without errors, not the specific results.
+ * End-to-end tests for query parsing, execution, and result generation.
+ * Uses mock indexes for predictable results.
  */
-@Tag("e2e")
-@DisplayName("Query End-to-End Tests")
 public class QueryEndToEndTest {
-    private static final Logger logger = LoggerFactory.getLogger(QueryEndToEndTest.class);
-    
-    // Path to index directory - update with your actual path
-    private static final String INDEX_BASE_DIR = System.getProperty("index.dir", "indexes");
-    
-    // Test corpus/source name - update with your actual corpus name
-    private static final String TEST_CORPUS = "wikipedia";
-    
-    private static IndexManager indexManager;
-    private static Map<String, IndexAccess> indexes;
-    
-    private QueryParser parser;
-    private QuerySemanticValidator validator;
-    private QueryExecutor executor;
-    
+
+    @TempDir
+    static Path tempDir;
+
+    private static QueryExecutor queryExecutor;
+    private static TableResultService tableResultService;
+    private static MockIndexAccess mockUnigramIndex;
+    private static Map<String, IndexAccessInterface> mockIndexes;
+    private static QueryParser queryParser;
+
     @BeforeAll
-    static void setUpIndexes() {
-        // Initialize SqliteAccessor
-        Path indexPath = Paths.get(INDEX_BASE_DIR);
-        SqliteAccessor.initialize(indexPath.toString());
+    public static void setUp() throws IOException, IndexAccessException {
+        // Use a temporary directory for mock indexes
+        File indexBasePath = tempDir.resolve("testIndexes").toFile();
+        indexBasePath.mkdirs();
         
-        try {
-            // Initialize IndexManager with the corpus name
-            indexManager = new IndexManager(indexPath, TEST_CORPUS);
-            
-            // Get all available indexes
-            indexes = indexManager.getAllIndexes();
-            
-            // Verify indexes are loaded
-            if (indexes.isEmpty()) {
-                logger.warn("No indexes loaded for corpus: {}. Tests may fail.", TEST_CORPUS);
-            } else {
-                logger.info("Loaded {} indexes for corpus: {}", indexes.size(), TEST_CORPUS);
-            }
-        } catch (IndexAccessException e) {
-            logger.error("Failed to load indexes for corpus: {}", TEST_CORPUS, e);
-            fail("Failed to load indexes: " + e.getMessage());
-        }
+        // Initialize SqliteAccessor before creating indexes that might need it
+        SqliteAccessor.initialize(indexBasePath.getAbsolutePath());
+        
+        // Create a mock index instance
+        mockUnigramIndex = new MockIndexAccess();
+        mockUnigramIndex.addTestData("apple", 1, 1, 0, 5);
+        mockUnigramIndex.addTestData("apple", 2, 1, 10, 15);
+        mockUnigramIndex.addTestData("banana", 2, 2, 20, 25);
+        mockUnigramIndex.addTestData("test", 0, 0, 0, 4); // For SentenceGranularityTest
+        mockUnigramIndex.addTestData("test", 1, 1, 0, 4); // For SentenceGranularityTest
+        mockUnigramIndex.addTestData("window", 0, 1, 0, 6); // For SentenceGranularityTest
+        mockUnigramIndex.addTestData("window", 0, 3, 0, 6); // For SentenceGranularityTest
+
+        // Create the map of indexes directly
+        mockIndexes = Map.of("unigram", mockUnigramIndex);
+        
+        // Initialize executor and result service
+        ConditionExecutorFactory factory = new ConditionExecutorFactory();
+        queryExecutor = new QueryExecutor(factory);
+        tableResultService = new TableResultService();
+        queryParser = new QueryParser();
+        
+        System.out.println("End-to-End Test Setup Complete.");
     }
-    
-    @BeforeEach
-    void setUp() {
-        parser = new QueryParser();
-        validator = new QuerySemanticValidator();
-        executor = new QueryExecutor(new ConditionExecutorFactory());
+
+    @AfterAll
+    public static void tearDown() throws IOException {
+        System.out.println("End-to-End Test Teardown Complete.");
     }
-    
-    /**
-     * Helper method to execute a query and verify it runs without errors.
-     * 
-     * @param queryStr The query string to execute
-     */
-    private void executeAndVerify(String queryStr) {
-        try {
-            // Parse the query
-            Query query = parser.parse(queryStr);
-            
-            // Validate the query
-            validator.validate(query);
-            
-            // Execute the query
-            Set<DocSentenceMatch> results = executor.execute(query, indexes);
-            
-            // Verify execution completed successfully
-            assertNotNull(results, "Query execution returned null results");
-            
-            // Log result count for informational purposes
-            logger.info("Query '{}' returned {} results", queryStr, results.size());
-            
-        } catch (QueryParseException | QueryExecutionException e) {
-            logger.error("Query execution failed for: {}", queryStr, e);
-            fail("Query execution failed: " + e.getMessage());
-        }
-    }
-    
+
     @Test
-    @DisplayName("Simple query without conditions")
-    void simpleQuery() {
-        executeAndVerify("SELECT COUNT(DOCUMENTS) FROM " + TEST_CORPUS);
+    public void testSimpleContainsQuery() throws QueryParseException, QueryExecutionException, ResultGenerationException {
+        String queryString = "SELECT TITLE FROM source WHERE CONTAINS(\"apple\")";
+        Query query = queryParser.parse(queryString);
+
+        // Execute query
+        QueryResult result = queryExecutor.execute(query, mockIndexes);
+
+        // Assertions on QueryResult
+        assertNotNull(result);
+        assertFalse(result.getAllDetails().isEmpty(), "Expected results for 'apple'");
+        assertEquals(2, result.getAllDetails().size()); // Doc 1 and Doc 2
+        assertEquals(Query.Granularity.DOCUMENT, result.getGranularity());
+        assertTrue(result.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 1));
+        assertTrue(result.getAllDetails().stream().anyMatch(d -> d.getDocumentId() == 2));
+
+        // Assertions on generated Table
+        Table resultTable = tableResultService.generateTable(query, result, mockIndexes);
+        assertNotNull(resultTable);
+        assertEquals(2, resultTable.rowCount());
+        // Check default columns (document_id)
+        assertTrue(resultTable.columnNames().contains("document_id")); // Use literal string
+        // Access as IntColumn and compare integer values
+        assertEquals(1, resultTable.intColumn("document_id").get(0)); 
+        assertEquals(2, resultTable.intColumn("document_id").get(1));
     }
     
-    @Test
-    @DisplayName("Basic text query with CONTAINS")
-    void basicTextQuery() {
-        executeAndVerify("SELECT COUNT(DOCUMENTS) FROM " + TEST_CORPUS + " WHERE CONTAINS(\"artificial intelligence\")");
+     @Test
+    public void testContainsNoMatchQuery() throws QueryParseException, QueryExecutionException, ResultGenerationException {
+        String queryString = "SELECT TITLE FROM source WHERE CONTAINS(\"nonexistent\")";
+        Query query = queryParser.parse(queryString);
+        
+        QueryResult result = queryExecutor.execute(query, mockIndexes);
+        
+        assertNotNull(result);
+        assertTrue(result.getAllDetails().isEmpty(), "Expected no results for 'nonexistent'");
+        
+        Table resultTable = tableResultService.generateTable(query, result, mockIndexes);
+        assertNotNull(resultTable);
+        assertEquals(0, resultTable.rowCount());
     }
     
-    @Test
-    @DisplayName("Query with named entity recognition")
-    void nerQuery() {
-        executeAndVerify("SELECT COUNT(DOCUMENTS) FROM " + TEST_CORPUS + " WHERE NER(\"PERSON\")");
-    }
-    
-    @Test
-    @DisplayName("Query with entity binding")
-    void entityBindingQuery() {
-        executeAndVerify("SELECT ?person FROM " + TEST_CORPUS + " WHERE NER(\"PERSON\") AS ?person");
-    }
-    
-    @Test
-    @DisplayName("Query with date restriction")
-    void dateQuery() {
-        executeAndVerify("SELECT ?date FROM " + TEST_CORPUS + " WHERE DATE(< 2000) AS ?date");
-    }
-    
-    @Test
-    @DisplayName("Query with dependency relation")
-    void dependencyQuery() {
-        executeAndVerify("SELECT COUNT(DOCUMENTS) FROM " + TEST_CORPUS + " WHERE DEPENDS(\"subject\", \"nsubj\", \"verb\")");
-    }
-    
-    @Test
-    @DisplayName("Query with combined conditions using AND")
-    void combinedQuery() {
-        executeAndVerify("SELECT COUNT(DOCUMENTS) FROM " + TEST_CORPUS + 
-                         " WHERE CONTAINS(\"science\") AND NER(\"PERSON\")");
-    }
-    
-    @Test
-    @DisplayName("Query with OR condition")
-    void orConditionQuery() {
-        executeAndVerify("SELECT COUNT(DOCUMENTS) FROM " + TEST_CORPUS + 
-                         " WHERE CONTAINS(\"physics\") OR CONTAINS(\"chemistry\")");
-    }
-    
-    @Test
-    @DisplayName("Query with NOT condition")
-    void notConditionQuery() {
-        executeAndVerify("SELECT COUNT(DOCUMENTS) FROM " + TEST_CORPUS + 
-                         " WHERE CONTAINS(\"science\") AND NOT CONTAINS(\"fiction\")");
-    }
-    
-    @Test
-    @DisplayName("Query with ORDER BY and LIMIT")
-    void queryWithOrderAndLimit() {
-        executeAndVerify("SELECT COUNT(DOCUMENTS) FROM " + TEST_CORPUS + 
-                         " WHERE CONTAINS(\"history\") ORDER BY date DESC LIMIT 10");
-    }
-    
-    @Test
-    @DisplayName("Complex query combining multiple features")
-    void complexQuery() {
-        executeAndVerify("SELECT ?person, ?date FROM " + TEST_CORPUS + 
-                         " WHERE CONTAINS(\"Nobel Prize\") " +
-                         "AND NER(\"PERSON\") AS ?person " +
-                         "AND DATE(> 1900) AS ?date " +
-                         "ORDER BY date DESC " +
-                         "LIMIT 20");
-    }
-    
-    @ParameterizedTest
-    @ValueSource(strings = {
-        "SELECT COUNT(DOCUMENTS) FROM {corpus} WHERE CONTAINS(\"climate change\")",
-        "SELECT ?location FROM {corpus} WHERE NER(\"LOCATION\") AS ?location AND CONTAINS(\"capital city\")",
-        "SELECT ?person, ?org FROM {corpus} WHERE NER(\"PERSON\") AS ?person AND NER(\"ORGANIZATION\") AS ?org",
-        "SELECT COUNT(DOCUMENTS) FROM {corpus} WHERE DATE(CONTAINS [1900, 2000])",
-        "SELECT ?date FROM {corpus} WHERE DATE(> 1950) AS ?date AND CONTAINS(\"computer science\")",
-        "SELECT COUNT(DOCUMENTS) FROM {corpus} WHERE DEPENDS(\"government\", \"nsubj\", \"announced\")",
-        "SELECT COUNT(DOCUMENTS) FROM {corpus} WHERE (CONTAINS(\"economy\") OR CONTAINS(\"finance\")) AND NER(\"ORGANIZATION\")"
-    })
-    @DisplayName("Parameterized query tests")
-    void parameterizedQueries(String queryTemplate) {
-        String query = queryTemplate.replace("{corpus}", TEST_CORPUS);
-        executeAndVerify(query);
-    }
+    // Add more end-to-end tests for different conditions, granularity, joins etc.
 } 

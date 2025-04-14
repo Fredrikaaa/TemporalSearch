@@ -1,5 +1,6 @@
 package com.example.query.index;
 
+import com.example.core.IndexAccessInterface;
 import com.example.core.IndexAccess;
 import com.example.core.IndexAccessException;
 import com.example.query.model.condition.Condition;
@@ -26,7 +27,7 @@ import java.util.Optional;
 public class IndexManager implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(IndexManager.class);
     
-    private final Map<String, IndexAccess> indexes;
+    private final Map<String, IndexAccessInterface> indexes;
     private final Path indexBaseDir;
     private final String indexSetName;
     private boolean isClosed = false;
@@ -118,9 +119,9 @@ public class IndexManager implements AutoCloseable {
      * Gets an index by name
      *
      * @param name The index name
-     * @return Optional containing the index if found
+     * @return Optional containing the index (as interface) if found
      */
-    public Optional<IndexAccess> getIndex(String name) {
+    public Optional<IndexAccessInterface> getIndex(String name) {
         checkClosed();
         return Optional.ofNullable(indexes.get(name));
     }
@@ -129,9 +130,9 @@ public class IndexManager implements AutoCloseable {
      * Gets the appropriate index for a condition type
      *
      * @param condition The condition to get an index for
-     * @return Optional containing the index if found
+     * @return Optional containing the index (as interface) if found
      */
-    public Optional<IndexAccess> getIndexForCondition(Condition condition) {
+    public Optional<IndexAccessInterface> getIndexForCondition(Condition condition) {
         checkClosed();
         
         // Map condition types to appropriate indexes
@@ -170,9 +171,9 @@ public class IndexManager implements AutoCloseable {
     /**
      * Gets all available indexes
      *
-     * @return Map of index name to IndexAccess
+     * @return Map of index name to IndexAccessInterface
      */
-    public Map<String, IndexAccess> getAllIndexes() {
+    public Map<String, IndexAccessInterface> getAllIndexes() {
         checkClosed();
         return new HashMap<>(indexes);
     }
@@ -200,7 +201,7 @@ public class IndexManager implements AutoCloseable {
     @Override
     public void close() throws Exception {
         if (!isClosed) {
-            for (IndexAccess index : indexes.values()) {
+            for (IndexAccessInterface index : indexes.values()) {
                 try {
                     index.close();
                 } catch (Exception e) {

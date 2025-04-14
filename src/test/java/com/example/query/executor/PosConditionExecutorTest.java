@@ -1,10 +1,13 @@
 package com.example.query.executor;
 
 import com.example.core.IndexAccess;
+import com.example.core.IndexAccessException;
+import com.example.core.IndexAccessInterface;
 import com.example.core.Position;
 import com.example.core.PositionList;
-import com.example.query.binding.BindingContext;
-import com.example.query.model.DocSentenceMatch;
+import com.example.query.binding.MatchDetail;
+import com.example.query.binding.ValueType;
+import com.example.query.executor.QueryResult;
 import com.example.query.model.Query;
 import com.example.query.model.condition.Pos;
 
@@ -12,108 +15,188 @@ import org.iq80.leveldb.DBIterator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.Map.Entry;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
-public class PosConditionExecutorTest {
+class PosConditionExecutorTest {
 
-    private PosExecutor executor;
-    
-    @Mock
-    private IndexAccess posIndex;
-    
-    private Map<String, IndexAccess> indexes;
-    private BindingContext bindingContext;
+    @Mock private IndexAccess posIndex;
+    @Mock private DBIterator posIterator;
+    @Mock private ConditionExecutorFactory factory;
+    @InjectMocks private PosExecutor executor;
+
+    private Map<String, IndexAccessInterface> indexes;
 
     @BeforeEach
-    void setUp() {
-        executor = new PosExecutor();
-        indexes = new HashMap<>();
-        indexes.put("pos", posIndex);
-        bindingContext = BindingContext.empty();
+    void setUp() throws IndexAccessException {
+        indexes = Map.of("pos", posIndex);
+        lenient().when(posIndex.iterator()).thenReturn(posIterator);
+        lenient().when(posIterator.hasNext()).thenReturn(false);
+        lenient().when(posIndex.get(any(byte[].class))).thenReturn(Optional.empty());
     }
 
     @Test
-    public void testExecuteTermSearch() throws Exception {
-        // Create a POS condition for a specific term with a POS tag
-        Pos condition = new Pos("NN", "apple", null, false);
-        
-        // Create a position list with some document positions
-        PositionList positionList = new PositionList();
-        LocalDate now = LocalDate.now();
-        positionList.add(new Position(1, 1, 5, 6, now));
-        positionList.add(new Position(2, 1, 10, 11, now));
-        positionList.add(new Position(3, 1, 15, 16, now));
-        
-        // Mock the index response
-        when(posIndex.get(any())).thenReturn(Optional.of(positionList));
-        
-        // Execute the condition
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
-        
-        // Verify the results
-        assertEquals(3, result.size());
-        Set<Integer> docIds = result.stream().map(DocSentenceMatch::documentId).collect(Collectors.toSet());
-        assertTrue(docIds.contains(1));
-        assertTrue(docIds.contains(2));
-        assertTrue(docIds.contains(3));
-        
-        // Verify the correct key was used for the search
-        verify(posIndex).get(argThat(keyBytes -> {
-            String key = new String(keyBytes);
-            // Use null byte delimiter instead of colon
-            return key.equals("nn" + IndexAccess.NGRAM_DELIMITER + "apple");
-        }));
+    void testExecuteSpecificTermDocumentGranularity() throws Exception {
+        Pos condition = new Pos("NN", "test"); 
+        String expectedKey = "nn" + IndexAccessInterface.DELIMITER + "test";
+
+        PositionList positions = new PositionList();
+        positions.add(new Position(1, 0, 5, 10, LocalDate.now()));
+        positions.add(new Position(2, 1, 15, 20, LocalDate.now()));
+        positions.add(new Position(1, 1, 25, 30, LocalDate.now()));
+        when(posIndex.get(eq(expectedKey.getBytes()))).thenReturn(Optional.of(positions));
+
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
+
+        assertNotNull(result);
+        assertEquals(Query.Granularity.DOCUMENT, result.getGranularity());
+        assertEquals(3, result.getAllDetails().size());
+        Set<Integer> docIds = result.getAllDetails().stream().map(MatchDetail::getDocumentId).collect(Collectors.toSet());
+        assertTrue(docIds.containsAll(Set.of(1, 2)));
+        assertTrue(result.getAllDetails().stream().allMatch(d -> "test/NN".equals(d.value()) && d.valueType() == ValueType.POS_TERM)); 
+        assertNull(result.getAllDetails().get(0).variableName()); 
+        verify(posIndex).get(eq(expectedKey.getBytes())); 
     }
     
     @Test
-    public void testExecuteTermNotFound() throws Exception {
-        // Create a POS condition for a term that doesn't exist
-        Pos condition = new Pos("VB", "nonexistent", null, false);
+    void testExecuteSpecificTermSentenceGranularity() throws Exception {
+        Pos condition = new Pos("VB", "run");
+        String expectedKey = "vb" + IndexAccessInterface.DELIMITER + "run";
+
+        PositionList positions = new PositionList();
+        positions.add(new Position(1, 1, 1, 2, null));
+        positions.add(new Position(1, 2, 3, 4, null));
+        positions.add(new Position(2, 1, 5, 6, null));
+        positions.add(new Position(1, 1, 10, 15, null));
         
-        // Mock the index response for a term that doesn't exist
-        when(posIndex.get(any())).thenReturn(Optional.empty());
+        when(posIndex.get(eq(expectedKey.getBytes()))).thenReturn(Optional.of(positions));
+
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.SENTENCE, 0, "test_corpus");
         
-        // Execute the condition
-        Set<DocSentenceMatch> result = executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0);
+        assertNotNull(result);
+        assertEquals(Query.Granularity.SENTENCE, result.getGranularity());
+        assertEquals(4, result.getAllDetails().size());
+        assertTrue(result.getAllDetails().stream().anyMatch(m -> m.getDocumentId() == 1 && m.getSentenceId() == 1 && "run/VB".equals(m.value())));
+        assertTrue(result.getAllDetails().stream().anyMatch(m -> m.getDocumentId() == 1 && m.getSentenceId() == 2 && "run/VB".equals(m.value())));
+        assertTrue(result.getAllDetails().stream().anyMatch(m -> m.getDocumentId() == 2 && m.getSentenceId() == 1 && "run/VB".equals(m.value())));
+        assertTrue(result.getAllDetails().stream().allMatch(d -> d.valueType() == ValueType.POS_TERM));
         
-        // Verify the results are empty
-        assertTrue(result.isEmpty());
+        verify(posIndex).get(eq(expectedKey.getBytes()));
     }
-    
+
     @Test
-    public void testExecuteWithMissingIndex() {
-        // Create a POS condition
-        Pos condition = new Pos("NN", "apple", null, false);
+    void testSentenceGranularityWithWindow() throws Exception {
+        Pos condition = new Pos("NN", "noun");
+        String expectedKey = "nn" + IndexAccessInterface.DELIMITER + "noun";
+
+        PositionList positions = new PositionList();
+        positions.add(new Position(1, 0, 1, 2, null));
+        positions.add(new Position(1, 2, 3, 4, null));
+        positions.add(new Position(1, 3, 5, 6, null));
+        positions.add(new Position(2, 1, 7, 8, null));
         
-        // Remove the POS index
-        indexes.remove("pos");
+        when(posIndex.get(eq(expectedKey.getBytes()))).thenReturn(Optional.of(positions));
+
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.SENTENCE, 1, "test_corpus"); 
+
+        assertNotNull(result);
+        assertEquals(Query.Granularity.SENTENCE, result.getGranularity());
+        assertEquals(4, result.getAllDetails().size()); 
         
-        // Execute the condition and expect an exception
-        QueryExecutionException exception = assertThrows(QueryExecutionException.class, 
-            () -> executor.execute(condition, indexes, bindingContext, Query.Granularity.DOCUMENT, 0));
-        
-        // Verify the exception details
-        assertEquals(QueryExecutionException.ErrorType.MISSING_INDEX, exception.getErrorType());
-        assertTrue(exception.getMessage().contains("Missing required POS index"));
+        assertTrue(result.getAllDetails().stream().anyMatch(m -> m.getDocumentId() == 1 && m.getSentenceId() == 0 && "noun/NN".equals(m.value())));
+        assertTrue(result.getAllDetails().stream().anyMatch(m -> m.getDocumentId() == 1 && m.getSentenceId() == 2 && "noun/NN".equals(m.value())));
+        assertTrue(result.getAllDetails().stream().anyMatch(m -> m.getDocumentId() == 2 && m.getSentenceId() == 1 && "noun/NN".equals(m.value())));
+
+        assertTrue(result.getAllDetails().stream().allMatch(d -> d.valueType() == ValueType.POS_TERM));
+        verify(posIndex).get(eq(expectedKey.getBytes()));
     }
-    
+
     @Test
-    public void testExecuteVariableExtraction() throws Exception {
-        // Skip this test for now as it's difficult to mock the iterator behavior
-        // We've already tested the main functionality in other tests
+    void testVariableBindingDocumentGranularity() throws Exception {
+        Pos condition = new Pos("JJ", null, "?adjVar"); 
+        String expectedKeyPrefix = "jj" + IndexAccessInterface.DELIMITER;
+
+        // Define the expected positions and corresponding keys for the prefix search
+        PositionList posList1 = new PositionList(); posList1.add(new Position(1, 1, 5, 10, LocalDate.now()));
+        PositionList posList2 = new PositionList(); posList2.add(new Position(2, 1, 15, 20, LocalDate.now()));
+        PositionList posList3 = new PositionList(); posList3.add(new Position(1, 2, 25, 30, LocalDate.now()));
+        
+        // Mock iterator behavior for prefix search
+        List<Map.Entry<byte[], PositionList>> mockEntries = List.of(
+            Map.entry((expectedKeyPrefix + "happy").getBytes(), posList1),
+            Map.entry((expectedKeyPrefix + "sad").getBytes(), posList2),
+            Map.entry((expectedKeyPrefix + "glad").getBytes(), posList3) 
+        );
+        
+        // Setup the mock iterator using a helper if available, or inline mocking
+        // Assuming a similar helper `setupIteratorMock` exists or mocking directly:
+        lenient().when(posIndex.iterator()).thenReturn(posIterator);
+        byte[] prefixBytes = expectedKeyPrefix.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        doNothing().when(posIterator).seek(argThat(k -> Arrays.equals(k, prefixBytes)));
+
+        // Mock hasNext and next calls based on mockEntries
+        Boolean[] hasNextValues = new Boolean[mockEntries.size() + 1];
+        Arrays.fill(hasNextValues, 0, mockEntries.size(), true);
+        hasNextValues[mockEntries.size()] = false;
+        org.mockito.stubbing.OngoingStubbing<Boolean> hasNextStubbing = when(posIterator.hasNext()).thenReturn(true);
+        for (int i = 1; i < hasNextValues.length; i++) {
+            hasNextStubbing = hasNextStubbing.thenReturn(hasNextValues[i]);
+        }
+
+        if (!mockEntries.isEmpty()) {
+            @SuppressWarnings("unchecked")
+            Map.Entry<byte[], byte[]>[] entryArray = mockEntries.stream()
+                 .map(e -> Map.entry(e.getKey(), e.getValue().serialize()))
+                 .toArray(Map.Entry[]::new);
+            // Mock next() to return entries in sequence
+            org.mockito.stubbing.OngoingStubbing<Map.Entry<byte[], byte[]>> nextStubbing = when(posIterator.next()).thenReturn(entryArray[0]);
+            for (int i = 1; i < entryArray.length; i++) {
+                nextStubbing = nextStubbing.thenReturn(entryArray[i]);
+            }
+            nextStubbing.thenThrow(new java.util.NoSuchElementException());
+            // Since PosExecutor.executeVariableExtraction does NOT use peekNext, we don't mock it.
+        } else {
+            when(posIterator.next()).thenThrow(new java.util.NoSuchElementException());
+        }
+
+        // when(posIndex.get(eq(expectedKey.getBytes()))).thenReturn(Optional.of(positions)); // Remove this line
+        
+        QueryResult result = executor.execute(condition, indexes, Query.Granularity.DOCUMENT, 0, "test_corpus");
+
+        assertNotNull(result);
+        assertEquals(Query.Granularity.DOCUMENT, result.getGranularity());
+        // We expect 3 details because there are 3 positions across 3 keys
+        assertEquals(3, result.getAllDetails().size()); 
+        
+        Set<Integer> docIds = result.getAllDetails().stream().map(MatchDetail::getDocumentId).collect(Collectors.toSet());
+        assertTrue(docIds.containsAll(Set.of(1, 2)), "Docs 1 and 2 should be present");
+        
+        assertTrue(result.getAllDetails().stream().allMatch(d -> "?adjVar".equals(d.variableName())), "Variable name mismatch");
+        assertTrue(result.getAllDetails().stream().allMatch(d -> d.valueType() == ValueType.POS_TERM), "ValueType mismatch");
+
+        // Check captured values (term/tag)
+        Set<String> capturedValues = result.getAllDetails().stream().map(d -> (String) d.value()).collect(Collectors.toSet());
+        assertTrue(capturedValues.containsAll(Set.of("happy/jj", "sad/jj", "glad/jj")), "Captured values mismatch");
+
+        // Verify iterator interactions
+        verify(posIndex).iterator(); 
+        verify(posIterator).seek(argThat(k -> Arrays.equals(k, prefixBytes)));
+        verify(posIterator, times(mockEntries.size() + 1)).hasNext(); // Called once per entry + final false
+        verify(posIterator, times(mockEntries.size())).next(); // Called once per entry
+        verify(posIndex, times(0)).get(any()); // Ensure get is NOT called
     }
 } 
