@@ -101,8 +101,8 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
                 granularity = Query.Granularity.DOCUMENT;
             } else {
                 granularity = Query.Granularity.SENTENCE;
-                if (ctx.granularityClause().NUMBER() != null) {
-                    granularitySize = Optional.of(Integer.parseInt(ctx.granularityClause().NUMBER().getText()));
+                if (ctx.granularityClause().size != null) {
+                    granularitySize = Optional.of(Integer.parseInt(ctx.granularityClause().size.getText()));
                 }
             }
         }
@@ -169,8 +169,8 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         String variable = (String) visit(ctx.variable());
         int windowSize = SnippetNode.DEFAULT_WINDOW_SIZE;
         
-        if (ctx.NUMBER() != null) {
-            windowSize = Integer.parseInt(ctx.NUMBER().getText());
+        if (ctx.windowSize != null) {
+            windowSize = Integer.parseInt(ctx.windowSize.getText());
         }
         
         return new SnippetNode(variable, windowSize);
@@ -378,10 +378,14 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
         if (ctx.LOCATION() != null) return "LOCATION";
         if (ctx.ORGANIZATION() != null) return "ORGANIZATION";
         if (ctx.TIME() != null) return "TIME";
+        if (ctx.DURATION() != null) return "DURATION";
         if (ctx.MONEY() != null) return "MONEY";
+        if (ctx.NUMBER() != null) return "NUMBER";
+        if (ctx.ORDINAL() != null) return "ORDINAL";
         if (ctx.PERCENT() != null) return "PERCENT";
+        if (ctx.SET() != null) return "SET";
         
-        throw new IllegalStateException("Invalid entity type");
+        throw new IllegalStateException("Invalid entity type: " + ctx.getText());
     }
 
     @Override

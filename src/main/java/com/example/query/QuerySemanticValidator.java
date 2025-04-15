@@ -4,6 +4,8 @@ import com.example.query.model.*;
 import com.example.query.binding.VariableRegistry;
 import com.example.query.binding.Variable;
 import com.example.query.binding.VariableType;
+import com.example.query.model.condition.Condition;
+import com.example.query.model.condition.Ner;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +27,12 @@ public class QuerySemanticValidator {
     // Maximum proximity window for temporal joins
     private static final int MAX_TEMPORAL_PROXIMITY_WINDOW = 365;
 
+    // Define the set of valid NER entity types (uppercase)
+    private static final Set<String> VALID_NER_TYPES = Set.of(
+        "PERSON", "ORGANIZATION", "LOCATION", "DATE", "TIME", 
+        "DURATION", "MONEY", "NUMBER", "ORDINAL", "PERCENT", "SET", "*"
+    );
+
     /**
      * Validates a query for semantic correctness.
      *
@@ -39,6 +47,9 @@ public class QuerySemanticValidator {
         if (registry == null) {
             throw new QueryParseException("Query does not have a variable registry");
         }
+        
+        // Validate NER types in conditions *before* validating variable usage
+        validateNerTypes(query.conditions());
         
         // Validate variable dependencies and types
         validateVariableDependencies(registry);
@@ -65,6 +76,35 @@ public class QuerySemanticValidator {
         }
         
         logger.debug("Semantic validation completed successfully");
+    }
+    
+    /**
+     * Validates that any NER conditions use a recognized entity type.
+     * 
+     * @param conditions The list of conditions to check.
+     * @throws QueryParseException If an invalid NER type is found.
+     */
+    private void validateNerTypes(List<Condition> conditions) throws QueryParseException {
+        for (Condition condition : conditions) {
+            if (condition instanceof Ner nerCondition) {
+                String entityType = nerCondition.entityType();
+                // Use uppercase for case-insensitive comparison, except for wildcard '*'
+                String comparisonType = "*".equals(entityType) ? "*" : entityType.toUpperCase(); 
+                
+                if (!VALID_NER_TYPES.contains(comparisonType)) {
+                    String validTypesString = String.join(", ", VALID_NER_TYPES);
+                    throw new QueryParseException(String.format(
+                        "Invalid NER entity type '%s' used in condition %s. Valid types are: %s",
+                        entityType, nerCondition.toString(), validTypesString
+                    ));
+                }
+            }
+            // Recursively check nested conditions (e.g., inside NOT or logical operators)
+            // This part might need adjustment based on how complex condition structures are handled.
+            // For now, assuming a flat list or structure handled by the Query object itself.
+            // If conditions can be nested (e.g., AND(NER(...), NOT(POS(...)))), 
+            // a recursive traversal might be needed here.
+        }
     }
     
     /**

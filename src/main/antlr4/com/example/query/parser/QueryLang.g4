@@ -19,17 +19,19 @@ grammar QueryLang;
  * - Temporal join conditions use predicates like CONTAINS, CONTAINED_BY, INTERSECT
  */
 
-// Lexer Rules (Tokens)
-// Keywords
+// Lexer Rules (Tokens) ==========================================================
+
+// Keywords (Order matters for some lexers, define longer matches first if prefixes overlap)
 SELECT: 'SELECT';
 FROM: 'FROM';
 WHERE: 'WHERE';
+AS: 'AS'; 
 SNIPPET: 'SNIPPET';
 WINDOW: 'WINDOW';
 NER: 'NER';
 POS: 'POS';
 DEPENDS: 'DEPENDS';
-DATE: 'DATE';
+DATE: 'DATE'; // Used for DATE() condition and NER(DATE) type
 PROXIMITY: 'PROXIMITY';
 GRANULARITY: 'GRANULARITY';
 DOCUMENT: 'DOCUMENT';
@@ -48,7 +50,6 @@ BY: 'BY';
 ASC: 'ASC';
 DESC: 'DESC';
 LIMIT: 'LIMIT';
-AS: 'AS';
 COUNT: 'COUNT';
 UNIQUE: 'UNIQUE';
 DOCUMENTS: 'DOCUMENTS';
@@ -58,19 +59,25 @@ INNER: 'INNER';
 LEFT: 'LEFT';
 RIGHT: 'RIGHT';
 
-// NER types
+// NER Entity Type Keywords (Must match VALID_NER_TYPES in validator, case-insensitive)
 PERSON: 'PERSON';
 LOCATION: 'LOCATION';
 ORGANIZATION: 'ORGANIZATION';
+// DATE token (defined above) is used for NER(DATE)
 TIME: 'TIME';
+DURATION: 'DURATION';
 MONEY: 'MONEY';
+NUMBER: 'NUMBER'; // Reverted: Token for NER(NUMBER) type
+ORDINAL: 'ORDINAL';
 PERCENT: 'PERCENT';
+SET: 'SET';
 
-// Structure tokens
+// Structure and Symbol Tokens
 LPAREN: '(';
 RPAREN: ')';
 COMMA: ',';
-EQUALS: '=';
+EQUALS: '='; // Often used for assignments/options
+EQ: '==';    // Often used for comparison
 LBRACKET: '[';
 RBRACKET: ']';
 WILDCARD: '*';
@@ -79,26 +86,26 @@ LT: '<';
 GT: '>';
 LE: '<=';
 GE: '>=';
-EQ: '==';
+DOT: '.'; // Added for qualified identifiers
 
-// Time units
+// Time Units
 YEAR: 'y';
 DAY: 'd';
 
-// Basic tokens
+// Basic Data Type Tokens
 IDENTIFIER: [a-zA-Z_][a-zA-Z0-9_]*;
 STRING
     : '"' ( ~["] | '""' )* '"'   // Double-quoted strings
     | '\'' ( ~['] | '\'\'' )* '\'' // Single-quoted strings
     ;
-NUMBER: [0-9]+;
+INTEGER_LITERAL: [0-9]+; // Renamed: For numeric literals like 123
 
-// Skip whitespace and comments
+// Whitespace and Comments (Skipped)
 WS: [ \t\r\n]+ -> skip;
 COMMENT: '//' ~[\r\n]* -> skip;
 BLOCK_COMMENT: '/*' .*? '*/' -> skip;
 
-// Parser Rules
+// Parser Rules =============================================================
 
 query
     : SELECT selectList
@@ -125,7 +132,7 @@ selectColumn
     ;
 
 snippetExpression
-    : SNIPPET LPAREN variable (COMMA WINDOW EQUALS NUMBER)? RPAREN
+    : SNIPPET LPAREN variable (COMMA WINDOW EQUALS windowSize=INTEGER_LITERAL)? RPAREN
     ;
 
 titleExpression
@@ -178,9 +185,9 @@ singleCondition
     ;
 
 dateExpression
-    : DATE LPAREN comparisonOp year=NUMBER RPAREN (AS var=variable)?        # DateComparisonExpression
+    : DATE LPAREN comparisonOp year=INTEGER_LITERAL RPAREN (AS var=variable)?        # DateComparisonExpression
     | DATE LPAREN dateOperator dateValue
-      (RADIUS radius=NUMBER unit=timeUnit)? RPAREN (AS var=variable)?       # DateOperatorExpression
+      (RADIUS radius=INTEGER_LITERAL unit=timeUnit)? RPAREN (AS var=variable)?       # DateOperatorExpression
     ;
 
 dateOperator
@@ -191,8 +198,8 @@ dateOperator
     ;
 
 dateValue
-    : LBRACKET start=NUMBER COMMA end=NUMBER RBRACKET  # DateRange
-    | single=NUMBER                                     # SingleYear
+    : LBRACKET start=INTEGER_LITERAL COMMA end=INTEGER_LITERAL RBRACKET  # DateRange
+    | single=INTEGER_LITERAL                                     # SingleYear
     ;
 
 timeUnit
@@ -201,7 +208,7 @@ timeUnit
     ;
 
 granularityClause
-    : GRANULARITY (DOCUMENT | SENTENCE NUMBER?)
+    : GRANULARITY (DOCUMENT | SENTENCE size=INTEGER_LITERAL?)
     ;
 
 orderByClause
@@ -216,27 +223,32 @@ orderSpec
     ;
 
 qualifiedIdentifier
-    : (identifier | variable) '.' (identifier | variable) // Allow alias.key, ?var.key, alias.?var, ?var.?var
+    : (identifier | variable) DOT (identifier | variable) // Changed '.' to DOT
     ;
 
 limitClause
-    : LIMIT count=NUMBER
+    : LIMIT count=INTEGER_LITERAL
     ;
 
 nerExpression
     : NER LPAREN type=entityType (COMMA termValue=term)? RPAREN (AS var=variable)?
     ;
 
-entityType
+entityType // Should align with VALID_NER_TYPES in QuerySemanticValidator (case-insensitive)
     : PERSON
     | LOCATION
     | ORGANIZATION
+    | DATE       // Use existing DATE token
     | TIME
+    | DURATION
     | MONEY
+    | NUMBER     // Use reverted NUMBER token
+    | ORDINAL
     | PERCENT
-    | WILDCARD
-    | STRING
-    | IDENTIFIER
+    | SET
+    | WILDCARD   // Special case handled in validator
+    | STRING     // Allow quoted string for unknown/future types? Validation needed.
+    | IDENTIFIER // Allow unquoted identifier? Validation needed.
     ;
 
 containsExpression
@@ -309,7 +321,7 @@ subquery
 
 joinCondition
     : leftColumn=joinColumn temporalOp rightColumn=joinColumn
-      (WINDOW window=NUMBER)?
+      (WINDOW window=INTEGER_LITERAL)?
     ;
 
 joinColumn
