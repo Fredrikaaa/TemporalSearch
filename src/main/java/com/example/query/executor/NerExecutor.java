@@ -53,10 +53,21 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
         String entityType = condition.entityType();
         String variableName = condition.variableName();
         boolean isVariable = condition.isVariable();
+        String targetValue = condition.target();
         
         // Normalize entity type (usually uppercase, except wildcard)
         String normalizedEntityType = "*".equals(entityType) ? "*" : entityType.toUpperCase();
         String indexName = "DATE".equals(normalizedEntityType) ? NER_DATE_INDEX_NAME : NER_INDEX_NAME;
+        
+        // --- Added: Explicitly disallow wildcard execution for now ---
+        if ("*".equals(normalizedEntityType)) {
+            throw new QueryExecutionException(
+                "Wildcard entity type (*) is not currently supported for execution.",
+                condition.toString(),
+                QueryExecutionException.ErrorType.UNSUPPORTED_OPERATION
+            );
+        }
+        // --- End Added ---
         
         // Validate required indexes
         if (!indexes.containsKey(indexName)) {
@@ -110,14 +121,21 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
      * @param entityType The normalized entity type to extract (uppercase or *)
      * @param variableName The variable name to associate with the MatchDetail
      * @param index The index to search in (either ner or ner_date)
-     * @param condition The original condition object (for ID)
+     * @param condition The original condition object (for ID and target)
      * @return List of MatchDetail objects
      */
     private List<MatchDetail> executeVariableExtraction(String entityType, String variableName, IndexAccessInterface index,
                                                   Ner condition)
         throws Exception {
         
-        logger.debug("Extracting all entities of type '{}' for variable '{}'", entityType, variableName);
+        String targetValue = condition.target();
+        String targetValueLower = (targetValue != null) ? targetValue.toLowerCase() : null;
+        
+        logger.debug("Extracting entities of type '{}'{}{} for variable '{}'", 
+            entityType, 
+            (targetValueLower != null ? " matching '" + targetValueLower + "'" : ""),
+            variableName);
+            
         List<MatchDetail> details = new ArrayList<>();
         String conditionId = String.valueOf(condition.hashCode());
         ValueType valueType = "DATE".equals(entityType) ? ValueType.DATE : ValueType.ENTITY;
@@ -140,6 +158,12 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
                 
                 // Extract value (entity text) from the key
                 String value = key.substring(prefix.length());
+                
+                // Filter by target value if provided (case-insensitive)
+                if (targetValueLower != null && !value.toLowerCase().equals(targetValueLower)) {
+                    continue; // Skip if value doesn't match the target
+                }
+                
                 PositionList positionList = PositionList.deserialize(entry.getValue());
                 
                 details.addAll(positionList.getPositions().stream()
@@ -153,18 +177,25 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
     
     /**
      * Executes an entity search for a specific entity type.
-     * This mode just finds documents that contain any entity of the given type.
+     * This mode finds documents/sentences containing entities of the given type.
+     * If a target value is specified, it only finds occurrences of that specific entity text.
      *
      * @param entityType The entity type to search for
      * @param index The index to search in
-     * @param condition The original condition object (for ID)
+     * @param condition The original condition object (for ID and target)
      * @return List of MatchDetail objects
      */
     private List<MatchDetail> executeEntitySearch(String entityType, IndexAccessInterface index,
                                                      Ner condition)
         throws Exception {
         
-        logger.debug("Searching for all entities of type '{}'", entityType);
+        String targetValue = condition.target();
+        String targetValueLower = (targetValue != null) ? targetValue.toLowerCase() : null;
+
+        logger.debug("Searching for entities of type '{}'{}", 
+            entityType,
+            (targetValueLower != null ? " matching '" + targetValueLower + "'" : ""));
+            
         List<MatchDetail> details = new ArrayList<>();
         String conditionId = String.valueOf(condition.hashCode());
         ValueType valueType = "DATE".equals(entityType) ? ValueType.DATE : ValueType.ENTITY;
@@ -185,13 +216,22 @@ public final class NerExecutor implements ConditionExecutor<Ner> {
                     break; // Moved past relevant keys
                 }
                 
+                // Extract value (entity text) from the key
+                String value = key.substring(prefix.length());
+                
+                // Filter by target value if provided (case-insensitive)
+                if (targetValueLower != null && !value.toLowerCase().equals(targetValueLower)) {
+                    continue; // Skip if value doesn't match the target
+                }
+
                 // When searching for a type without binding, the specific value doesn't matter as much,
-                // but we still need the positions. We can use the entity type as the value.
-                String value = entityType; // Use the type itself as the value
+                // but we still need the positions. We use the actual matched value if target is specified,
+                // otherwise use the entity type itself.
+                String detailValue = (targetValueLower != null) ? value : entityType; 
                 PositionList positionList = PositionList.deserialize(entry.getValue());
                 
                 details.addAll(positionList.getPositions().stream()
-                    .map(pos -> new MatchDetail(value, valueType, pos, conditionId, null))
+                    .map(pos -> new MatchDetail(detailValue, valueType, pos, conditionId, null))
                     .collect(Collectors.toList()));
             }
         }

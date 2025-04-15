@@ -175,27 +175,34 @@ public class MockIndexAccess implements IndexAccessInterface {
     // --- Inner Mock Iterator Class ---
 
     private static class MockDBIterator implements DBIterator {
-        private final Iterator<Map.Entry<ByteArrayWrapper, byte[]>> iterator;
+        private final NavigableMap<ByteArrayWrapper, byte[]> originalMap;
+        private Iterator<Map.Entry<ByteArrayWrapper, byte[]>> iterator;
         private Map.Entry<ByteArrayWrapper, byte[]> currentEntry;
 
         MockDBIterator(NavigableMap<ByteArrayWrapper, byte[]> map) {
-            // Create an iterator over a defensive copy to avoid ConcurrentModificationException
-            this.iterator = new TreeMap<>(map).entrySet().iterator(); 
+            // Store the original map for seeking
+            this.originalMap = map; 
+            // Initialize iterator over a copy of the full map
+            this.iterator = new TreeMap<>(this.originalMap).entrySet().iterator(); 
             this.currentEntry = null;
         }
 
         @Override
         public void seek(byte[] key) {
-             throw new UnsupportedOperationException("seek not fully implemented in MockDBIterator");
-             // For a full implementation, would need to find the correct starting point
+             // Wrap the key for comparison
+             ByteArrayWrapper wrappedKey = new ByteArrayWrapper(key);
+             // Get the portion of the map >= key
+             NavigableMap<ByteArrayWrapper, byte[]> tailMap = originalMap.tailMap(wrappedKey, true);
+             // Reset iterator to the tailMap (using a copy)
+             this.iterator = new TreeMap<>(tailMap).entrySet().iterator();
+             this.currentEntry = null; // Invalidate current entry after seek
         }
 
         @Override
         public void seekToFirst() {
-            // Reset the iterator (requires recreating it over a copy)
-            // This simple version doesn't fully support seeking after iteration started.
-            // Re-implement if complex iteration/seeking is needed for tests.
-             throw new UnsupportedOperationException("seekToFirst not fully implemented in MockDBIterator after iteration starts");
+            // Reset the iterator to the beginning of the original map (using a copy)
+            this.iterator = new TreeMap<>(this.originalMap).entrySet().iterator();
+            this.currentEntry = null; // Invalidate current entry
         }
 
         @Override
