@@ -63,7 +63,10 @@ class QueryParserTest {
 
         Condition condition = query.conditions().get(0);
         assertTrue(condition instanceof Contains);
-        assertEquals("artificial intelligence", ((Contains) condition).value());
+        
+        // Check the terms list instead of the 'value' field
+        List<String> expectedTerms = List.of("artificial", "intelligence");
+        assertEquals(expectedTerms, ((Contains) condition).terms());
     }
 
     @Test
@@ -269,7 +272,7 @@ class QueryParserTest {
         assertTrue(condition.conditions().get(1) instanceof Ner);
         
         Contains containsCondition = (Contains) condition.conditions().get(0);
-        assertEquals("physics", containsCondition.value());
+        assertEquals(List.of("physics"), containsCondition.terms());
         
         Ner nerCondition = (Ner) condition.conditions().get(1);
         assertEquals("PERSON", nerCondition.entityType());
@@ -290,7 +293,7 @@ class QueryParserTest {
         assertTrue(condition.condition() instanceof Contains);
         
         Contains containsCondition = (Contains) condition.condition();
-        assertEquals("irrelevant", containsCondition.value());
+        assertEquals(List.of("irrelevant"), containsCondition.terms());
     }
     
     @Test

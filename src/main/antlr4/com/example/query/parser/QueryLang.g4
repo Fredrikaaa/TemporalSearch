@@ -87,7 +87,10 @@ DAY: 'd';
 
 // Basic tokens
 IDENTIFIER: [a-zA-Z_][a-zA-Z0-9_]*;
-STRING: '"' (~["\r\n])* '"';
+STRING
+    : '"' ( ~["] | '""' )* '"'   // Double-quoted strings
+    | '\'' ( ~['] | '\'\'' )* '\'' // Single-quoted strings
+    ;
 NUMBER: [0-9]+;
 
 // Skip whitespace and comments

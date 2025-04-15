@@ -43,8 +43,12 @@ public class QueryEndToEndTest {
     private static QueryExecutor queryExecutor;
     private static TableResultService tableResultService;
     private static MockIndexAccess mockUnigramIndex;
+    private static MockIndexAccess mockBigramIndex;
+    private static MockIndexAccess mockTrigramIndex;
     private static Map<String, IndexAccessInterface> mockIndexes;
     private static QueryParser queryParser;
+
+    private static final char DELIMITER = '\0';
 
     @BeforeAll
     public static void setUp() throws IOException, IndexAccessException {
@@ -64,9 +68,24 @@ public class QueryEndToEndTest {
         mockUnigramIndex.addTestData("test", 1, 1, 0, 4); // For SentenceGranularityTest
         mockUnigramIndex.addTestData("window", 0, 1, 0, 6); // For SentenceGranularityTest
         mockUnigramIndex.addTestData("window", 0, 3, 0, 6); // For SentenceGranularityTest
+        mockUnigramIndex.addTestData("grape", 3, 1, 5, 10); // For single quote test
 
-        // Create the map of indexes directly
-        mockIndexes = Map.of("unigram", mockUnigramIndex);
+        // Create and populate mock bigram index
+        mockBigramIndex = new MockIndexAccess();
+        // Using lowercase, lemmatized forms with null byte delimiter
+        mockBigramIndex.addTestData("read" + DELIMITER + "monkey", 3, 1, 10, 20); // For space/comma test
+        mockBigramIndex.addTestData("big" + DELIMITER + "cat", 4, 1, 0, 6); // For bigram test
+        
+        // Create and populate mock trigram index
+        mockTrigramIndex = new MockIndexAccess();
+        mockTrigramIndex.addTestData("the" + DELIMITER + "quick" + DELIMITER + "fox", 5, 1, 0, 15); // For trigram test
+
+        // Update the map of indexes
+        mockIndexes = Map.of(
+            "unigram", mockUnigramIndex,
+            "bigram", mockBigramIndex,
+            "trigram", mockTrigramIndex
+        );
         
         // Initialize executor and result service
         ConditionExecutorFactory factory = new ConditionExecutorFactory();
@@ -124,5 +143,69 @@ public class QueryEndToEndTest {
         assertEquals(0, resultTable.rowCount());
     }
     
+    @Test
+    public void testContainsSingleQuote() throws QueryParseException, QueryExecutionException, ResultGenerationException {
+        String queryString = "SELECT TITLE FROM source WHERE CONTAINS('grape')";
+        Query query = queryParser.parse(queryString);
+        QueryResult result = queryExecutor.execute(query, mockIndexes);
+
+        assertNotNull(result);
+        assertFalse(result.getAllDetails().isEmpty(), "Expected results for 'grape'");
+        assertEquals(1, result.getAllDetails().size());
+        assertEquals(3, result.getAllDetails().get(0).getDocumentId());
+    }
+
+    @Test
+    public void testContainsBigramWithSpace() throws QueryParseException, QueryExecutionException, ResultGenerationException {
+        // Assumes index contains lemmatized "read\0monkey"
+        String queryString = "SELECT TITLE FROM source WHERE CONTAINS(\"read monkey\")";
+        Query query = queryParser.parse(queryString);
+        QueryResult result = queryExecutor.execute(query, mockIndexes);
+
+        assertNotNull(result);
+        assertFalse(result.getAllDetails().isEmpty(), "Expected results for 'read monkey'");
+        assertEquals(1, result.getAllDetails().size());
+        assertEquals(3, result.getAllDetails().get(0).getDocumentId());
+    }
+    
+    @Test
+    public void testContainsBigramWithComma() throws QueryParseException, QueryExecutionException, ResultGenerationException {
+        // Assumes index contains lemmatized "read\0monkey"
+        String queryString = "SELECT TITLE FROM source WHERE CONTAINS(\"read\", \"monkey\")";
+        Query query = queryParser.parse(queryString);
+        QueryResult result = queryExecutor.execute(query, mockIndexes);
+
+        assertNotNull(result);
+        assertFalse(result.getAllDetails().isEmpty(), "Expected results for 'read, monkey'");
+        assertEquals(1, result.getAllDetails().size());
+        assertEquals(3, result.getAllDetails().get(0).getDocumentId());
+    }
+    
+    @Test
+    public void testContainsTrigramWithSpace() throws QueryParseException, QueryExecutionException, ResultGenerationException {
+        // Assumes index contains lemmatized "the\0quick\0fox"
+        String queryString = "SELECT TITLE FROM source WHERE CONTAINS(\"the quick fox\")";
+        Query query = queryParser.parse(queryString);
+        QueryResult result = queryExecutor.execute(query, mockIndexes);
+
+        assertNotNull(result);
+        assertFalse(result.getAllDetails().isEmpty(), "Expected results for 'the quick fox'");
+        assertEquals(1, result.getAllDetails().size());
+        assertEquals(5, result.getAllDetails().get(0).getDocumentId());
+    }
+    
+    @Test
+    public void testContainsTrigramWithComma() throws QueryParseException, QueryExecutionException, ResultGenerationException {
+        // Assumes index contains lemmatized "the\0quick\0fox"
+        String queryString = "SELECT TITLE FROM source WHERE CONTAINS(\"the\", \"quick\", \"fox\")";
+        Query query = queryParser.parse(queryString);
+        QueryResult result = queryExecutor.execute(query, mockIndexes);
+
+        assertNotNull(result);
+        assertFalse(result.getAllDetails().isEmpty(), "Expected results for 'the, quick, fox'");
+        assertEquals(1, result.getAllDetails().size());
+        assertEquals(5, result.getAllDetails().get(0).getDocumentId());
+    }
+
     // Add more end-to-end tests for different conditions, granularity, joins etc.
 } 

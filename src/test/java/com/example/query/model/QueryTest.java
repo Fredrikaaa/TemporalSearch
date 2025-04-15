@@ -161,7 +161,7 @@ public class QueryTest {
         
         // Check that the condition properly appears in toString
         String queryString = queryWithContains.toString();
-        assertTrue(queryString.contains("CONTAINS(search term) AS ?result"));
+        assertTrue(queryString.contains("CONTAINS(\"search term\") AS ?result"));
     }
 
     @Test
@@ -205,6 +205,6 @@ public class QueryTest {
         assertTrue(queryString.contains("WHERE"));
         assertTrue(queryString.contains("NER(PERSON) AS ?person"));
         assertTrue(queryString.contains("NER(ORGANIZATION) AS ?org"));
-        assertTrue(queryString.contains("CONTAINS(meeting) AS ?text"));
+        assertTrue(queryString.contains("CONTAINS(\"meeting\") AS ?text"));
     }
 } 

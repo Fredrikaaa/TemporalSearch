@@ -15,8 +15,7 @@ import com.example.query.binding.VariableType;
 public record Contains(
     List<String> terms,
     String variableName,
-    boolean isVariable,
-    String value
+    boolean isVariable
 ) implements Condition {
     
     /**
@@ -24,11 +23,7 @@ public record Contains(
      */
     public Contains {
         Objects.requireNonNull(terms, "Terms cannot be null");
-        // Allow value to be null only if terms is empty
-        if (!terms.isEmpty()) {
-            Objects.requireNonNull(value, "Value cannot be null when terms is not empty");
-        }
-        // Removed check for empty terms list
+        // Validation for 'value' removed
         
         // Make defensive copy of terms
         terms = List.copyOf(terms);
@@ -44,7 +39,7 @@ public record Contains(
      * @param term The search term
      */
     public Contains(String term) {
-        this(Collections.singletonList(Objects.requireNonNull(term, "term cannot be null")), null, false, term);
+        this(Collections.singletonList(Objects.requireNonNull(term, "term cannot be null")), null, false);
     }
     
     /**
@@ -53,8 +48,8 @@ public record Contains(
      * @param terms List of search terms
      */
     public Contains(List<String> terms) {
-        // Pass null for value if terms is empty
-        this(terms, null, false, terms.isEmpty() ? null : terms.get(0));
+        // Call the primary constructor, removing the 'value' argument
+        this(terms, null, false);
     }
 
     /**
@@ -65,8 +60,9 @@ public record Contains(
      * @param isVariable Whether this condition binds to a variable
      */
     public Contains(String term, String variableName, boolean isVariable) {
+        // Call the primary constructor, removing the 'value' argument
         this(Collections.singletonList(Objects.requireNonNull(term, "term cannot be null")), 
-             variableName, isVariable, term);
+             variableName, isVariable);
     }
 
     /**
@@ -77,15 +73,6 @@ public record Contains(
     @Override
     public List<String> terms() {
         return terms; // Already unmodifiable from constructor
-    }
-
-    /**
-     * Returns the first search term (for backward compatibility).
-     * 
-     * @return The first search term
-     */
-    public String getValue() {
-        return value;
     }
 
     /**
@@ -130,9 +117,10 @@ public record Contains(
 
     @Override
     public String toString() {
+        String termsString = String.join(" ", terms); // Use space for toString representation
         if (isVariable) {
-            return String.format("CONTAINS(%s) AS ?%s", String.join(", ", terms), variableName);
+            return String.format("CONTAINS(\"%s\") AS ?%s", termsString, variableName);
         }
-        return String.format("CONTAINS(%s)", String.join(", ", terms));
+        return String.format("CONTAINS(\"%s\")", termsString);
     }
 } 

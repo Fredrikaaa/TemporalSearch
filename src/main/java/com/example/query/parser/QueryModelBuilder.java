@@ -302,13 +302,20 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     @Override
     public Object visitContainsExpression(QueryLangParser.ContainsExpressionContext ctx) {
         List<String> terms = new ArrayList<>();
-        for (var term : ctx.terms) {
-            terms.add(unquote(term.getText()));
+        
+        // If only one string literal is provided, split it by spaces
+        if (ctx.terms.size() == 1) {
+            String singleTerm = unquote(ctx.terms.get(0).getText());
+            terms.addAll(List.of(singleTerm.split("\\s+"))); // Split by one or more spaces
+        } else {
+            // Otherwise, treat each literal as a separate term
+            for (var termNode : ctx.terms) {
+                terms.add(unquote(termNode.getText()));
+            }
         }
         
         String variableName = null;
         boolean isVariable = false;
-        String value = terms.get(0);
         
         if (ctx.var != null) {
             variableName = (String) visit(ctx.var);
@@ -317,7 +324,7 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
             variableRegistry.registerProducer(variableName, VariableType.TEXT_SPAN, "CONTAINS");
         }
         
-        return new Contains(terms, variableName, isVariable, value);
+        return new Contains(terms, variableName, isVariable);
     }
 
     @Override
@@ -620,7 +627,15 @@ public class QueryModelBuilder extends QueryLangBaseVisitor<Object> {
     }
 
     private String unquote(String text) {
-        if (text.startsWith("\"") && text.endsWith("\"")) {
+        if (text == null || text.length() < 2) {
+            return text;
+        }
+        char firstChar = text.charAt(0);
+        char lastChar = text.charAt(text.length() - 1);
+
+        if ((firstChar == '"' && lastChar == '"') || (firstChar == '\'' && lastChar == '\'')) {
+            // Additional logic to handle escaped quotes if necessary, e.g., replace "" with " or '' with '
+            // For now, just removing the outer quotes
             return text.substring(1, text.length() - 1);
         }
         return text;

@@ -8,6 +8,8 @@ import org.junit.jupiter.api.DisplayName;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.List;
+
 @DisplayName("ContainsCondition Tests")
 class ContainsConditionTest {
 
@@ -16,7 +18,7 @@ class ContainsConditionTest {
     void constructorShouldSetValue() {
         String value = "test value";
         Contains condition = new Contains(value);
-        assertEquals(value, condition.getValue());
+        assertEquals(List.of(value), condition.terms());
     }
 
     @Test
@@ -50,7 +52,7 @@ class ContainsConditionTest {
         String variableName = "match";
         Contains condition = new Contains(term, variableName, true);
         
-        assertEquals(term, condition.getValue());
+        assertEquals(List.of(term), condition.terms());
         assertEquals(variableName, condition.variableName());
         assertTrue(condition.isVariable());
     }
@@ -63,7 +65,7 @@ class ContainsConditionTest {
         Contains condition = new Contains(term, variableName, true);
         
         String str = condition.toString();
-        assertEquals("CONTAINS(test value) AS ?match", str);
+        assertEquals("CONTAINS(\"test value\") AS ?match", str);
     }
     
     @Test
